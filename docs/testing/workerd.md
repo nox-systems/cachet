@@ -17,17 +17,19 @@ silently never stores surfaces as a failure the way it would in
 production.
 
 Outbound calls have the same treatment. The driver runs a stub server
-that plays two roles: the OIDC JWKS endpoint, holding a per-run RSA
-keypair, and the GitHub API endpoints the verdict path calls (`/user` and
-org membership), answering one known laptop token and counting hits so
-the scenarios can prove the KV verdict cache serves repeat reads. The
-worker reaches both through the `CACHET_JWKS_URL` and
-`CACHET_GITHUB_API_URL` variables, which the driver passes with
-`wrangler dev --var`; auth scenarios mint RS256 tokens against the stub's
-private key, so a verification that silently skips would fail the matrix.
-The lane's ed25519 signing secret enters as `.dev.vars`, the same way a
-deployment's secret enters as a binding; the file is written before the
-write scenarios, deleted when the lane ends, and gitignored.
+that plays three roles: the OIDC JWKS endpoint, holding a per-run RSA
+keypair; the OAuth web endpoint, exchanging one known code for a member
+token and one for an outsider token; and the GitHub API endpoints the
+verdict path calls (`/user` and org membership), counting hits so the
+scenarios can prove the KV verdict cache serves repeat reads. The worker
+reaches them through the `CACHET_JWKS_URL`, `CACHET_GITHUB_API_URL`, and
+`CACHET_GITHUB_WEB_URL` variables, which the driver passes with
+`wrangler dev --var`; auth scenarios mint RS256 tokens against the
+stub's private key, so a verification that silently skips would fail the
+matrix. The lane's ed25519 signing secret and the OAuth client secret
+enter as `.dev.vars`, the same way a deployment's secrets enter as
+bindings; the file is written before the write scenarios, deleted when
+the lane ends, and gitignored.
 
 The lane covers the read path, the write path, and the API surface so
 far: the handshake body and its headers; narinfo and NAR serving with
@@ -41,7 +43,11 @@ upload through a signed narinfo with both signatures and the file facts;
 the multipart quartet with its record, part-size enforcement, replay, and
 abort; read verdicts cached in KV for both the admit and the deny
 direction; lease renewal bound to the token's own claims with
-forbidden_ref and forbidden_project refusals; the project listing; and
-the public config document. GC scenarios join it with the collector.
+forbidden_ref and forbidden_project refusals; the project listing; the
+public config document; and the browser login flow, from the login
+redirect's exact parameters through state consumption (a replayed state
+never reaches the exchange), the outsider's forbidden_org refusal, the
+session cookie's attributes, and logout's session deletion. GC scenarios
+join it with the collector.
 
 Run it: `just workerd`.

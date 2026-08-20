@@ -69,6 +69,12 @@ pub enum ClientError {
     /// A bucket operation the request depended on failed. Distinct from
     /// every 4xx because the client did nothing wrong.
     StorageUnavailable,
+    /// The OAuth callback query did not parse, or one of its required
+    /// parameters was absent.
+    MalformedOauth,
+    /// The OAuth state named in a callback never existed, was already
+    /// consumed, or outlived its window: the flow starts over.
+    OauthStateUnknown,
 }
 
 impl ClientError {
@@ -85,8 +91,9 @@ impl ClientError {
             | Self::UnsupportedCompression
             | Self::StorePathMismatch
             | Self::FileHashMismatch
-            | Self::NarHashMismatch => 400,
-            Self::Unauthorized => 401,
+            | Self::NarHashMismatch
+            | Self::MalformedOauth => 400,
+            Self::Unauthorized | Self::OauthStateUnknown => 401,
             Self::ForbiddenOrg | Self::ForbiddenRef | Self::ForbiddenProject => 403,
             Self::NotFound | Self::UploadUnknown => 404,
             Self::NarinfoNarMissing => 409,
@@ -121,6 +128,8 @@ impl ClientError {
             Self::BodyTooLarge => "body_too_large",
             Self::AuthUnavailable => "auth_unavailable",
             Self::StorageUnavailable => "storage_unavailable",
+            Self::MalformedOauth => "malformed_oauth",
+            Self::OauthStateUnknown => "oauth_state_unknown",
         }
     }
 
@@ -151,6 +160,8 @@ impl ClientError {
             Self::BodyTooLarge => "body over its cap",
             Self::AuthUnavailable => "authentication backend unavailable",
             Self::StorageUnavailable => "storage backend unavailable",
+            Self::MalformedOauth => "oauth request did not parse",
+            Self::OauthStateUnknown => "oauth state unknown or expired",
         }
     }
 }

@@ -18,7 +18,7 @@ use worker::{Env, Fetch, Headers, Method, Request};
 use crate::log;
 
 /// The KV binding for verdicts, sessions, and OAuth state.
-pub(super) const KV_BINDING: &str = "CACHET_KV";
+pub(crate) const KV_BINDING: &str = "CACHET_KV";
 
 /// The read-time identity: who the request authenticates as, and how.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,7 +77,7 @@ async fn github_get(env: &Env, token: &str, path: &str) -> Result<(u16, String)>
 /// Returns the verdict to cache. API outage is never a verdict: it maps
 /// to auth_unavailable rather than a denial, so a client is told to
 /// retry, not that it is forbidden.
-async fn check_github_token(env: &Env, now: UnixMillis, token: &str) -> Result<Verdict> {
+pub(crate) async fn check_github_token(env: &Env, now: UnixMillis, token: &str) -> Result<Verdict> {
     let (status, body) = github_get(env, token, "/user").await?;
     if status != 200 {
         return Ok(Verdict {
@@ -199,7 +199,7 @@ async fn resolve_session(env: &Env, now: UnixMillis, session_id: &str) -> Result
 }
 
 /// Pull a session id off a Cookie header, if one carries it.
-pub(super) fn session_id_from(cookie_header: Option<&str>) -> Option<String> {
+pub(crate) fn session_id_from(cookie_header: Option<&str>) -> Option<String> {
     let header = cookie_header?;
     for part in header.split(';') {
         let part = part.trim();

@@ -11,6 +11,7 @@ mod api;
 mod auth;
 mod error;
 mod log;
+mod oauth;
 mod read;
 mod roots;
 mod verdict;
@@ -42,6 +43,12 @@ async fn fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
         }
         if path == "/api/public/config" && method == Method::Get {
             return api::public_config(&env);
+        }
+        if path == "/_auth/login" && method == Method::Get {
+            return oauth::login(&env, now).await;
+        }
+        if path == "/_auth/callback" && method == Method::Get {
+            return oauth::callback(&env, now, &req).await;
         }
         if path == "/roots" || path == "/roots/" {
             let authorized = verdict::authorize_read(&env, now, &req).await;
@@ -108,6 +115,10 @@ async fn fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
             };
             return roots::renew_lease(&env, &config, &identity, &project, now, req).await;
         }
+    }
+
+    if path == "/logout" && method == Method::Post {
+        return oauth::logout(&env, &req).await;
     }
 
     if path.ends_with(NARINFO_KEY_SUFFIX) && method == Method::Put {

@@ -67,6 +67,8 @@ fn the_error_code_table_is_locked() {
         ClientError::BodyTooLarge,
         ClientError::AuthUnavailable,
         ClientError::StorageUnavailable,
+        ClientError::MalformedOauth,
+        ClientError::OauthStateUnknown,
     ];
     let body = table
         .iter()
@@ -96,6 +98,8 @@ fn the_error_code_table_is_locked() {
     body_too_large 413
     auth_unavailable 503
     storage_unavailable 503
+    malformed_oauth 400
+    oauth_state_unknown 401
     ");
 }
 

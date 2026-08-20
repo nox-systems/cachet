@@ -41,7 +41,11 @@ const jwksJwk = {
 // path: it recognizes exactly one good laptop token, and it counts its
 // hits so the KV-verdict caching is observable.
 const GOOD_LAPTOP_TOKEN = "lane-laptop-token";
-const stubHits = { user: 0, memberships: 0 };
+const stubHits = { user: 0, memberships: 0, exchange: 0 };
+const LANE_OAUTH_CODE = "lane-code";
+const LANE_OUTSIDER_CODE = "lane-code-outsider";
+const OUTSIDER_TOKEN = "lane-outsider-token";
+const LANE_OAUTH_SECRET = "lane-oauth-secret";
 const stubServer = http.createServer((req, res) => {
   const json = (status, body) => {
     res.writeHead(status, { "content-type": "application/json" });
@@ -50,12 +54,44 @@ const stubServer = http.createServer((req, res) => {
   if (req.url === "/jwks.json") {
     return json(200, { keys: [jwksJwk] });
   }
+  if (req.url === "/login/oauth/access_token" && req.method === "POST") {
+    stubHits.exchange += 1;
+    let form = "";
+    req.on("data", (chunk) => (form += chunk));
+    req.on("end", () => {
+      const params = new URLSearchParams(form);
+      const secretsOk =
+        params.get("client_id") === "lane-oauth-client" &&
+        params.get("client_secret") === LANE_OAUTH_SECRET;
+      const token =
+        params.get("code") === LANE_OAUTH_CODE
+          ? GOOD_LAPTOP_TOKEN
+          : params.get("code") === LANE_OUTSIDER_CODE
+            ? OUTSIDER_TOKEN
+            : null;
+      json(
+        200,
+        secretsOk && token
+          ? {
+              access_token: token,
+              token_type: "bearer",
+              scope: "read:org read:user",
+            }
+          : { error: "bad_verification_code" },
+      );
+    });
+    return;
+  }
   const bearer = (req.headers.authorization ?? "").replace("Bearer ", "");
   if (req.url === "/user") {
     stubHits.user += 1;
-    return bearer === GOOD_LAPTOP_TOKEN
-      ? json(200, { login: "lane-dev" })
-      : json(401, { message: "bad credentials" });
+    if (bearer === GOOD_LAPTOP_TOKEN) {
+      return json(200, { login: "lane-dev" });
+    }
+    if (bearer === OUTSIDER_TOKEN) {
+      return json(200, { login: "lane-outsider" });
+    }
+    return json(401, { message: "bad credentials" });
   }
   if (req.url.startsWith("/orgs/")) {
     stubHits.memberships += 1;
@@ -183,6 +219,8 @@ async function scenario(name, seed, assertions) {
       `CACHET_JWKS_URL:${jwksUrl}`,
       "--var",
       `CACHET_GITHUB_API_URL:${githubApiUrl}`,
+      "--var",
+      `CACHET_GITHUB_WEB_URL:${githubApiUrl}`,
     ],
     { detached: true, stdio: ["ignore", "pipe", "pipe"] },
   );
@@ -405,7 +443,10 @@ await scenario(
 
 // The write scenarios need the signing key present as a deployment secret;
 // the driver writes .dev.vars and removes it when they finish.
-await writeFile(devVarsPath, `CACHET_SIGNING_KEY=${laneSigningSecret}\n`);
+await writeFile(
+  devVarsPath,
+  `CACHET_SIGNING_KEY=${laneSigningSecret}\nGITHUB_OAUTH_CLIENT_SECRET=${LANE_OAUTH_SECRET}\n`,
+);
 try {
   await scenario(
     "writes verify, then sign",
@@ -849,6 +890,124 @@ try {
         });
         assert.equal(res.status, 404);
       });
+    },
+  );
+
+  await scenario(
+    "the browser flow mints one session per state",
+    async () => [[NAR_KEY, await readFile(path.join(fixturesDir, NAR_FILE))]],
+    async ({ base }) => {
+      const login = async () => {
+        const res = await fetch(`${base}/_auth/login`, { redirect: "manual" });
+        assert.equal(res.status, 302);
+        assert.equal(res.headers.get("cache-control"), "no-store");
+        const location = new URL(res.headers.get("location"));
+        assert.equal(
+          `${location.origin}${location.pathname}`,
+          `${githubApiUrl}/login/oauth/authorize`,
+        );
+        const params = location.searchParams;
+        assert.equal(params.get("client_id"), "lane-oauth-client");
+        assert.equal(
+          params.get("redirect_uri"),
+          "https://cachet.lane.invalid/_auth/callback",
+        );
+        assert.equal(params.get("scope"), "read:org read:user");
+        const state = params.get("state");
+        assert.match(state, /^[A-Za-z0-9_-]{22}$/);
+        return state;
+      };
+
+      const callback = (code, state) =>
+        fetch(`${base}/_auth/callback?code=${code}&state=${state}`, {
+          redirect: "manual",
+        });
+
+      await check("login redirects with exactly the contract", async () => {
+        await login();
+      });
+
+      await check("the callback issues a session and redirects", async () => {
+        const state = await login();
+        const res = await callback(LANE_OAUTH_CODE, state);
+        assert.equal(res.status, 302);
+        assert.equal(res.headers.get("location"), "https://ui.lane.invalid");
+        const cookies = res.headers.getSetCookie();
+        assert.equal(cookies.length, 1);
+        const cookie = cookies[0];
+        assert.match(cookie, /^cachet_session=[A-Za-z0-9_-]{22}; /);
+        for (const part of [
+          "HttpOnly",
+          "Secure",
+          "SameSite=Lax",
+          "Path=/",
+          "Max-Age=1209600",
+        ]) {
+          assert.ok(cookie.includes(part), `the cookie carries ${part}`);
+        }
+
+        const sessionId = cookie.match(
+          /^cachet_session=([A-Za-z0-9_-]{22});/,
+        )[1];
+        const read = await fetch(`${base}/${NAR_KEY}`, {
+          headers: { cookie: `cachet_session=${sessionId}` },
+        });
+        assert.equal(read.status, 200, "the session opens reads");
+
+        const exchanges = stubHits.exchange;
+        const replay = await callback(LANE_OAUTH_CODE, state);
+        assert.equal(replay.status, 401);
+        assert.equal((await replay.json()).code, "oauth_state_unknown");
+        assert.equal(
+          stubHits.exchange,
+          exchanges,
+          "a replayed state never reaches the exchange",
+        );
+
+        const logout = await fetch(`${base}/logout`, {
+          method: "POST",
+          headers: { cookie: `cachet_session=${sessionId}` },
+        });
+        assert.equal(logout.status, 204);
+        assert.ok(
+          logout.headers.get("set-cookie").includes("Max-Age=0"),
+          "logout expires the cookie",
+        );
+        const after = await fetch(`${base}/${NAR_KEY}`, {
+          headers: { cookie: `cachet_session=${sessionId}` },
+        });
+        assert.equal(after.status, 401, "the deleted session is dead");
+      });
+
+      await check(
+        "an unknown state is refused before the exchange",
+        async () => {
+          const exchanges = stubHits.exchange;
+          const res = await callback(LANE_OAUTH_CODE, "bogus-state-value");
+          assert.equal(res.status, 401);
+          assert.equal((await res.json()).code, "oauth_state_unknown");
+          assert.equal(stubHits.exchange, exchanges);
+        },
+      );
+
+      await check("a refused code answers 401", async () => {
+        const state = await login();
+        const res = await callback("wrong-code", state);
+        assert.equal(res.status, 401);
+        assert.equal((await res.json()).code, "unauthorized");
+        assert.equal(res.headers.getSetCookie().length, 0);
+      });
+
+      await check(
+        "a non-member login is refused with forbidden_org",
+        async () => {
+          const state = await login();
+          const res = await callback(LANE_OUTSIDER_CODE, state);
+          assert.equal(res.status, 403);
+          assert.equal((await res.json()).code, "forbidden_org");
+          assert.equal(res.headers.getSetCookie().length, 0);
+        },
+      );
     },
   );
 } finally {
