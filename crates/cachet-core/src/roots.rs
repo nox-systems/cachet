@@ -66,25 +66,6 @@ pub fn bound_project_list(projects: &[ProjectName]) -> Result<()> {
     Ok(())
 }
 
-/// The JSON body `GET /roots` returns: two-space indent, trailing newline,
-/// names in listing order (which is bucket order, which is sorted).
-#[must_use]
-pub fn serialize_project_list(projects: &[ProjectName]) -> String {
-    #[derive(serde::Serialize)]
-    struct ProjectList {
-        projects: Vec<String>,
-    }
-    let list = ProjectList {
-        projects: projects
-            .iter()
-            .map(|project| project.as_str().to_string())
-            .collect(),
-    };
-    let mut body = serde_json::to_string_pretty(&list).expect("string fields");
-    body.push('\n');
-    body
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

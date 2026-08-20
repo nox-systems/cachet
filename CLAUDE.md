@@ -71,10 +71,11 @@ skipping.
 
 ## §8 The manifest gates
 
-Two bijections keep docs and runs honest, both enforced by scripts in
+Three bijections keep docs and runs honest, all enforced by scripts in
 `scripts/`: the §11 manifest against the repo's non-ADR Markdown
-(check-doc-manifest.sh), and docs/testing/lanes.toml against the lane docs
-and CI jobs (check-lane-manifest.sh).
+(check-doc-manifest.sh), docs/testing/lanes.toml against the lane docs
+and CI jobs (check-lane-manifest.sh), and cachet-api's route descriptors
+against the committed docs/openapi.yaml (check-openapi-drift.sh).
 
 ## §9 The lanes
 

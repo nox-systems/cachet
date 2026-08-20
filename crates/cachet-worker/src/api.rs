@@ -40,15 +40,30 @@ pub fn public_config(env: &Env) -> worker::Result<Response> {
         Err(_) => return crate::error::problem_response(ClientError::AuthUnavailable),
     };
     log::event("info", "api.public_config", &[]);
-    let body = serde_json::json!({
-        "oauthClientId": client_id,
-        "orgs": config.orgs,
-        "host": host,
-        "publicKey": public_key,
+    // The body is cachet-api's shared type: the served wire and the
+    // published OpenAPI schema cannot drift apart here.
+    let body = serde_json::to_string(&cachet_api::PublicConfig {
+        oauth_client_id: client_id,
+        orgs: config.orgs,
+        host,
+        public_key,
     })
-    .to_string();
+    .expect("the config fields serialize");
     let headers = worker::Headers::new();
     headers.set("content-type", "application/json")?;
     headers.set("cache-control", "no-store")?;
     Ok(Response::ok(body)?.with_headers(headers))
 }
+
+/// `/api/openapi.json`: the committed generated document, served verbatim
+/// so the drift gate and the served bytes check the same artifact.
+pub fn openapi_document() -> worker::Result<Response> {
+    let headers = worker::Headers::new();
+    headers.set("content-type", "application/yaml")?;
+    headers.set("cache-control", "public, max-age=300")?;
+    Ok(Response::ok(OPENAPI_YAML)?.with_headers(headers))
+}
+
+// why: serving reads the same committed file the drift gate regenerates,
+// so a spec change that forgets to regenerate fails CI, not clients.
+const OPENAPI_YAML: &str = include_str!("../../../docs/openapi.yaml");

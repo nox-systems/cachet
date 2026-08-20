@@ -47,7 +47,9 @@ forbidden_ref and forbidden_project refusals; the project listing; the
 public config document; and the browser login flow, from the login
 redirect's exact parameters through state consumption (a replayed state
 never reaches the exchange), the outsider's forbidden_org refusal, the
-session cookie's attributes, and logout's session deletion. GC scenarios
-join it with the collector.
+session cookie's attributes, and logout's session deletion. The served
+OpenAPI document is asserted byte-identical to the committed one, which is
+the served half of the drift bijection (CLAUDE.md §8). GC scenarios join
+it with the collector.
 
 Run it: `just workerd`.
