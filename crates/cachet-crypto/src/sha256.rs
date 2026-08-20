@@ -10,6 +10,18 @@ pub fn sha256(bytes: &[u8]) -> [u8; 32] {
     hasher.finalize().into()
 }
 
+/// Lowercase hex of a digest, for the KV keys that index tokens by their
+/// hash rather than by the token itself.
+pub fn hex_digest(digest: &[u8; 32]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(64);
+    for byte in digest {
+        out.push(char::from(HEX[usize::from(byte >> 4)]));
+        out.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    out
+}
+
 /// The incremental hasher: one allocation-free driver for the tee paths in
 /// the upload verification pipeline.
 #[derive(Debug, Default, Clone)]

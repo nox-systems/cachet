@@ -19,6 +19,7 @@ pub mod multipart;
 pub mod narinfo;
 pub mod problem;
 pub mod read;
+pub mod roots;
 pub mod roots_payload;
 pub mod types;
 pub mod upload_record;

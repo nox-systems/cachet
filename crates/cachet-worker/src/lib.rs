@@ -7,17 +7,20 @@
 
 #![forbid(unsafe_code)]
 
+mod api;
 mod auth;
 mod error;
 mod log;
 mod read;
+mod roots;
+mod verdict;
 mod write;
 
-use cachet_core::constants::NARINFO_KEY_SUFFIX;
+use cachet_core::constants::{NARINFO_KEY_SUFFIX, ROOTS_KEY_PREFIX};
 use cachet_core::error::ClientError;
 use cachet_core::keys::{parse_nar_request_path, parse_narinfo_request_path};
 use cachet_core::read::ObjectKind;
-use cachet_core::types::UnixMillis;
+use cachet_core::types::{ProjectName, UnixMillis};
 use worker::{Context, Env, Method, Request, Response, Result, event};
 
 /// The fetch entry point. The check order is the contract: key grammar
@@ -37,11 +40,36 @@ async fn fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
         if path == "/nix-cache-info" {
             return read::serve_cache_info();
         }
+        if path == "/api/public/config" && method == Method::Get {
+            return api::public_config(&env);
+        }
+        if path == "/roots" || path == "/roots/" {
+            let authorized = verdict::authorize_read(&env, now, &req).await;
+            if let Err(code) = authorized {
+                return error::problem_response(code);
+            }
+            return roots::list_projects(&env).await;
+        }
+        if let Some(name) = path.strip_prefix(&format!("/{ROOTS_KEY_PREFIX}")) {
+            let project = match ProjectName::parse(name) {
+                Ok(project) => project,
+                Err(code) => return error::problem_response(code),
+            };
+            let authorized = verdict::authorize_read(&env, now, &req).await;
+            if let Err(code) = authorized {
+                return error::problem_response(code);
+            }
+            return roots::read_lease(&env, &project).await;
+        }
         if path.starts_with("/nar/") {
             let key = match parse_nar_request_path(&path) {
                 Ok(key) => key,
                 Err(code) => return error::problem_response(code),
             };
+            let authorized = verdict::authorize_read(&env, now, &req).await;
+            if let Err(code) = authorized {
+                return error::problem_response(code);
+            }
             return match method {
                 Method::Head => read::head_object(&env, key.as_str(), ObjectKind::Nar).await,
                 _ => read::serve_object(&env, &ctx, &path, key.as_str(), ObjectKind::Nar).await,
@@ -59,6 +87,27 @@ async fn fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
             };
         }
         return error::problem_response(ClientError::NotFound);
+    }
+
+    if let Some(name) = path.strip_prefix(&format!("/{ROOTS_KEY_PREFIX}")) {
+        if method == Method::Post {
+            let project = match ProjectName::parse(name) {
+                Ok(project) => project,
+                Err(code) => return error::problem_response(code),
+            };
+            let identity = match authorize_write(&env, now, &req).await {
+                Ok(identity) => identity,
+                Err(code) => return error::problem_response(code),
+            };
+            // The claims that shape the document come from the token, and
+            // the branch the token ran on decides whether it may renew at
+            // all; renewing is the one route where ref matters.
+            let config = match auth::oidc_config(&env) {
+                Ok(config) => config,
+                Err(code) => return error::problem_response(code),
+            };
+            return roots::renew_lease(&env, &config, &identity, &project, now, req).await;
+        }
     }
 
     if path.ends_with(NARINFO_KEY_SUFFIX) && method == Method::Put {

@@ -250,6 +250,20 @@ pub fn verdict_fresh(verdict: &Verdict, now: UnixMillis) -> bool {
         < verdict_ttl_ms(verdict.org_member)
 }
 
+/// The session document at `sess/{id}`: minted only after a browser OAuth
+/// login proved org membership, so the record names the login and its
+/// issue time. Membership re-checks happen at mint; revocation after mint
+/// waits for the session's absolute expiry — the 14-day trade a 10-minute
+/// verdict TTL does not grant.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SessionRecord {
+    /// The GitHub login the session authenticates as.
+    pub login: String,
+    /// When the session was created, in epoch milliseconds.
+    #[serde(rename = "createdAtMs")]
+    pub created_at_ms: u64,
+}
+
 /// Whether a session created at `created_at_ms` is live at `now`. Absolute
 /// expiry: sessions do not roll, because a quiet laptop should not extend
 /// a credential horizon indefinitely.

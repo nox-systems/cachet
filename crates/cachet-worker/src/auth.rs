@@ -33,7 +33,7 @@ thread_local! {
 /// The deployment's OIDC configuration, read from its variables. Missing
 /// configuration cannot verify anything, so it answers auth_unavailable
 /// rather than fail open.
-fn oidc_config(env: &Env) -> cachet_core::error::Result<OidcConfig> {
+pub(crate) fn oidc_config(env: &Env) -> cachet_core::error::Result<OidcConfig> {
     let orgs = env
         .var("CACHET_ORGS")
         .map_err(|_| ClientError::AuthUnavailable)?
