@@ -1,0 +1,52 @@
+{
+  "cli_version": "0.10.2",
+  "checkpoint_id": "01M0GPNQJBF6W6RB5GA962HTQ7",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 5,
+  "files_touched": [
+    "Cargo.lock",
+    "crates/cachet-core/src/constants.rs",
+    "crates/cachet-core/src/lib.rs",
+    "crates/cachet-core/src/multipart.rs",
+    "crates/cachet-core/src/write.rs",
+    "crates/cachet-crypto/src/ed25519.rs",
+    "crates/cachet-crypto/src/rs256.rs",
+    "crates/cachet-crypto/tests/golden.rs",
+    "crates/cachet-worker/Cargo.toml",
+    "crates/cachet-worker/src/auth.rs",
+    "crates/cachet-worker/src/lib.rs",
+    "crates/cachet-worker/src/write.rs",
+    "fixtures/rs256/private.pem",
+    "fixtures/rs256/public.jwk.json",
+    "fixtures/rs256/signature.b64u",
+    "workerd/.gitignore",
+    "workerd/check.mjs",
+    "workerd/fixtures/signing-key.public",
+    "workerd/fixtures/signing-key.secret",
+    "workerd/wrangler.toml"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 51317243,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 51226112,
+    "output_tokens": 88777,
+    "api_call_count": 143,
+    "subagent_tokens": {
+      "input_tokens": 0,
+      "cache_creation_tokens": 0,
+      "cache_read_tokens": 0,
+      "output_tokens": 0,
+      "api_call_count": 0
+    }
+  }
+}
