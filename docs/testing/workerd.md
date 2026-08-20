@@ -1,7 +1,7 @@
 # The workerd lane
 
 The workerd lane runs the built worker bundle under `wrangler dev --local`,
-which is miniflare over the real workerd binary: R2, the Cache API,
+which is miniflare over the real workerd binary: R2, KV, the Cache API,
 waitUntil draining, and the module-pipeline semantics are the runtime's
 own rather than a mock's. Assertions reach the worker over real HTTP from
 `workerd/check.mjs`, a node script with no npm dependencies (the
@@ -16,12 +16,32 @@ and the driver matches them in the wrangler log stream, so a cache that
 silently never stores surfaces as a failure the way it would in
 production.
 
-The lane covers the read path today: the handshake body and its headers,
-narinfo and NAR serving with wire headers, positive and negative edge
-caching through the generation-scoped key space, HEAD semantics,
-problem+json rejections by shape and by exact bytes, the corrupt-
-generation bypass, and generation-zero behavior on an empty bucket.
-Write-path, auth, and GC scenarios join it with the modules that ship
-them.
+Outbound calls have the same treatment. The driver runs a stub server
+that plays two roles: the OIDC JWKS endpoint, holding a per-run RSA
+keypair, and the GitHub API endpoints the verdict path calls (`/user` and
+org membership), answering one known laptop token and counting hits so
+the scenarios can prove the KV verdict cache serves repeat reads. The
+worker reaches both through the `CACHET_JWKS_URL` and
+`CACHET_GITHUB_API_URL` variables, which the driver passes with
+`wrangler dev --var`; auth scenarios mint RS256 tokens against the stub's
+private key, so a verification that silently skips would fail the matrix.
+The lane's ed25519 signing secret enters as `.dev.vars`, the same way a
+deployment's secret enters as a binding; the file is written before the
+write scenarios, deleted when the lane ends, and gitignored.
+
+The lane covers the read path, the write path, and the API surface so
+far: the handshake body and its headers; narinfo and NAR serving with
+wire headers; positive and negative edge caching through the
+generation-scoped key space; HEAD semantics; problem+json rejections by
+shape and by exact bytes; the corrupt-generation bypass; generation-zero
+behavior on an empty bucket; the OIDC rejection matrix (wrong org, alg
+confusion, staleness, expired tokens); guard ordering (411 before 413,
+401 before 411); the verify-then-sign pipeline end to end, from a NAR
+upload through a signed narinfo with both signatures and the file facts;
+the multipart quartet with its record, part-size enforcement, replay, and
+abort; read verdicts cached in KV for both the admit and the deny
+direction; lease renewal bound to the token's own claims with
+forbidden_ref and forbidden_project refusals; the project listing; and
+the public config document. GC scenarios join it with the collector.
 
 Run it: `just workerd`.

@@ -197,6 +197,22 @@ pub const OAUTH_STATE_TTL_MS: u64 = 600_000;
 /// A browser session lives this long from its creation.
 pub const SESSION_TTL_MS: u64 = 14 * MILLIS_PER_DAY;
 
+/// Objects per bucket-listing page: a parametric ceiling, not a knob.
+pub const BUCKET_LIST_PAGE_LIMIT: usize = 1_000;
+
+/// The KV prefix under which GitHub-token verdicts live:
+/// `ghverdict/{sha256}`.
+pub const VERDICT_KEY_PREFIX: &str = "ghverdict/";
+
+/// The KV prefix under which browser sessions live: `sess/{id}`.
+pub const SESSION_KEY_PREFIX: &str = "sess/";
+
+/// The KV prefix for OAuth state tickets: `oauth-state/{state}`.
+pub const OAUTH_STATE_KEY_PREFIX: &str = "oauth-state/";
+
+/// The session cookie's name.
+pub const SESSION_COOKIE_NAME: &str = "cachet_session";
+
 /// Milliseconds in a day, the unit conversion used by the retention
 /// constants.
 pub const MILLIS_PER_DAY: u64 = 86_400_000;

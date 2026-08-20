@@ -13,11 +13,20 @@ rules = [
 binding = "CACHE_BUCKET"
 bucket_name = "cachet-lane"
 
+# Verdicts, sessions, and OAuth state live in KV; the lane namespace is
+# local-emulated, so the id is a label rather than an account resource.
+[[kv_namespaces]]
+binding = "CACHET_KV"
+id = "cachet-lane"
+
 # The lane deployment's auth configuration: a fixed org, audience, and
-# branch; CACHET_JWKS_URL joins per run via `wrangler dev --var`, pointing
-# at the driver's stub JWKS server (the URL is transport configuration;
-# the keys authenticate the tokens, not the address they came from).
+# branch; CACHET_JWKS_URL and CACHET_GITHUB_API_URL join per run via
+# `wrangler dev --var`, pointing at the driver's stub services (the URLs
+# are transport configuration; the keys authenticate the tokens, not the
+# address they came from).
 [vars]
 CACHET_ORGS = "lane-org"
 CACHET_AUDIENCE = "cachet-lane"
 CACHET_DEFAULT_BRANCH_REF = "refs/heads/main"
+CACHET_HOST = "cachet.lane.invalid"
+CACHET_OAUTH_CLIENT_ID = "lane-oauth-client"

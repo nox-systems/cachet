@@ -37,17 +37,38 @@ const jwksJwk = {
   kid: "lane-1",
   ...jwksKeys.publicKey.export({ format: "jwk" }),
 };
-const jwksServer = http.createServer((req, res) => {
+// The same server doubles as the GitHub API's stand-in for the verdict
+// path: it recognizes exactly one good laptop token, and it counts its
+// hits so the KV-verdict caching is observable.
+const GOOD_LAPTOP_TOKEN = "lane-laptop-token";
+const stubHits = { user: 0, memberships: 0 };
+const stubServer = http.createServer((req, res) => {
+  const json = (status, body) => {
+    res.writeHead(status, { "content-type": "application/json" });
+    res.end(JSON.stringify(body));
+  };
   if (req.url === "/jwks.json") {
-    res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ keys: [jwksJwk] }));
-  } else {
-    res.writeHead(404);
-    res.end();
+    return json(200, { keys: [jwksJwk] });
   }
+  const bearer = (req.headers.authorization ?? "").replace("Bearer ", "");
+  if (req.url === "/user") {
+    stubHits.user += 1;
+    return bearer === GOOD_LAPTOP_TOKEN
+      ? json(200, { login: "lane-dev" })
+      : json(401, { message: "bad credentials" });
+  }
+  if (req.url.startsWith("/orgs/")) {
+    stubHits.memberships += 1;
+    return bearer === GOOD_LAPTOP_TOKEN &&
+      req.url === "/orgs/lane-org/memberships/lane-dev"
+      ? json(200, { state: "active" })
+      : json(404, { message: "Not Found" });
+  }
+  json(404, { message: "Not Found" });
 });
-await new Promise((resolve) => jwksServer.listen(0, "127.0.0.1", resolve));
-const jwksUrl = `http://127.0.0.1:${jwksServer.address().port}/jwks.json`;
+await new Promise((resolve) => stubServer.listen(0, "127.0.0.1", resolve));
+const jwksUrl = `http://127.0.0.1:${stubServer.address().port}/jwks.json`;
+const githubApiUrl = `http://127.0.0.1:${stubServer.address().port}`;
 
 const b64url = (data) =>
   Buffer.from(data)
@@ -160,6 +181,8 @@ async function scenario(name, seed, assertions) {
       configPath,
       "--var",
       `CACHET_JWKS_URL:${jwksUrl}`,
+      "--var",
+      `CACHET_GITHUB_API_URL:${githubApiUrl}`,
     ],
     { detached: true, stdio: ["ignore", "pipe", "pipe"] },
   );
@@ -285,8 +308,16 @@ await scenario(
       assert.equal(await res.text(), "");
     });
 
-    await check("a NAR streams with its wire headers", async () => {
+    await check("a NAR read without a credential is 401", async () => {
       const res = await fetch(`${base}/${NAR_KEY}`);
+      assert.equal(res.status, 401);
+      assert.equal((await res.json()).code, "unauthorized");
+    });
+
+    await check("a NAR streams with its wire headers", async () => {
+      const res = await fetch(`${base}/${NAR_KEY}`, {
+        headers: { authorization: `Bearer ${GOOD_LAPTOP_TOKEN}` },
+      });
       const seeded = await readFile(path.join(fixturesDir, NAR_FILE));
       assert.equal(res.status, 200);
       assert.equal(res.headers.get("content-type"), "application/x-nix-nar");
@@ -387,6 +418,26 @@ try {
       const narBytes = await readFile(path.join(fixturesDir, NAR_FILE));
       const validToken = mint();
       const auth = (token) => ({ authorization: `Bearer ${token}` });
+
+      await check(
+        "the public config names orgs, host, and the deployment key",
+        async () => {
+          const res = await fetch(`${base}/api/public/config`);
+          assert.equal(res.status, 200);
+          assert.equal(res.headers.get("cache-control"), "no-store");
+          const body = await res.json();
+          assert.deepEqual(body.orgs, ["lane-org"]);
+          assert.equal(body.host, "cachet.lane.invalid");
+          assert.equal(typeof body.oauthClientId, "string");
+          const lanePublic = (
+            await readFile(
+              path.join(laneFixturesDir, "signing-key.public"),
+              "utf8",
+            )
+          ).trim();
+          assert.equal(body.publicKey, lanePublic);
+        },
+      );
 
       await check("a write without a credential is 401", async () => {
         const res = await fetch(`${base}/${NAR_KEY}`, {
@@ -643,7 +694,9 @@ try {
           body: JSON.stringify([{ partNumber: 1, etag }]),
         });
         assert.equal(res.status, 204, await res.text());
-        const got = await fetch(`${base}/${objectKey}`);
+        const got = await fetch(`${base}/${objectKey}`, {
+          headers: { authorization: `Bearer ${GOOD_LAPTOP_TOKEN}` },
+        });
         assert.equal(got.status, 200);
         assert.deepEqual(Buffer.from(await got.arrayBuffer()), partBytes);
       });
@@ -672,6 +725,132 @@ try {
       });
     },
   );
+
+  await scenario(
+    "verdict tokens gate NAR reads and cache in KV",
+    async () => [[NAR_KEY, await readFile(path.join(fixturesDir, NAR_FILE))]],
+    async ({ base }) => {
+      const laptop = { authorization: `Bearer ${GOOD_LAPTOP_TOKEN}` };
+
+      await check(
+        "a NAR read with a fresh verdict answers and caches",
+        async () => {
+          const first = await fetch(`${base}/${NAR_KEY}`, { headers: laptop });
+          assert.equal(first.status, 200);
+          const userHits = stubHits.user;
+          const memberHits = stubHits.memberships;
+          assert.ok(
+            userHits >= 1 && memberHits >= 1,
+            "the API served the miss",
+          );
+          const second = await fetch(`${base}/${NAR_KEY}`, { headers: laptop });
+          assert.equal(second.status, 200);
+          assert.equal(
+            stubHits.user,
+            userHits,
+            "the KV verdict served the hit",
+          );
+          assert.equal(stubHits.memberships, memberHits);
+        },
+      );
+
+      await check("a denied token caches the denial briefly", async () => {
+        const denied = { authorization: "Bearer wrong-token-entirely" };
+        const before = stubHits.user;
+        const first = await fetch(`${base}/${NAR_KEY}`, { headers: denied });
+        assert.equal(first.status, 401);
+        assert.equal(stubHits.user, before + 1, "the API answered the deny");
+        const second = await fetch(`${base}/${NAR_KEY}`, { headers: denied });
+        assert.equal(second.status, 401);
+        assert.equal(stubHits.user, before + 1, "the denial is cached too");
+      });
+    },
+  );
+
+  await scenario(
+    "leases renew against the token's own claims",
+    async () => [],
+    async ({ base }) => {
+      const laptop = { authorization: `Bearer ${GOOD_LAPTOP_TOKEN}` };
+      const payload = {
+        installables: [".#devShells.aarch64-darwin.default"],
+        storePaths: ["/nix/store/0123456789abcdfghijklmnpqrsvwxyz-bash-5.2"],
+      };
+
+      await check(
+        "a renewal off the default branch is 403 forbidden_ref",
+        async () => {
+          const res = await fetch(`${base}/roots/lane-org-lane-repo`, {
+            method: "POST",
+            headers: {
+              authorization: `Bearer ${mint({ ref: "refs/heads/feature" })}`,
+              "content-type": "application/json",
+            },
+            body: JSON.stringify(payload),
+          });
+          assert.equal(res.status, 403);
+          assert.equal((await res.json()).code, "forbidden_ref");
+        },
+      );
+
+      await check(
+        "a renewal for another repo is 403 forbidden_project",
+        async () => {
+          const res = await fetch(`${base}/roots/lane-org-their-repo`, {
+            method: "POST",
+            headers: {
+              authorization: `Bearer ${mint()}`,
+              "content-type": "application/json",
+            },
+            body: JSON.stringify(payload),
+          });
+          assert.equal(res.status, 403);
+          assert.equal((await res.json()).code, "forbidden_project");
+        },
+      );
+
+      await check("a valid renewal stores and reads back", async () => {
+        const res = await fetch(`${base}/roots/lane-org-lane-repo`, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${mint()}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify(payload),
+        });
+        assert.equal(res.status, 204, await res.text());
+        const readBack = await fetch(`${base}/roots/lane-org-lane-repo`, {
+          headers: laptop,
+        });
+        assert.equal(readBack.status, 200);
+        const lease = await readBack.json();
+        assert.equal(lease.project, "lane-org-lane-repo");
+        assert.equal(lease.repository, "lane-org/lane-repo");
+        assert.equal(lease.ref, "refs/heads/main");
+        assert.deepEqual(lease.storePaths, payload.storePaths);
+        assert.equal(typeof lease.renewedAtMs, "number");
+
+        const list = await fetch(`${base}/roots`, { headers: laptop });
+        assert.equal(list.status, 200);
+        assert.equal(list.headers.get("cache-control"), "no-store");
+        assert.deepEqual(await list.json(), {
+          projects: ["lane-org-lane-repo"],
+        });
+      });
+
+      await check("a lease read without a credential is 401", async () => {
+        const res = await fetch(`${base}/roots/lane-org-lane-repo`);
+        assert.equal(res.status, 401);
+      });
+
+      await check("a missing lease is 404", async () => {
+        const res = await fetch(`${base}/roots/lane-org-nobody`, {
+          headers: laptop,
+        });
+        assert.equal(res.status, 404);
+      });
+    },
+  );
 } finally {
   await rm(devVarsPath, { force: true });
 }
@@ -682,3 +861,8 @@ if (failed > 0) {
   process.exit(1);
 }
 process.stdout.write("workerd lane green\n");
+// why: the stub server's listen handle (and its keep-alive sockets from the
+// worker's fetches) would hold the event loop open forever; close it so a
+// green lane exits.
+stubServer.closeAllConnections();
+stubServer.close();

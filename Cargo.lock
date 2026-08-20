@@ -121,6 +121,7 @@ dependencies = [
 name = "cachet-worker"
 version = "0.0.1"
 dependencies = [
+ "base64ct",
  "cachet-api",
  "cachet-core",
  "cachet-crypto",

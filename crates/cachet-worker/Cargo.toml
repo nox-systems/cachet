@@ -32,6 +32,9 @@ serde = { version = "1", features = ["derive"] }
 # why: the verify pipeline consumes R2 streams chunk by chunk; StreamExt is
 # the standard combinator over the ByteStream the worker crate hands back.
 futures-util = "0.3"
+# why: netrc clients carry the GitHub token as a HTTP Basic password, and
+# decoding it wants no crate: base64ct is already in the tree for JWTs.
+base64ct = "1"
 
 # why: on wasm32 this unifies every getrandom instance in the graph onto
 # the js backend; the worker is the only crate allowed to enable it, so
