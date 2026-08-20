@@ -12,6 +12,10 @@ workspace = true
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+# why: session ids and OAuth states format as base64url; hand-rolling the
+# alphabet would duplicate what the worker already brings for JWTs and HTTP
+# Basic, for zero behavior gain.
+base64ct = { version = "1", features = ["alloc"] }
 
 [dev-dependencies]
 hegeltest.workspace = true

@@ -30,3 +30,7 @@ CACHET_AUDIENCE = "cachet-lane"
 CACHET_DEFAULT_BRANCH_REF = "refs/heads/main"
 CACHET_HOST = "cachet.lane.invalid"
 CACHET_OAUTH_CLIENT_ID = "lane-oauth-client"
+# The OAuth web endpoints join per run via --var, like the API URL. The UI
+# origin is fixed here so the callback's redirect branch is lane-tested;
+# absent in a deployment without a UI, where the callback answers 204.
+CACHET_UI_ORIGIN = "https://ui.lane.invalid"

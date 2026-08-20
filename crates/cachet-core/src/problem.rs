@@ -49,6 +49,8 @@ mod tests {
             ClientError::BodyTooLarge,
             ClientError::AuthUnavailable,
             ClientError::StorageUnavailable,
+            ClientError::MalformedOauth,
+            ClientError::OauthStateUnknown,
         ] {
             let body = problem_body(error);
             let parsed: serde_json::Value =

@@ -17,6 +17,7 @@ pub mod keys;
 pub mod lease;
 pub mod multipart;
 pub mod narinfo;
+pub mod oauth;
 pub mod problem;
 pub mod read;
 pub mod roots;
