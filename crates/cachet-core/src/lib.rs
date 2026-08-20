@@ -22,3 +22,4 @@ pub mod read;
 pub mod roots_payload;
 pub mod types;
 pub mod upload_record;
+pub mod write;

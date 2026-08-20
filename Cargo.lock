@@ -125,7 +125,9 @@ dependencies = [
  "cachet-core",
  "cachet-crypto",
  "console_error_panic_hook",
+ "futures-util",
  "getrandom 0.2.17",
+ "serde",
  "serde_json",
  "worker",
 ]

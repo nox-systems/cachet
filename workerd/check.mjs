@@ -10,7 +10,9 @@
 
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import crypto from "node:crypto";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import http from "node:http";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -20,11 +22,76 @@ const configPath = path.join(repoRoot, "workerd", "wrangler.toml");
 const fixturesDir = path.resolve(
   process.argv[2] ?? path.join(repoRoot, "fixtures", "nix-signed"),
 );
+const laneFixturesDir = path.join(repoRoot, "workerd", "fixtures");
 
 const NARINFO_KEY = "qvqa04f0m85m0a6xxnan5vxnwg2jkgl9.narinfo";
 const NAR_FILE = "11lx23nn3dpc8mqp0ncnm6wqcxs6pfw32bp8n9c1fkafyzjvn16y.nar.zst";
 const NAR_KEY = `nar/${NAR_FILE}`;
 const OTHER_NARINFO = "33333333333333333333333333333333.narinfo";
+
+// The lane's OIDC stand-in: one RSA pair per run, a stub JWKS server on
+// loopback, and tokens minted fresh (they can never rot the way committed
+// token fixtures would).
+const jwksKeys = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
+const jwksJwk = {
+  kid: "lane-1",
+  ...jwksKeys.publicKey.export({ format: "jwk" }),
+};
+const jwksServer = http.createServer((req, res) => {
+  if (req.url === "/jwks.json") {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ keys: [jwksJwk] }));
+  } else {
+    res.writeHead(404);
+    res.end();
+  }
+});
+await new Promise((resolve) => jwksServer.listen(0, "127.0.0.1", resolve));
+const jwksUrl = `http://127.0.0.1:${jwksServer.address().port}/jwks.json`;
+
+const b64url = (data) =>
+  Buffer.from(data)
+    .toString("base64")
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replace(/=+$/, "");
+
+// Mint a lane OIDC token: the claims the policy requires, overridable key
+// by key for the rejection cases.
+function mint(overrides = {}) {
+  const { alg, ...claimOverrides } = overrides;
+  const header = b64url(
+    JSON.stringify({ alg: alg ?? "RS256", typ: "JWT", kid: "lane-1" }),
+  );
+  const nowSec = Math.floor(Date.now() / 1000);
+  const claims = {
+    iss: "https://token.actions.githubusercontent.com",
+    aud: "cachet-lane",
+    exp: nowSec + 600,
+    iat: nowSec - 10,
+    repository: "lane-org/lane-repo",
+    repository_owner: "lane-org",
+    ref: "refs/heads/main",
+    run_id: "41",
+    sha: "abc",
+    ...claimOverrides,
+  };
+  const payload = b64url(JSON.stringify(claims));
+  const signature = crypto.sign(
+    "RSA-SHA256",
+    Buffer.from(`${header}.${payload}`),
+    jwksKeys.privateKey,
+  );
+  return `${header}.${payload}.${b64url(signature)}`;
+}
+
+// The lane's signing key enters as .dev.vars, the same way a deployment's
+// would; it is committed material in workerd/fixtures, and the file is
+// deleted when the lane ends.
+const devVarsPath = path.join(repoRoot, "workerd", ".dev.vars");
+const laneSigningSecret = (
+  await readFile(path.join(laneFixturesDir, "signing-key.secret"), "utf8")
+).trimEnd();
 
 const results = [];
 async function check(name, fn) {
@@ -91,6 +158,8 @@ async function scenario(name, seed, assertions) {
       persist,
       "--config",
       configPath,
+      "--var",
+      `CACHET_JWKS_URL:${jwksUrl}`,
     ],
     { detached: true, stdio: ["ignore", "pipe", "pipe"] },
   );
@@ -302,6 +371,310 @@ await scenario(
     });
   },
 );
+
+// The write scenarios need the signing key present as a deployment secret;
+// the driver writes .dev.vars and removes it when they finish.
+await writeFile(devVarsPath, `CACHET_SIGNING_KEY=${laneSigningSecret}\n`);
+try {
+  await scenario(
+    "writes verify, then sign",
+    async () => [],
+    async ({ base }) => {
+      const narinfoFixture = await readFile(
+        path.join(fixturesDir, NARINFO_KEY),
+        "utf8",
+      );
+      const narBytes = await readFile(path.join(fixturesDir, NAR_FILE));
+      const validToken = mint();
+      const auth = (token) => ({ authorization: `Bearer ${token}` });
+
+      await check("a write without a credential is 401", async () => {
+        const res = await fetch(`${base}/${NAR_KEY}`, {
+          method: "PUT",
+          body: narBytes,
+        });
+        assert.equal(res.status, 401);
+        assert.equal((await res.json()).code, "unauthorized");
+      });
+
+      await check("a token from another org is 403", async () => {
+        const res = await fetch(`${base}/${NAR_KEY}`, {
+          method: "PUT",
+          headers: auth(mint({ repository_owner: "elsewhere" })),
+          body: narBytes,
+        });
+        assert.equal(res.status, 403);
+        assert.equal((await res.json()).code, "forbidden_org");
+      });
+
+      await check("alg confusion and staleness are 401", async () => {
+        for (const token of [
+          mint({ alg: "HS256" }),
+          mint({ exp: Math.floor(Date.now() / 1000) - 7200 }),
+          mint({ aud: "someone-else" }),
+        ]) {
+          const res = await fetch(`${base}/${NAR_KEY}`, {
+            method: "PUT",
+            headers: auth(token),
+            body: narBytes,
+          });
+          assert.equal(res.status, 401);
+        }
+      });
+
+      await check("a narinfo over its byte cap is 413", async () => {
+        const res = await fetch(`${base}/${NARINFO_KEY}`, {
+          method: "PUT",
+          headers: auth(validToken),
+          body: Buffer.alloc(70_000, 65),
+        });
+        assert.equal(res.status, 413);
+        assert.equal((await res.json()).code, "body_too_large");
+      });
+
+      await check("the fixture NAR stores", async () => {
+        const res = await fetch(`${base}/${NAR_KEY}`, {
+          method: "PUT",
+          headers: auth(validToken),
+          body: narBytes,
+        });
+        assert.equal(res.status, 204, await res.text());
+      });
+
+      await check(
+        "a narinfo naming another store path is refused",
+        async () => {
+          const body = narinfoFixture.replace(
+            "/nix/store/qvqa04f0m85m0a6xxnan5vxnwg2jkgl9-",
+            "/nix/store/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-",
+          );
+          const res = await fetch(`${base}/${NARINFO_KEY}`, {
+            method: "PUT",
+            headers: auth(validToken),
+            body,
+          });
+          assert.equal(res.status, 400);
+          assert.equal((await res.json()).code, "store_path_mismatch");
+        },
+      );
+
+      await check("an unverified compression is refused", async () => {
+        const body = narinfoFixture.replaceAll(".nar.zst", ".nar.xz");
+        const res = await fetch(`${base}/${NARINFO_KEY}`, {
+          method: "PUT",
+          headers: auth(validToken),
+          body,
+        });
+        assert.equal(res.status, 400);
+        assert.equal((await res.json()).code, "unsupported_compression");
+      });
+
+      await check("a narinfo whose NAR is absent is 409", async () => {
+        const body = narinfoFixture.replaceAll(
+          "11lx23nn3dpc8mqp0ncnm6wqcxs6pfw32bp8n9c1fkafyzjvn16y",
+          "w".repeat(52),
+        );
+        const res = await fetch(`${base}/${NARINFO_KEY}`, {
+          method: "PUT",
+          headers: auth(validToken),
+          body,
+        });
+        assert.equal(res.status, 409);
+        assert.equal((await res.json()).code, "narinfo_nar_missing");
+      });
+
+      await check("a nar-size lie is refused after measurement", async () => {
+        const body = narinfoFixture.replace(
+          /NarSize: (\d+)/,
+          (_all, size) => `NarSize: ${Number(size) + 1}`,
+        );
+        const res = await fetch(`${base}/${NARINFO_KEY}`, {
+          method: "PUT",
+          headers: auth(validToken),
+          body,
+        });
+        assert.equal(res.status, 400);
+        assert.equal((await res.json()).code, "nar_hash_mismatch");
+      });
+
+      await check(
+        "the fixture narinfo verifies and stores signed",
+        async () => {
+          const res = await fetch(`${base}/${NARINFO_KEY}`, {
+            method: "PUT",
+            headers: auth(validToken),
+            body: narinfoFixture,
+          });
+          assert.equal(res.status, 204, await res.text());
+        },
+      );
+
+      await check(
+        "the stored narinfo serves both signatures and the file facts",
+        async () => {
+          const res = await fetch(`${base}/${NARINFO_KEY}`);
+          assert.equal(res.status, 200);
+          const body = await res.text();
+          assert.match(
+            body,
+            /^StorePath: \/nix\/store\/qvqa04f0m85m0a6xxnan5vxnwg2jkgl9-/m,
+          );
+          assert.match(
+            body,
+            /^FileHash: sha256:11lx23nn3dpc8mqp0ncnm6wqcxs6pfw32bp8n9c1fkafyzjvn16y$/m,
+          );
+          assert.match(body, /^FileSize: \d+$/m);
+          assert.match(body, /^Sig: cachet-fixture-1:/m);
+          assert.match(body, /^Sig: lane-sign-1:/m);
+        },
+      );
+    },
+  );
+
+  await scenario(
+    "multipart assembles, replays, and refuses wrong shapes",
+    async () => [],
+    async ({ base }) => {
+      const validToken = mint();
+      const auth = { authorization: `Bearer ${validToken}` };
+      const objectKey = `nar/${"9".repeat(52)}.nar.zst`;
+      const partBytes = Buffer.from("not the fixture nar's bytes".repeat(4)); // 108 bytes
+
+      await check(
+        "creating an upload without a credential is 401",
+        async () => {
+          const res = await fetch(`${base}/${objectKey}?uploads`, {
+            method: "POST",
+          });
+          assert.equal(res.status, 401);
+        },
+      );
+
+      await check(
+        "creating an upload without the declared total is 411",
+        async () => {
+          const res = await fetch(`${base}/${objectKey}?uploads`, {
+            method: "POST",
+            headers: auth,
+          });
+          assert.equal(res.status, 411);
+          assert.equal((await res.json()).code, "length_required");
+        },
+      );
+
+      const created = await (async () => {
+        const res = await fetch(`${base}/${objectKey}?uploads`, {
+          method: "POST",
+          headers: {
+            ...auth,
+            "x-cachet-upload-bytes": String(partBytes.length),
+          },
+        });
+        assert.equal(res.status, 200);
+        const body = await res.json();
+        assert.equal(body.expectedParts, 1);
+        assert.equal(typeof body.uploadId, "string");
+        return body;
+      })();
+      const uploadId = created.uploadId;
+
+      await check(
+        "a part of the wrong size is refused once, cheaply",
+        async () => {
+          const res = await fetch(
+            `${base}/${objectKey}?uploadId=${uploadId}&partNumber=1`,
+            {
+              method: "PUT",
+              headers: auth,
+              body: Buffer.concat([partBytes, Buffer.from("!")]),
+            },
+          );
+          assert.equal(res.status, 400);
+          assert.equal((await res.json()).code, "part_size_mismatch");
+        },
+      );
+
+      await check("a part number outside the plan is refused", async () => {
+        const res = await fetch(
+          `${base}/${objectKey}?uploadId=${uploadId}&partNumber=2`,
+          {
+            method: "PUT",
+            headers: auth,
+            body: partBytes,
+          },
+        );
+        assert.equal(res.status, 400);
+        assert.equal((await res.json()).code, "part_number_invalid");
+      });
+
+      await check("an unknown upload id is 404", async () => {
+        const res = await fetch(
+          `${base}/${objectKey}?uploadId=no-such-upload&partNumber=1`,
+          {
+            method: "PUT",
+            headers: auth,
+            body: partBytes,
+          },
+        );
+        assert.equal(res.status, 404);
+        assert.equal((await res.json()).code, "upload_unknown");
+      });
+
+      const etag = await (async () => {
+        const res = await fetch(
+          `${base}/${objectKey}?uploadId=${uploadId}&partNumber=1`,
+          {
+            method: "PUT",
+            headers: auth,
+            body: partBytes,
+          },
+        );
+        assert.equal(res.status, 200);
+        const body = await res.json();
+        assert.equal(body.partNumber, 1);
+        assert.equal(typeof body.etag, "string");
+        return body.etag;
+      })();
+
+      await check("the upload completes and the object serves", async () => {
+        const res = await fetch(`${base}/${objectKey}?uploadId=${uploadId}`, {
+          method: "POST",
+          headers: auth,
+          body: JSON.stringify([{ partNumber: 1, etag }]),
+        });
+        assert.equal(res.status, 204, await res.text());
+        const got = await fetch(`${base}/${objectKey}`);
+        assert.equal(got.status, 200);
+        assert.deepEqual(Buffer.from(await got.arrayBuffer()), partBytes);
+      });
+
+      await check(
+        "a replayed completion answers 204 to the same parts",
+        async () => {
+          const res = await fetch(`${base}/${objectKey}?uploadId=${uploadId}`, {
+            method: "POST",
+            headers: auth,
+            body: JSON.stringify([{ partNumber: 1, etag }]),
+          });
+          assert.equal(res.status, 204, await res.text());
+        },
+      );
+
+      await check("aborting an unknown upload is 404", async () => {
+        const res = await fetch(
+          `${base}/${objectKey}?uploadId=no-such-upload`,
+          {
+            method: "DELETE",
+            headers: auth,
+          },
+        );
+        assert.equal(res.status, 404);
+      });
+    },
+  );
+} finally {
+  await rm(devVarsPath, { force: true });
+}
 
 const failed = results.filter(([status]) => status !== "ok").length;
 if (failed > 0) {
