@@ -1,0 +1,7 @@
+I want you to begin by looking at @../../cachet and the associated @../../cachet-action 
+
+You are in a folder here called cachet. This is also my project. The two cachet projects I've asked you to look at were created by me, but are not perfect and need a lot of cleanup work. 
+
+What I'd like is to basically turn cachet into a self-hostable service on top of anyone's own cloudlfare workers. I'd also like to rewrite it in rust (like @../sesame ) using workers-rs, I'd like to use https://github.com/cachix/nix-archive and https://github.com/cachix/nix-flake-lock and https://github.com/cachix/nix-derivation
+
+I want this service to have a UI and an authentication layer, so users can basically set it up in their cloudflare accounts (including myself), have it deploy all the relevant bits, use nix and justfiles itself, etc. and then have a UI where users can effectively login and get a CLI command that will setup the cache for them locally on their laptops. Or a CLI, that they can use to do device flow authentication, that's cool too. I want my CI to be able to use this, and my local laptops, no infisical stuff. This project will be OSS with Apache 2.0, we'll also use cargo deny, and all that fun stuff. Really look at @../sesame as a good reference for how to setup a project, it's 10/10. Think through formal proofs, the workers-rs restrictions, alchemy for orchestration, etc.
