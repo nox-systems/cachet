@@ -1,0 +1,84 @@
+# cargo-deny: the supply-chain gate, run by `just deny`. Every dependency is
+# attack surface, so the set is held to four checks: no known advisory, only
+# accepted licenses, no banned or duplicated crates, and crates.io as the
+# only source.
+
+[advisories]
+version = 2
+# A new advisory can land against an unchanged tree, so this check is a
+# time-varying signal: a `just deny` failure here means triage now, not
+# necessarily a regression in the change under review.
+yanked = "deny"
+# Each ignore is a deliberate, justified triage decision, revisited whenever
+# the dependency tree changes. An entry names the advisory and proves the
+# vulnerable path is unreachable here.
+ignore = [
+    # `paste` is unmaintained, not vulnerable: a compile-time proc-macro
+    # helper pulled in by hegeltest, the property lane's engine. It is a
+    # dev-graph dependency: its generated code appears only in test binaries
+    # and never enters the shipped worker. No replacement exists on the
+    # pinned hegeltest version; the entry dies with the crate when the tree
+    # moves.
+    "RUSTSEC-2024-0436",
+    # The Marvin advisory covers RSA private-key operations (decrypt and
+    # sign) leaking through timing. cachet has no private RSA key anywhere:
+    # the only RSA use is PUBLIC-key verification of GitHub OIDC tokens
+    # against presented JWKs, so the vulnerable path is unreachable. The
+    # `rsa` crate exists for hosts and tests; the deployed worker verifies
+    # with workerd crypto, at which point `rsa` leaves the production
+    # graph and this ignore dies with it.
+    "RUSTSEC-2023-0071",
+]
+
+[licenses]
+version = 2
+# Permissive licenses only. cachet ships as Apache-2.0 open source; copyleft
+# and unknown terms are refused so downstream redistribution stays simple.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    # why: the BSD Zero Clause license is OSI-approved and strictly more
+    # permissive than MIT (public-domain-equivalent, no attribution
+    # required), so it carries no obligation at all.
+    "0BSD",
+    # why: MPL-2.0 is weak, file-level copyleft: obligations trigger only
+    # when a covered file is modified and distributed, which cachet never
+    # does. Its consumer is webpki-roots, the CLI's certificate bundle.
+    "MPL-2.0",
+]
+confidence-threshold = 0.93
+# why: the workspace crates are publish = false; they are the product being
+# built, not dependencies, so the license check skips them.
+private = { ignore = true }
+
+[bans]
+# A duplicate major version is two copies of attack surface and a larger
+# bundle; flag it so a single version is chosen deliberately. A wildcard
+# version is refused outright: a dependency pins to a real range.
+multiple-versions = "warn"
+wildcards = "deny"
+# The internal crates depend on each other by path, which has no version and
+# reads as a wildcard; the ban still applies to external crates.
+allow-wildcard-paths = true
+# ring and aws-lc do not build for wasm32-unknown-unknown. The C zstd crate
+# does not either; ruzstd supplies the worker's only decompression need.
+# These crates are banned doc-first and this table is the enforcement: a
+# pull request that adds one fails here, before the wasm build would.
+deny = [
+    { name = "ring", reason = "does not build for wasm32-unknown-unknown" },
+    { name = "aws-lc-rs", reason = "does not build for wasm32-unknown-unknown" },
+    { name = "aws-lc-sys", reason = "does not build for wasm32-unknown-unknown" },
+    { name = "zstd", reason = "C library, does not build for wasm32-unknown-unknown; use ruzstd" },
+    { name = "zstd-sys", reason = "C library, does not build for wasm32-unknown-unknown; use ruzstd" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

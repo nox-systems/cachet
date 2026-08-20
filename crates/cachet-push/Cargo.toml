@@ -1,0 +1,14 @@
+[package]
+name = "cachet-push"
+description = "The push pipeline as a native library: store snapshot and diff, upstream filtering, zstd staging, NAR-before-narinfo upload, and lease renewal. Consumed by the CLI and the GitHub Action."
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+cachet-core = { path = "../cachet-core" }
+cachet-crypto = { path = "../cachet-crypto" }

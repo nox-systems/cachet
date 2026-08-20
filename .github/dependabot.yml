@@ -1,0 +1,32 @@
+# Dependabot owns the update rhythm: cargo, the flake lockfile, and
+# workflow actions, each weekly. Minor and patch cargo bumps group into one
+# PR; majors arrive alone (docs/contracts.md keeps a floor where one is
+# needed).
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+    commit-message:
+      prefix: deps
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: ci
+  # why: flake.lock re-locks weekly so dev-shell tools stay current against
+  # nixos-unstable without surprise upgrades mid-week.
+  - package-ecosystem: nix
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: deps

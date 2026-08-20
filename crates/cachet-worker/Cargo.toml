@@ -1,0 +1,30 @@
+[package]
+name = "cachet-worker"
+description = "The deployable Cloudflare Worker: workers-rs entry points, R2/KV/Cache adapters, the verify-then-sign pipeline, and the cron-driven GC driver."
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+# why: worker-build packages cdylib output; rlib lets the workerd tests and
+# other crates link against it on native targets.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+cachet-core = { path = "../cachet-core" }
+cachet-crypto = { path = "../cachet-crypto" }
+cachet-api = { path = "../cachet-api" }
+worker = "0.8.5"
+# why: panics land in worker logs with their real message instead of an
+# opaque unreachable trap.
+console_error_panic_hook = "0.1"
+
+# why: on wasm32 this unifies every getrandom instance in the graph onto
+# the js backend; the worker is the only crate allowed to enable it, so
+# library crates stay honest about owning no entropy (CLAUDE.md §5).
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }

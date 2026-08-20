@@ -1,0 +1,15 @@
+[package]
+name = "cachet-cli"
+description = "The cachet command-line client: device-flow login, nix.conf and netrc setup, push, keygen, and the auth-routing doctor probe."
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+cachet-core = { path = "../cachet-core" }
+cachet-crypto = { path = "../cachet-crypto" }
+cachet-push = { path = "../cachet-push" }

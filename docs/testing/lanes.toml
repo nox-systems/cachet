@@ -1,0 +1,17 @@
+# The lane table (CLAUDE.md §9). One [lane.<id>] table per test lane. The id
+# equals the CI job id, the just verb, and the living doc's basename in
+# docs/testing/. A lane earns its row when its CI job runs: the row, the
+# doc, and the job land in one commit. scripts/check-lane-manifest.sh
+# asserts the bijection both ways.
+
+[lane.unit]
+summary = "Logic, parsing, and state-machine bugs in the core crates."
+
+[lane.property]
+summary = "Pure laws over arbitrary inputs: round-trips, totality, GC plan laws."
+
+[lane.golden]
+summary = "The exact bytes of the wire contracts: real-nix vectors, emission shapes, error bodies."
+
+[lane.kani]
+summary = "Exhaustive proofs over the bounded, branch-tight cores: encodings, canonicalization, fingerprints."

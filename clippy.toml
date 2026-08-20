@@ -1,0 +1,15 @@
+# Ambient time breaks testing and worker determinism. Time comes from the
+# Clock seam, sampled once at request start. Entries name only paths that
+# resolve in the workspace's dependency graph, because clippy silently
+# ignores paths that do not.
+disallowed-methods = [
+    { path = "std::time::SystemTime::now", reason = "time comes from the Clock seam" },
+    { path = "std::time::Instant::now", reason = "the platform has no monotonic clock; time comes from the Clock seam" },
+    { path = "std::thread::spawn", reason = "the wasm target has no threads; the core stays single-threaded" },
+]
+# RandomState draws ambient entropy per map and its iteration order depends
+# on it. Deterministic layouts only: use BTreeMap and BTreeSet.
+disallowed-types = [
+    { path = "std::collections::HashMap", reason = "use BTreeMap; RandomState iteration order is nondeterministic" },
+    { path = "std::collections::HashSet", reason = "use BTreeSet; RandomState iteration order is nondeterministic" },
+]

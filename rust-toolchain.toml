@@ -1,0 +1,15 @@
+# The single source of truth for the compiler. The channel is an exact
+# version, never bare "stable": rustup, the flake (rust-overlay reads this
+# file), and CI resolve to the same compiler. wasm32 is the production
+# target; the four native triples cover CI and both dev-machine
+# architectures.
+[toolchain]
+channel = "1.95.0"
+components = ["rustfmt", "clippy"]
+targets = [
+    "wasm32-unknown-unknown",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+]
