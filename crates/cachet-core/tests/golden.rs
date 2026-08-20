@@ -1,7 +1,8 @@
 //! The golden lane's locked wires (docs/testing/golden.md): the exact
 //! bytes every consumer depends on. In-scope now: the cache handshake, the
-//! bound constants, the error-code table, the document shapes (lease,
-//! generation, narinfo canonical form, fingerprint). Snapshots run with
+//! bound constants, the error-code table, the problem document bodies,
+//! the read path's headers, and the document shapes (lease, generation,
+//! narinfo canonical form, fingerprint). Snapshots run with
 //! INSTA_UPDATE=no in the gate, so an intentional change updates the snap
 //! file in the same commit.
 
@@ -157,5 +158,58 @@ fn a_scrambled_narinfo_emits_the_canonical_form() {
     References: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bash-5.2 cccccccccccccccccccccccccccccccc-dep-3
     Sig: example:mhQ=
     X-Custom-Facts: kept because a cache is not an authority
+    ");
+}
+
+// The problem document is what a client matches on; its field order,
+// field set, and trailing newline are the contract.
+#[test]
+fn problem_bodies_are_byte_locked() {
+    insta::assert_snapshot!(
+        cachet_core::problem::problem_body(ClientError::MalformedKey),
+        @"{\"type\":\"about:blank\",\"status\":400,\"title\":\"key grammar rejected\",\"code\":\"malformed_key\"}\n"
+    );
+    insta::assert_snapshot!(
+        cachet_core::problem::problem_body(ClientError::AuthUnavailable),
+        @"{\"type\":\"about:blank\",\"status\":503,\"title\":\"authentication backend unavailable\",\"code\":\"auth_unavailable\"}\n"
+    );
+}
+
+// The read path's header outputs: the exact strings a cache and a nix
+// client see for each response class.
+#[test]
+fn read_response_headers_are_byte_locked() {
+    use std::fmt::Write as _;
+    let mut dump = String::new();
+    for (kind, size) in [
+        (cachet_core::read::ObjectKind::Narinfo, 1234_u64),
+        (cachet_core::read::ObjectKind::Nar, 9_876_543),
+    ] {
+        for (name, value) in cachet_core::read::object_response_headers(kind, size) {
+            writeln!(dump, "{name}: {value}").expect("writing a string");
+        }
+    }
+    for headers in [
+        cachet_core::read::not_found_response_headers(),
+        cachet_core::read::cache_info_response_headers(),
+        cachet_core::read::generation_response_headers(),
+    ] {
+        for (name, value) in headers {
+            writeln!(dump, "{name}: {value}").expect("writing a string");
+        }
+    }
+    insta::assert_snapshot!(dump, @"
+    content-type: text/x-nix-narinfo
+    content-length: 1234
+    cache-control: public, max-age=2592000, immutable
+    content-type: application/x-nix-nar
+    content-length: 9876543
+    cache-control: public, max-age=2592000, immutable
+    content-type: text/plain; charset=utf-8
+    cache-control: public, max-age=30
+    content-type: text/x-nix-cache-info
+    cache-control: public, max-age=300
+    content-type: application/json
+    cache-control: public, max-age=60
     ");
 }

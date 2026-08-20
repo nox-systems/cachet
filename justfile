@@ -82,6 +82,11 @@ deny:
 wasm:
     cd crates/cachet-worker && worker-build --release
 
+# the workerd lane: the built worker under wrangler dev --local, real R2
+# and Cache API semantics, asserted over real HTTP
+workerd: wasm
+    node workerd/check.mjs fixtures/nix-signed
+
 # the shipped-artifact hygiene gate: no banned runtimes, no secret-shaped strings
 wasm-hygiene:
     bash scripts/check-wasm-hygiene.sh

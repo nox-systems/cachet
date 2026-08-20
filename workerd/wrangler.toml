@@ -1,0 +1,14 @@
+# The workerd lane's deployment shape (docs/testing/workerd.md): the same
+# module directory and module rules the real deployment uses, against
+# workerd's local R2 emulation. The compatibility date trails the newest
+# workerd in the devshell, and raising it is a deliberate lane decision.
+name = "cachet-worker-lane"
+compatibility_date = "2026-05-01"
+main = "../crates/cachet-worker/build/index.js"
+rules = [
+  { type = "CompiledWasm", globs = ["**/*.wasm"], fallthrough = true },
+]
+
+[[r2_buckets]]
+binding = "CACHE_BUCKET"
+bucket_name = "cachet-lane"

@@ -14,4 +14,7 @@ summary = "Pure laws over arbitrary inputs: round-trips, totality, GC plan laws.
 summary = "The exact bytes of the wire contracts: real-nix vectors, emission shapes, error bodies."
 
 [lane.kani]
-summary = "Exhaustive proofs over the bounded, branch-tight cores: encodings, canonicalization, fingerprints."
+summary = "Proofs over scalar-symbolic, allocation-free cores: today the multipart plan-shape arithmetic."
+
+[lane.workerd]
+summary = "The built worker under workerd: real R2 and Cache API semantics for every route, asserted over real HTTP."
