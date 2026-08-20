@@ -215,8 +215,18 @@ pub const EDGE_CACHE_SIZE_CAP_BYTES: u64 = 512 * 1024 * 1024;
 /// can ever become a real request.
 pub const EDGE_CACHE_KEY_ORIGIN: &str = "https://cachet-edge.invalid";
 
+/// The `/nix-cache-info` body changes with configuration, so its edge
+/// lifetime is short: five minutes.
+pub const CACHE_INFO_EDGE_TTL_SECONDS: u32 = 300;
+
 /// The content type nix expects for a narinfo.
 pub const NARINFO_CONTENT_TYPE: &str = "text/x-nix-narinfo";
 
 /// The content type nix expects for a NAR object.
 pub const NAR_CONTENT_TYPE: &str = "application/x-nix-nar";
+
+/// The content type nix expects for `/nix-cache-info`.
+pub const CACHE_INFO_CONTENT_TYPE: &str = "text/x-nix-cache-info";
+
+/// The content type of an RFC 9457 problem document.
+pub const PROBLEM_CONTENT_TYPE: &str = "application/problem+json";

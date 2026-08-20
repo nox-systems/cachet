@@ -123,6 +123,36 @@ impl ClientError {
             Self::StorageUnavailable => "storage_unavailable",
         }
     }
+
+    /// The `title` field of the problem+json body: the code in words.
+    /// Occurrence specifics go to worker logs rather than the body, so the
+    /// body tells a client only what it may know.
+    pub const fn title(self) -> &'static str {
+        match self {
+            Self::MalformedKey => "key grammar rejected",
+            Self::MalformedNarinfo => "narinfo did not parse",
+            Self::MalformedRoots => "roots payload did not parse",
+            Self::MalformedAuth => "authorization header did not parse",
+            Self::PartNumberInvalid => "multipart part number out of range",
+            Self::PartSizeMismatch => "multipart part size is not the uniform size",
+            Self::CompletePartsMismatch => "multipart completion set is not the expected part set",
+            Self::UnsupportedCompression => "compression is not one the signing path verifies",
+            Self::StorePathMismatch => "store path and request key disagree",
+            Self::FileHashMismatch => "stored file hash disagrees with the narinfo",
+            Self::NarHashMismatch => "stored NAR hash disagrees with the narinfo",
+            Self::Unauthorized => "missing or invalid credential",
+            Self::ForbiddenOrg => "outside the configured org",
+            Self::ForbiddenRef => "not the configured default branch",
+            Self::ForbiddenProject => "project does not match the token's repository",
+            Self::NotFound => "no such object",
+            Self::UploadUnknown => "unknown upload",
+            Self::NarinfoNarMissing => "the narinfo's NAR is absent",
+            Self::LengthRequired => "write without a content length",
+            Self::BodyTooLarge => "body over its cap",
+            Self::AuthUnavailable => "authentication backend unavailable",
+            Self::StorageUnavailable => "storage backend unavailable",
+        }
+    }
 }
 
 impl fmt::Display for ClientError {
