@@ -22,7 +22,7 @@ ed25519-dalek = { version = "2", default-features = false, features = ["alloc", 
 # why: secret material is zeroized on drop where we hold it.
 zeroize = { version = "1", features = ["zeroize_derive"] }
 # why: pure-Rust zstd DECODER; the C crate does not build for wasm32.
-ruzstd = "0.7"
+ruzstd = "0.9"
 # why: base64 for key blobs and Sig values; base64url for JWKS integers.
 base64 = "0.22"
 # why: RS256 verification of GitHub OIDC JWTs; pure Rust, wasm-clean
