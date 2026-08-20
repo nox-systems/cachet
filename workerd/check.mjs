@@ -480,6 +480,21 @@ try {
         },
       );
 
+      await check("the served OpenAPI is the committed document", async () => {
+        const spec = await fetch(`${base}/api/openapi.json`);
+        assert.equal(spec.status, 200);
+        assert.equal(spec.headers.get("content-type"), "application/yaml");
+        const committed = await readFile(
+          path.join(repoRoot, "docs", "openapi.yaml"),
+          "utf8",
+        );
+        assert.equal(
+          await spec.text(),
+          committed,
+          "the served document is the committed one",
+        );
+      });
+
       await check("a write without a credential is 401", async () => {
         const res = await fetch(`${base}/${NAR_KEY}`, {
           method: "PUT",

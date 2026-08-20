@@ -18,6 +18,7 @@ check:
     just wasm
     just clippy-wasm
     just wasm-hygiene
+    just openapi-check
 
 # format the tree
 fmt:
@@ -77,6 +78,14 @@ scripts:
 # the impure gate: cargo deny fetches the advisory database
 deny:
     cargo deny check
+
+# regenerate docs/openapi.yaml from the route descriptors
+openapi:
+    cargo run -p cachet-api --features yaml-export --bin openapi > docs/openapi.yaml
+
+# the OpenAPI bijection: descriptors against the committed document
+openapi-check:
+    bash scripts/check-openapi-drift.sh
 
 # build the deployable worker bundle with worker-build
 wasm:

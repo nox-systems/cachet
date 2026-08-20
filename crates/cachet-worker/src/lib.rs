@@ -38,17 +38,8 @@ async fn fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
     let path = req.path();
 
     if method == Method::Get || method == Method::Head {
-        if path == "/nix-cache-info" {
-            return read::serve_cache_info();
-        }
-        if path == "/api/public/config" && method == Method::Get {
-            return api::public_config(&env);
-        }
-        if path == "/_auth/login" && method == Method::Get {
-            return oauth::login(&env, now).await;
-        }
-        if path == "/_auth/callback" && method == Method::Get {
-            return oauth::callback(&env, now, &req).await;
+        if let Some(response) = fixed_get_routes(&env, now, &req, &path, &method).await {
+            return response;
         }
         if path == "/roots" || path == "/roots/" {
             let authorized = verdict::authorize_read(&env, now, &req).await;
@@ -138,6 +129,37 @@ async fn fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
     }
 
     error::problem_response(ClientError::NotFound)
+}
+
+/// The GETs that match whole fixed paths, matched before any key grammar
+/// touches the request: the handshake, the two discovery documents, and
+/// the browser login's first leg.
+async fn fixed_get_routes(
+    env: &Env,
+    now: UnixMillis,
+    req: &Request,
+    path: &str,
+    method: &Method,
+) -> Option<Result<Response>> {
+    if path == "/nix-cache-info" {
+        return Some(read::serve_cache_info());
+    }
+    if *method != Method::Get {
+        return None;
+    }
+    if path == "/api/public/config" {
+        return Some(api::public_config(env));
+    }
+    if path == "/api/openapi.json" {
+        return Some(api::openapi_document());
+    }
+    if path == "/_auth/login" {
+        return Some(oauth::login(env, now).await);
+    }
+    if path == "/_auth/callback" {
+        return Some(oauth::callback(env, now, req).await);
+    }
+    None
 }
 
 /// The four write verbs on the NAR key space: the single PUT and the

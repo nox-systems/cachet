@@ -47,8 +47,10 @@ fn rejected(code: ClientError) -> Result<Response> {
 }
 
 /// A JSON answer for the multipart verbs.
-fn json_response(body: &serde_json::Value) -> Result<Response> {
-    let response = Response::ok(body.to_string())?;
+fn json_response<B: serde::Serialize>(body: &B) -> Result<Response> {
+    // why: these bodies are the deployment's own typed shapes, which always
+    // serialize.
+    let response = Response::ok(serde_json::to_string(body).expect("typed bodies serialize"))?;
     let headers = worker::Headers::new();
     headers.set("content-type", "application/json")?;
     Ok(response.with_headers(headers))
@@ -158,10 +160,10 @@ pub async fn create_multipart(
         "write.multipart_created",
         &[("expectedParts", shape.count.to_string())],
     );
-    json_response(&serde_json::json!({
-        "uploadId": upload_id,
-        "expectedParts": shape.count,
-    }))
+    json_response(&cachet_api::UploadCreated {
+        upload_id,
+        expected_parts: shape.count,
+    })
 }
 
 /// Load the bookkeeping record for an upload id, translatable failures
@@ -245,10 +247,10 @@ pub async fn upload_part(
         .upload_part(part_u16, FixedLengthStream::wrap(body, length))
         .await
     {
-        Ok(part) => json_response(&serde_json::json!({
-            "partNumber": part.part_number(),
-            "etag": part.etag(),
-        })),
+        Ok(part) => json_response(&cachet_api::UploadedPartBody {
+            part_number: part.part_number(),
+            etag: part.etag(),
+        }),
         Err(failure) => {
             log::event(
                 "error",

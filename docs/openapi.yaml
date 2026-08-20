@@ -1,0 +1,767 @@
+openapi: 3.1.0
+info:
+  title: cachet
+  description: A self-hostable nix binary cache on Cloudflare Workers. Writes carry GitHub OIDC credentials; reads carry a GitHub token or the browser session cookie; the narinfo grammar and the public handshake are unauthenticated. Every route that reads a credential can additionally answer 400 with code=malformed_auth when the Authorization header itself is undecodable.
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+  version: 0.0.1
+paths:
+  /_auth/callback:
+    get:
+      tags:
+      - routes
+      summary: |-
+        `GET /_auth/callback`: consume the state, exchange the code, gate on
+        org membership, and set the session cookie. The state is single-use:
+        it is deleted before its validity is judged.
+      operationId: auth_callback
+      responses:
+        '204':
+          description: 'Logged in; Set-Cookie: the session (no UI origin configured)'
+        '302':
+          description: 'Logged in; Location: the configured UI origin, Set-Cookie: the session'
+        '400':
+          description: problem+json; code=malformed_oauth
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '401':
+          description: problem+json; code=oauth_state_unknown or unauthorized
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '403':
+          description: problem+json; code=forbidden_org
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '503':
+          description: problem+json; code=auth_unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+  /_auth/login:
+    get:
+      tags:
+      - routes
+      summary: |-
+        `GET /_auth/login`: begin the browser flow. Redirects to GitHub with
+        the state stored in KV for ten minutes.
+      operationId: auth_login
+      responses:
+        '302':
+          description: 'Location: the GitHub authorize URL; cache-control no-store'
+        '503':
+          description: problem+json; code=auth_unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+  /api/openapi.json:
+    get:
+      tags:
+      - routes
+      summary: |-
+        `GET /api/openapi.json`: this document, served as the committed yaml
+        so the served bytes are the drift-checked bytes.
+      operationId: openapi_get
+      responses:
+        '200':
+          description: The generated OpenAPI document, byte-identical to the committed docs/openapi.yaml
+          content:
+            application/yaml: {}
+  /api/public/config:
+    get:
+      tags:
+      - routes
+      summary: |-
+        `GET /api/public/config`: discovery for the CLI and the browser flow.
+        Unauthenticated and uncacheable.
+      operationId: public_config_get
+      responses:
+        '200':
+          description: The deployment's public configuration; cache-control no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicConfig'
+        '503':
+          description: problem+json; code=auth_unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+  /logout:
+    post:
+      tags:
+      - routes
+      summary: '`POST /logout`: delete the session and expire the cookie. Idempotent.'
+      operationId: auth_logout
+      responses:
+        '204':
+          description: Set-Cookie expires the session cookie; cache-control no-store
+  /nar/{key}:
+    get:
+      tags:
+      - routes
+      summary: |-
+        `GET /nar/{key}`: one NAR, edge-cached for 30 days, byte-immutable.
+        Requires a read credential: a GitHub token as Bearer (or Basic
+        password, which is what nix's netrc support sends), or the browser
+        session cookie.
+      operationId: nar_get
+      parameters:
+      - name: key
+        in: path
+        description: 'The NAR object key: the 52-character sha256 nix base32 with an optional compression suffix'
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: The NAR bytes
+          content:
+            application/x-nix-nar: {}
+        '400':
+          description: problem+json; code=malformed_key
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '401':
+          description: problem+json; code=unauthorized
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '404':
+          description: problem+json; code=not_found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '503':
+          description: problem+json; code=auth_unavailable or storage_unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+    put:
+      tags:
+      - routes
+      summary: |-
+        `PUT /nar/{key}`: a whole NAR in one request, up to the single-PUT
+        cap. Larger uploads use the multipart quartet below.
+      operationId: nar_put
+      parameters:
+      - name: key
+        in: path
+        description: 'The NAR object key: sha256 nix base32 with an optional compression suffix'
+        required: true
+        schema:
+          type: string
+      requestBody:
+        description: The NAR bytes; the key names their sha256, so the content is self-addressing
+        content:
+          application/x-nix-nar:
+            schema:
+              type: string
+        required: true
+      responses:
+        '204':
+          description: Stored
+        '400':
+          description: problem+json; code=malformed_key
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '401':
+          description: problem+json; code=unauthorized
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '403':
+          description: problem+json; code=forbidden_org
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '411':
+          description: problem+json; code=length_required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '413':
+          description: problem+json; code=body_too_large
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '503':
+          description: problem+json; code=auth_unavailable or storage_unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+    post:
+      tags:
+      - routes
+      summary: |-
+        `POST /nar/{key}?uploads`: begin a multipart upload. The
+        `x-cachet-upload-bytes` header declares the total size and binds the
+        upload's part plan.
+      operationId: upload_create
+      parameters:
+      - name: key
+        in: path
+        description: The NAR object key
+        required: true
+        schema:
+          type: string
+      - name: uploads
+        in: query
+        description: Creates a multipart upload
+        required: true
+        schema:
+          type: boolean
+      - name: x-cachet-upload-bytes
+        in: header
+        description: The declared total size in bytes
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: The upload id
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadCreated'
+        '400':
+          description: problem+json; code=malformed_key
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '401':
+          description: problem+json; code=unauthorized
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '403':
+          description: problem+json; code=forbidden_org
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '411':
+          description: problem+json; code=length_required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '413':
+          description: problem+json; code=body_too_large
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '503':
+          description: problem+json; code=auth_unavailable or storage_unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+    delete:
+      tags:
+      - routes
+      summary: |-
+        `DELETE /nar/{key}?uploadId`: abandon an upload and let the storage
+        reclaim its parts.
+      operationId: upload_abort
+      parameters:
+      - name: key
+        in: path
+        description: The NAR object key
+        required: true
+        schema:
+          type: string
+      - name: uploadId
+        in: query
+        description: The upload to abort
+        required: true
+        schema:
+          type: string
+      responses:
+        '204':
+          description: Aborted
+        '400':
+          description: problem+json; code=malformed_key
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '401':
+          description: problem+json; code=unauthorized
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '403':
+          description: problem+json; code=forbidden_org
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '404':
+          description: problem+json; code=upload_unknown
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '503':
+          description: problem+json; code=auth_unavailable or storage_unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+    head:
+      tags:
+      - routes
+      summary: '`HEAD /nar/{key}`: metadata only; bypasses the edge cache.'
+      operationId: nar_head
+      parameters:
+      - name: key
+        in: path
+        description: The NAR object key
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: The GET's headers without the body
+        '400':
+          description: problem+json; code=malformed_key
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '401':
+          description: problem+json; code=unauthorized
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '404':
+          description: problem+json; code=not_found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+  /nix-cache-info:
+    get:
+      tags:
+      - routes
+      summary: |-
+        `GET /nix-cache-info`: the nix handshake. Immutable per deployment
+        generation; always 200 because it describes configuration, not data.
+      operationId: cache_info_get
+      responses:
+        '200':
+          description: StoreDir, WantMassQuery, and Priority, content-type text/x-nix-cache-info
+          content:
+            text/x-nix-cache-info: {}
+    head:
+      tags:
+      - routes
+      summary: '`HEAD /nix-cache-info`: header parity with the GET.'
+      operationId: cache_info_head
+      responses:
+        '200':
+          description: The GET's headers without the body
+  /roots:
+    get:
+      tags:
+      - routes
+      summary: '`GET /roots`: the projects holding leases. Requires a read credential.'
+      operationId: projects_list
+      responses:
+        '200':
+          description: The leased projects; cache-control no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectList'
+        '401':
+          description: problem+json; code=unauthorized
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '503':
+          description: problem+json; code=auth_unavailable or storage_unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+  /roots/{project}:
+    get:
+      tags:
+      - routes
+      summary: |-
+        `GET /roots/{project}`: one lease document as it was renewed. Requires
+        a read credential.
+      operationId: lease_get
+      parameters:
+      - name: project
+        in: path
+        description: The hyphenated owner-repo project name
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: The lease document the renewal stored; cache-control no-store
+          content:
+            application/json: {}
+        '400':
+          description: problem+json; code=malformed_key
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '401':
+          description: problem+json; code=unauthorized
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '404':
+          description: problem+json; code=not_found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '503':
+          description: problem+json; code=auth_unavailable or storage_unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+    post:
+      tags:
+      - routes
+      summary: |-
+        `POST /roots/{project}`: renew a lease. Claims (ref, repository, run,
+        commit) come from the verified OIDC token, never from the body, and
+        the project must be the token's own repository.
+      operationId: lease_renew
+      parameters:
+      - name: project
+        in: path
+        description: The hyphenated owner-repo project name
+        required: true
+        schema:
+          type: string
+      requestBody:
+        description: The store paths to keep and the installables that produced them
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RenewalBody'
+        required: true
+      responses:
+        '204':
+          description: The lease renewed
+        '400':
+          description: problem+json; code=malformed_key or malformed_roots
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '401':
+          description: problem+json; code=unauthorized
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '403':
+          description: problem+json; code=forbidden_org, forbidden_ref, or forbidden_project
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '411':
+          description: problem+json; code=length_required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '413':
+          description: problem+json; code=body_too_large
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '503':
+          description: problem+json; code=auth_unavailable or storage_unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+  /{hash}.narinfo:
+    get:
+      tags:
+      - routes
+      summary: |-
+        `GET /{hash}.narinfo`: one narinfo document, edge-cached for 30 days
+        and byte-immutable. Unauthenticated: the signature is the check.
+      operationId: narinfo_get
+      parameters:
+      - name: hash
+        in: path
+        description: The 32-character nix base32 store-path hash
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: The signed narinfo
+          content:
+            text/x-nix-narinfo: {}
+        '400':
+          description: problem+json; code=malformed_key
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '404':
+          description: problem+json; code=not_found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+    put:
+      tags:
+      - routes
+      summary: |-
+        `PUT /{hash}.narinfo`: the verify-then-sign pipeline. The stored NAR
+        is re-hashed compressed and decompressed before anything is signed.
+      operationId: narinfo_put
+      parameters:
+      - name: hash
+        in: path
+        description: The 32-character nix base32 store-path hash
+        required: true
+        schema:
+          type: string
+      requestBody:
+        description: The narinfo, as nix wrote it; unsigned or client-signed
+        content:
+          text/x-nix-narinfo:
+            schema:
+              type: string
+        required: true
+      responses:
+        '204':
+          description: Stored, signed with the deployment key
+        '400':
+          description: problem+json; code=malformed_key, malformed_narinfo, store_path_mismatch, unsupported_compression, nar_hash_mismatch, or file_hash_mismatch
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '401':
+          description: problem+json; code=unauthorized
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '403':
+          description: problem+json; code=forbidden_org
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '409':
+          description: problem+json; code=narinfo_nar_missing
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '411':
+          description: problem+json; code=length_required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '413':
+          description: problem+json; code=body_too_large
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '503':
+          description: problem+json; code=auth_unavailable or storage_unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+    head:
+      tags:
+      - routes
+      summary: |-
+        `HEAD /{hash}.narinfo`: metadata only; bypasses the edge cache so a
+        client can ask what is really stored without evicting anything.
+      operationId: narinfo_head
+      parameters:
+      - name: hash
+        in: path
+        description: The 32-character nix base32 store-path hash
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: The GET's headers without the body
+        '400':
+          description: problem+json; code=malformed_key
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '404':
+          description: problem+json; code=not_found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+components:
+  schemas:
+    ProblemBody:
+      type: object
+      description: |-
+        The RFC 9457 problem document every non-2xx answer carries. Described
+        here rather than serialized from it: the worker emits cachet-core's
+        problem writer, whose byte shape is golden-locked, and this type is
+        the document's schema for readers.
+      required:
+      - type
+      - status
+      - title
+      - code
+      properties:
+        code:
+          type: string
+          description: cachet's stable machine code, from the error-code table.
+        status:
+          type: integer
+          format: int32
+          description: The HTTP status, repeated in the body.
+          minimum: 0
+        title:
+          type: string
+          description: The code in words.
+        type:
+          type: string
+          description: Always `about:blank`.
+    ProjectList:
+      type: object
+      description: 'The `GET /roots` body: the projects currently holding leases.'
+      required:
+      - projects
+      properties:
+        projects:
+          type: array
+          items:
+            type: string
+          description: The hyphenated `owner-repo` project names.
+    PublicConfig:
+      type: object
+      description: |-
+        The `GET /api/public/config` body: everything a client needs to reach
+        the deployment's auth and verify its signatures, none of it secret.
+      required:
+      - oauthClientId
+      - orgs
+      - host
+      - publicKey
+      properties:
+        host:
+          type: string
+          description: |-
+            The deployment's host name, which is also its signing-key name
+            prefix.
+        oauthClientId:
+          type: string
+          description: 'The GitHub OAuth App''s client id: a public value.'
+        orgs:
+          type: array
+          items:
+            type: string
+          description: The GitHub orgs this deployment serves.
+        publicKey:
+          type: string
+          description: The deployment's ed25519 public key in nix's `name:base64` form.
+    RenewalBody:
+      type: object
+      description: |-
+        The `POST /roots/{project}` body: the store paths a project keeps
+        alive plus the installables that produced them.
+      required:
+      - installables
+      - storePaths
+      properties:
+        installables:
+          type: array
+          items:
+            type: string
+          description: The flake installables the job built.
+        storePaths:
+          type: array
+          items:
+            type: string
+          description: Full nix store paths whose closures must stay alive.
+    UploadCreated:
+      type: object
+      description: |-
+        The `POST /nar/{key}?uploads` body: the new upload's bearer id and the
+        part plan the declaration bound.
+      required:
+      - uploadId
+      - expectedParts
+      properties:
+        expectedParts:
+          type: integer
+          format: int64
+          description: How many parts the declared total implies.
+          minimum: 0
+        uploadId:
+          type: string
+          description: 'The upload id: a bearer token naming one in-flight upload.'
+    UploadedPartBody:
+      type: object
+      description: |-
+        The `PUT /nar/{key}?uploadId&partNumber` body: the stored part's
+        coordinates, which the completion body echoes back.
+      required:
+      - partNumber
+      - etag
+      properties:
+        etag:
+          type: string
+          description: The storage layer's part etag.
+        partNumber:
+          type: integer
+          format: int32
+          description: The one-based part number just stored.
+          minimum: 0

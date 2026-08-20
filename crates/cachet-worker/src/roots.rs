@@ -7,7 +7,7 @@ use cachet_core::auth::OidcConfig;
 use cachet_core::constants::{BUCKET_LIST_PAGE_LIMIT, ROOTS_BODY_BYTES_MAX, ROOTS_PROJECTS_MAX};
 use cachet_core::error::ClientError;
 use cachet_core::keys::{lease_key_for_project, project_from_lease_key};
-use cachet_core::roots::{bound_project_list, build_lease_renewal, serialize_project_list};
+use cachet_core::roots::{bound_project_list, build_lease_renewal};
 use cachet_core::types::{ProjectName, UnixMillis};
 use cachet_core::write::require_content_length;
 use worker::{Env, Request, Response, Result};
@@ -133,7 +133,15 @@ pub async fn list_projects(env: &Env) -> Result<Response> {
         log::alert("roots.too_many_projects");
         return error::problem_response(code);
     }
-    let body = serialize_project_list(&projects);
+    // The body's type lives in cachet-api: the served wire and the
+    // published OpenAPI schema read one definition.
+    let body = cachet_api::ProjectList {
+        projects: projects
+            .iter()
+            .map(|project| project.as_str().to_string())
+            .collect(),
+    }
+    .serialize();
     Ok(Response::ok(body)?.with_headers(lease_headers()?))
 }
 
