@@ -1,0 +1,52 @@
+{
+  "cli_version": "0.10.2",
+  "checkpoint_id": "01M0GKRNWYARC89VBDNM86TSQW",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 3,
+  "files_touched": [
+    ".github/workflows/ci.yml",
+    "CLAUDE.md",
+    "Cargo.lock",
+    "crates/cachet-core/src/constants.rs",
+    "crates/cachet-core/src/error.rs",
+    "crates/cachet-core/src/generation.rs",
+    "crates/cachet-core/src/lib.rs",
+    "crates/cachet-core/src/problem.rs",
+    "crates/cachet-core/src/read.rs",
+    "crates/cachet-core/tests/golden.rs",
+    "crates/cachet-worker/Cargo.toml",
+    "crates/cachet-worker/src/error.rs",
+    "crates/cachet-worker/src/lib.rs",
+    "crates/cachet-worker/src/log.rs",
+    "crates/cachet-worker/src/read.rs",
+    "docs/testing/lanes.toml",
+    "docs/testing/workerd.md",
+    "justfile",
+    "workerd/check.mjs",
+    "workerd/wrangler.toml"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 104029860,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 103197888,
+    "output_tokens": 373968,
+    "api_call_count": 411,
+    "subagent_tokens": {
+      "input_tokens": 9635681,
+      "cache_creation_tokens": 0,
+      "cache_read_tokens": 9136256,
+      "output_tokens": 108955,
+      "api_call_count": 103
+    }
+  }
+}
