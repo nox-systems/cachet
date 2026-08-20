@@ -30,7 +30,7 @@ license = "Apache-2.0"
 [workspace.dependencies]
 # why: the property lane's engine, pinned exactly. Hegel releases can change
 # generation behavior, so each bump is a deliberate, gated change.
-hegeltest = { version = "=0.28.6", default-features = false, features = ["rand"] }
+hegeltest = { version = "=0.30.0", default-features = false, features = ["rand"] }
 # why: the golden lane's snapshot engine. Snapshots commit with the code
 # that produces them; the check fails on drift.
 insta = { version = "1", default-features = false }
