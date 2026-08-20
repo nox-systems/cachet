@@ -12,3 +12,12 @@ rules = [
 [[r2_buckets]]
 binding = "CACHE_BUCKET"
 bucket_name = "cachet-lane"
+
+# The lane deployment's auth configuration: a fixed org, audience, and
+# branch; CACHET_JWKS_URL joins per run via `wrangler dev --var`, pointing
+# at the driver's stub JWKS server (the URL is transport configuration;
+# the keys authenticate the tokens, not the address they came from).
+[vars]
+CACHET_ORGS = "lane-org"
+CACHET_AUDIENCE = "cachet-lane"
+CACHET_DEFAULT_BRANCH_REF = "refs/heads/main"

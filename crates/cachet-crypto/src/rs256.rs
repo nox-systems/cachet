@@ -5,6 +5,7 @@
 //! signed with a private key belong to a presented key.
 
 use base64ct::{Base64UrlUnpadded, Encoding};
+use sha2::Digest as _;
 
 /// Why a JWT or JWKS input failed structurally.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -120,9 +121,13 @@ pub fn verify_rs256(jwk: &RsaJwk, signing_input: &str, signature: &[u8]) -> Resu
     )
     .map_err(|_| JwtError::KeyMaterial)?;
     let scheme = rsa::Pkcs1v15Sign::new::<sha2::Sha256>();
-    Ok(key
-        .verify(scheme, signing_input.as_bytes(), signature)
-        .is_ok())
+    // why: the rsa crate's verify takes the message DIGEST, not the
+    // message ("The hashed contents of the original message must be
+    // passed in through `hash`", rsa::key), so the sha256 happens here.
+    // A node-signed known-answer vector in the golden lane locks this
+    // contract against both directions of error.
+    let digest = sha2::Sha256::digest(signing_input.as_bytes());
+    Ok(key.verify(scheme, &digest, signature).is_ok())
 }
 
 #[cfg(test)]

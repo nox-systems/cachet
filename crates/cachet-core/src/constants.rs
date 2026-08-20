@@ -122,6 +122,14 @@ pub const RESERVED_KEY_PREFIXES: [&str; 5] = [
 /// NARs use the multipart routes.
 pub const UPLOAD_SINGLE_MAX_BYTES: u64 = 94_371_800;
 
+/// A multipart completion body: 1000 parts at 256 bytes each is room to
+/// spare, and the cap exists so the parser's bound precedes the read.
+pub const COMPLETE_BODY_BYTES_MAX: u64 = 262_144;
+
+/// An upload bookkeeping record: four small fields; anything larger is
+/// not one.
+pub const UPLOAD_RECORD_BYTES_MAX: u64 = 1_024;
+
 /// Every multipart part except the last is exactly this size; the last is
 /// the declared remainder.
 pub const UPLOAD_PART_BYTES: u64 = 67_108_864;

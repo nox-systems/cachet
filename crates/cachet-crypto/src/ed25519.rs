@@ -107,6 +107,18 @@ impl NixSecretKey {
         )
     }
 
+    /// The secret document in nix's `<name>:<base64(64-byte blob)>` form:
+    /// what operators put into a Secrets Store binding. The blob is the
+    /// 32-byte seed followed by its public half, matching the documents
+    /// real nix writes.
+    pub fn to_secret_text(&self) -> String {
+        format!(
+            "{}:{}",
+            self.name,
+            base64::engine::general_purpose::STANDARD.encode(&self.blob[..])
+        )
+    }
+
     /// Sign a narinfo fingerprint, returning the `Sig` field's value:
     /// `<name>:<base64(64-byte signature)>`. Deterministic: the same
     /// fingerprint and key always produce the same bytes.
@@ -214,6 +226,15 @@ mod tests {
             &sig,
             &public
         ));
+    }
+
+    #[test]
+    fn the_secret_document_round_trips() {
+        let key = NixSecretKey::parse(SECRET).expect("the fixture parses");
+        let text = key.to_secret_text();
+        let reparsed = NixSecretKey::parse(&text).expect("the own document reparses");
+        assert_eq!(reparsed.name(), key.name());
+        assert_eq!(reparsed.public_key_text(), key.public_key_text());
     }
 
     #[test]

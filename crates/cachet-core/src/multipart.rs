@@ -4,8 +4,9 @@
 //! verifies completeness against this plan, so client and worker compute
 //! it from one function.
 
-use crate::constants::{MULTIPART_PARTS_MAX, UPLOAD_PART_BYTES};
+use crate::constants::{COMPLETE_BODY_BYTES_MAX, MULTIPART_PARTS_MAX, UPLOAD_PART_BYTES};
 use crate::error::{ClientError, Result};
+use crate::upload_record::UploadRecord;
 
 /// One planned part: a one-based part number and its exact byte length.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,6 +90,93 @@ pub fn part_plan(total_bytes: u64) -> Result<PartPlan> {
     Ok(PartPlan { total_bytes, parts })
 }
 
+/// The exact size one part must carry, given the plan totals.
+#[must_use]
+pub fn expected_part_bytes(total_bytes: u64, expected_parts: u64, part_number: u64) -> u64 {
+    debug_assert!(part_number >= 1 && part_number <= expected_parts);
+    if part_number == expected_parts {
+        total_bytes - (expected_parts - 1) * UPLOAD_PART_BYTES
+    } else {
+        UPLOAD_PART_BYTES
+    }
+}
+
+/// Validate one part before it is stored. The check runs here, per
+/// request, because R2's own uniform-part rule fires only at completion —
+/// after every byte has crossed the network. Catching a wrong-sized part
+/// on arrival costs the client one request, where catching it at
+/// completion costs the whole upload.
+///
+/// # Errors
+///
+/// [`ClientError::PartNumberInvalid`] outside `1..=record.expected_parts`;
+/// [`ClientError::PartSizeMismatch`] when the declared length is not the
+/// planned size for this part.
+pub fn check_part(record: &UploadRecord, part_number: u64, content_length: u64) -> Result<()> {
+    if part_number == 0 || part_number > record.expected_parts {
+        return Err(ClientError::PartNumberInvalid);
+    }
+    let expected = expected_part_bytes(record.total_bytes, record.expected_parts, part_number);
+    if content_length != expected {
+        return Err(ClientError::PartSizeMismatch);
+    }
+    Ok(())
+}
+
+/// One completed part, as the client reports it in the completion body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompletedPart {
+    /// The one-based part number.
+    pub number: u64,
+    /// The checksum R2 returned for the part when it was stored.
+    pub etag: String,
+}
+
+/// Validate the part list a client sends to complete an upload. Exactly
+/// the planned parts, once each, in ascending order: both what R2 expects
+/// and the only list that can reassemble the object the client declared.
+///
+/// # Errors
+///
+/// [`ClientError::BodyTooLarge`] when the body exceeds
+/// [`COMPLETE_BODY_BYTES_MAX`]; [`ClientError::CompletePartsMismatch`]
+/// on any shape violation.
+pub fn parse_completion_body(text: &str, record: &UploadRecord) -> Result<Vec<CompletedPart>> {
+    if u64::try_from(text.len()).expect("len fits") > COMPLETE_BODY_BYTES_MAX {
+        return Err(ClientError::BodyTooLarge);
+    }
+    let parsed: serde_json::Value =
+        serde_json::from_str(text).map_err(|_| ClientError::CompletePartsMismatch)?;
+    let entries = parsed
+        .as_array()
+        .ok_or(ClientError::CompletePartsMismatch)?;
+    if u64::try_from(entries.len()).expect("len fits") != record.expected_parts {
+        return Err(ClientError::CompletePartsMismatch);
+    }
+    let mut parts = Vec::with_capacity(entries.len());
+    for (index, entry) in entries.iter().enumerate() {
+        let number = entry
+            .get("partNumber")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or(ClientError::CompletePartsMismatch)?;
+        let etag = entry
+            .get("etag")
+            .and_then(serde_json::Value::as_str)
+            .filter(|etag| !etag.is_empty())
+            .ok_or(ClientError::CompletePartsMismatch)?;
+        // Ascending and gapless, which also rules out duplicates without a
+        // second pass.
+        if number != u64::try_from(index).expect("index fits") + 1 {
+            return Err(ClientError::CompletePartsMismatch);
+        }
+        parts.push(CompletedPart {
+            number,
+            etag: etag.to_string(),
+        });
+    }
+    Ok(parts)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -126,6 +214,88 @@ mod tests {
         let plan = part_plan(UPLOAD_PART_BYTES + 5).expect("small plan");
         assert_eq!(shape.count, plan.parts.len() as u64);
         assert_eq!(shape.last_len, plan.parts.last().expect("a last part").len);
+    }
+
+    fn record(total_bytes: u64, expected_parts: u64) -> UploadRecord {
+        UploadRecord {
+            key: format!("nar/{}.nar.zst", "x".repeat(52)),
+            total_bytes,
+            expected_parts,
+            created_at_ms: 1,
+        }
+    }
+
+    #[test]
+    fn parts_check_against_the_plan() {
+        let three = record(2 * UPLOAD_PART_BYTES + 7, 3);
+        assert!(check_part(&three, 1, UPLOAD_PART_BYTES).is_ok());
+        assert!(check_part(&three, 2, UPLOAD_PART_BYTES).is_ok());
+        assert!(check_part(&three, 3, 7).is_ok());
+        assert_eq!(
+            check_part(&three, 3, UPLOAD_PART_BYTES),
+            Err(ClientError::PartSizeMismatch)
+        );
+        assert_eq!(check_part(&three, 1, 7), Err(ClientError::PartSizeMismatch));
+        assert_eq!(
+            check_part(&three, 0, UPLOAD_PART_BYTES),
+            Err(ClientError::PartNumberInvalid)
+        );
+        assert_eq!(
+            check_part(&three, 4, 7),
+            Err(ClientError::PartNumberInvalid)
+        );
+    }
+
+    #[test]
+    fn completions_require_the_whole_plan_in_order() {
+        let three = record(2 * UPLOAD_PART_BYTES + 7, 3);
+        let good = serde_json::json!([
+            {"partNumber": 1, "etag": "aaa"},
+            {"partNumber": 2, "etag": "bbb"},
+            {"partNumber": 3, "etag": "ccc"},
+        ]);
+        let parts = parse_completion_body(&good.to_string(), &three).expect("the plan completes");
+        assert_eq!(parts.len(), 3);
+        assert_eq!(parts[2].etag, "ccc");
+
+        for bad in [
+            serde_json::json!({"not": "an array"}),
+            serde_json::json!([{"partNumber": 1, "etag": "aaa"}]),
+            serde_json::json!([
+                {"partNumber": 1, "etag": "aaa"},
+                {"partNumber": 1, "etag": "bbb"},
+                {"partNumber": 3, "etag": "ccc"},
+            ]),
+            serde_json::json!([
+                {"partNumber": 1, "etag": "aaa"},
+                {"partNumber": 3, "etag": "bbb"},
+                {"partNumber": 2, "etag": "ccc"},
+            ]),
+            serde_json::json!([
+                {"partNumber": 1, "etag": ""},
+                {"partNumber": 2, "etag": "bbb"},
+                {"partNumber": 3, "etag": "ccc"},
+            ]),
+            serde_json::json!([
+                {"partNumber": 1, "etag": "aaa"},
+                {"partNumber": 2, "etag": "bbb"},
+                {"partNumber": "3", "etag": "ccc"},
+            ]),
+        ] {
+            assert_eq!(
+                parse_completion_body(&bad.to_string(), &three),
+                Err(ClientError::CompletePartsMismatch),
+                "{bad}"
+            );
+        }
+        assert_eq!(
+            parse_completion_body("not json", &three),
+            Err(ClientError::CompletePartsMismatch)
+        );
+        assert_eq!(
+            parse_completion_body(&"[".repeat(300_000), &three),
+            Err(ClientError::BodyTooLarge)
+        );
     }
 }
 

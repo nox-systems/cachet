@@ -26,6 +26,12 @@ console_error_panic_hook = "0.1"
 # by hand would invite log injection, and nothing else in the tree emits
 # JSON from the worker.
 serde_json = "1"
+# why: the JWKS document parses with derive macros; nothing else in the
+# worker needs serde directly.
+serde = { version = "1", features = ["derive"] }
+# why: the verify pipeline consumes R2 streams chunk by chunk; StreamExt is
+# the standard combinator over the ByteStream the worker crate hands back.
+futures-util = "0.3"
 
 # why: on wasm32 this unifies every getrandom instance in the graph onto
 # the js backend; the worker is the only crate allowed to enable it, so
