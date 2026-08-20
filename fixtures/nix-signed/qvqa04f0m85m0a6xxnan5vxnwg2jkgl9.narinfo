@@ -1,0 +1,10 @@
+StorePath: /nix/store/qvqa04f0m85m0a6xxnan5vxnwg2jkgl9-payload
+URL: nar/11lx23nn3dpc8mqp0ncnm6wqcxs6pfw32bp8n9c1fkafyzjvn16y.nar.zst
+Compression: zstd
+FileHash: sha256:11lx23nn3dpc8mqp0ncnm6wqcxs6pfw32bp8n9c1fkafyzjvn16y
+FileSize: 122
+NarHash: sha256:1icm5pnaym06hvwz1wcxalrycsp7m7n1qcy8gnzxx17pfl20c5gs
+NarSize: 160
+References: 
+Sig: cachet-fixture-1:rE0Jnz9BZQUH9SiNZdwGkkkl4WUlkmIdJvKDSoFy545+Nl8sbrRrpsdsFxrZ7JJebU7m9yWJ+9wD3p+c6lGNBQ==
+CA: fixed:sha256:1y24rw66r7zgilb49yr1drighs885bcnza6g4z6k49ijm5w4mmp4

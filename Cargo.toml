@@ -1,0 +1,66 @@
+# The cachet workspace. Dependency direction is one-way (CLAUDE.md §4):
+# core ← crypto, api ← worker, and push ← cli native-side. cachet-worker is
+# wasm32-only, so it stays out of default-members: `cargo build` on a host
+# builds everything that can build there, and the worker builds through
+# worker-build (docs/testing/workerd.md).
+[workspace]
+resolver = "2"
+members = [
+    "crates/cachet-core",
+    "crates/cachet-crypto",
+    "crates/cachet-api",
+    "crates/cachet-worker",
+    "crates/cachet-push",
+    "crates/cachet-cli",
+]
+default-members = [
+    "crates/cachet-core",
+    "crates/cachet-crypto",
+    "crates/cachet-api",
+    "crates/cachet-push",
+    "crates/cachet-cli",
+]
+
+[workspace.package]
+edition = "2021"
+version = "0.0.1"
+publish = false
+license = "Apache-2.0"
+
+[workspace.dependencies]
+# why: the property lane's engine, pinned exactly. Hegel releases can change
+# generation behavior, so each bump is a deliberate, gated change.
+hegeltest = { version = "=0.28.6", default-features = false, features = ["rand"] }
+# why: the golden lane's snapshot engine. Snapshots commit with the code
+# that produces them; the check fails on drift.
+insta = { version = "1", default-features = false }
+# why: the JSON documents (leases, generation, upload records) share one
+# serde pair so their bytes agree everywhere.
+serde = { version = "1.0", default-features = false, features = ["derive"] }
+serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+# The gate denies warnings: a warning anywhere fails the build.
+missing_docs = "warn"
+unused_must_use = "warn"
+# why: `cfg(kani)` gates bounded-proof harnesses (docs/testing/kani.md) that
+# only the kani lane compiles.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+# why: rustdoc here is plain prose (PROSE.md), identifier mentions are not
+# backticked by convention, and doc_markdown demands them.
+doc_markdown = "allow"
+# why: the rustdoc law requires usage examples on public items, not
+# boilerplate Errors and Panics sections.
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+# why: each crate prefixes its modules with its own role (narinfo, leases),
+# so the repetition is the naming scheme itself.
+module_name_repetitions = "allow"
+# why: #[must_use] belongs on the call sites where ignoring the value is a
+# bug class, not on every function by default.
+must_use_candidate = "allow"

@@ -1,0 +1,28 @@
+/target
+/result
+/result-*
+/.direnv
+
+# worker-build and bundler output
+crates/cachet-worker/build
+**/.wrangler/
+action/**/dist
+node_modules
+
+# alchemy and deployment state
+.alchemy
+.deploy
+wrangler.local.jsonc
+
+# local secrets and env files; never commit credentials
+.env
+.env.*
+*.dev.vars*
+
+# test output
+junit.xml
+
+# session-capture working dirs; .entire/settings.json stays committed
+/.entire/logs
+/.entire/tmp
+/.entire/metadata
