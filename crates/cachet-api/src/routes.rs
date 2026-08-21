@@ -91,8 +91,8 @@ pub fn narinfo_put() {}
 
 /// `GET /nar/{key}`: one NAR, edge-cached for 30 days, byte-immutable.
 /// Requires a read credential: a GitHub token as Bearer (or Basic
-/// password, which is what nix's netrc support sends), or the browser
-/// session cookie.
+/// password, which is what nix's netrc support sends), an OIDC token
+/// (which is what CI runners carry), or the browser session cookie.
 #[utoipa::path(
     get,
     path = "/nar/{key}",

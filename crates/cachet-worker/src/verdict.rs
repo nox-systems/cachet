@@ -143,7 +143,19 @@ async fn cache_verdict(kv: &worker::kv::KvStore, digest_hex: &str, verdict: &Ver
 }
 
 /// Resolve a device-flow token: sha256 → KV verdict → GitHub on a miss.
+/// An OIDC-shaped token takes the write path's own verification instead:
+/// CI runners substitute with the same credential they push with, and the
+/// claim check is the org gate either way.
 async fn resolve_token(env: &Env, now: UnixMillis, token: &str) -> Result<ReadIdentity> {
+    if cachet_core::auth::looks_like_oidc_token(token) {
+        let identity =
+            crate::auth::authorize_write(env, now, Some(&format!("Bearer {token}"))).await?;
+        // why: an OIDC token is never an admin — the admins list names
+        // human logins, and this field is what admin gating compares.
+        return Ok(ReadIdentity::Token {
+            login: identity.repository_owner,
+        });
+    }
     let digest_hex = hex_digest(&sha256(token.as_bytes()));
     let kv = env
         .kv(KV_BINDING)

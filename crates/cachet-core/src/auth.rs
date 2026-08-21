@@ -277,9 +277,42 @@ pub fn oauth_state_valid(issued_at_ms: u64, now: UnixMillis) -> bool {
     now.saturating_ms_since(UnixMillis::new(issued_at_ms)) < OAUTH_STATE_TTL_MS
 }
 
+/// Whether a presented read credential is an OIDC token rather than a
+/// GitHub user token: three nonempty base64url segments. The gateway is
+/// shape-only — everything cryptographic happens downstream, where a
+/// GitHub token that happens to look like one still gets the full
+/// verification path and fails it.
+pub fn looks_like_oidc_token(token: &str) -> bool {
+    let segments: Vec<&str> = token.split('.').collect();
+    segments.len() == 3
+        && segments.iter().all(|segment| {
+            !segment.is_empty()
+                && segment
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_oidc_shape_gate_is_three_base64url_segments() {
+        assert!(looks_like_oidc_token("aGVhZA.cGF5bG9hZA.c2ln"));
+        for bad in [
+            "",
+            "aGVhZA.cGF5bG9hZA",
+            "aGVhZA.cGF5bG9hZA.c2ln.extra",
+            "ghp_plainmetoken",
+            "a..b",
+            "aGVhZA.c G.c2ln",
+            "aGVhZA.cGF5bG9hZA.c2ln+",
+            "github_pat_11ABCD",
+        ] {
+            assert!(!looks_like_oidc_token(bad), "{bad} refused");
+        }
+    }
 
     fn config() -> OidcConfig {
         OidcConfig {
