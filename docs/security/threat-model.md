@@ -91,9 +91,11 @@ vocabulary, and the .gitignore covering `.env*`.
 **Release artifact tampering.** The binary the action runs is replaced
 or corrupted in transit. Defense: the action downloads the pinned
 release archive plus its `.sha256` and verifies before the archive
-opens; the release itself is built by cargo-dist from the tag. Proven:
-the download step's verification before extraction; a mismatch fails
-the install step.
+opens; the release itself is built by cargo-dist from the tag, and the
+repository keeps releases immutable, so a published release's tag and
+assets can never be replaced after the fact. Proven: the download
+step's verification before extraction; a mismatch fails the install
+step.
 
 **Admin API abuse.** A non-admin org member reads GC reports or stats,
 or an anonymous caller reaches them. Defense: admin routes require a

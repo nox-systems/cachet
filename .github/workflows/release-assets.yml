@@ -52,5 +52,15 @@ jobs:
             sleep 10
           done
           gh release view "${tag}" >/dev/null
+          # why: releases are immutable on this repository, so reruns
+          # upload only what is missing instead of overwriting.
           asset="$(basename "${ASSET}")"
-          gh release upload "${tag}" "${ASSET}" "dist/${asset}.sha256" --clobber
+          existing="$(gh release view "${tag}" --json assets --jq '.assets[].name')"
+          for file in "${ASSET}" "dist/${asset}.sha256"; do
+            base="$(basename "${file}")"
+            if grep -qx "${base}" <<<"${existing}"; then
+              echo "release already holds ${base}; skipping"
+            else
+              gh release upload "${tag}" "${file}"
+            fi
+          done

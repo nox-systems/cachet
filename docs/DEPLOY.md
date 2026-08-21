@@ -153,7 +153,8 @@ One honest trust note: a reusable workflow runs upstream-authored code
 with your secrets in its environment. The checkpoints are yours: pin the
 ref, scope the Cloudflare token to exactly what the deploy needs (the
 permission list under Prerequisites), and let the environment's required
-reviewers gate production.
+reviewers gate production. This repository keeps releases immutable, so
+the package at a tag freezes the day the tag publishes.
 
 ## Verifying a deployment
 
