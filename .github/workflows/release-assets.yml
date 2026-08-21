@@ -45,7 +45,9 @@ jobs:
         run: |
           set -euo pipefail
           tag="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
-          for _ in $(seq 1 60); do
+          # why: cargo-dist publishes the release only after every CLI
+          # target builds, which cold-cache can pass fifteen minutes.
+          for _ in $(seq 1 120); do
             gh release view "${tag}" >/dev/null 2>&1 && break
             sleep 10
           done
