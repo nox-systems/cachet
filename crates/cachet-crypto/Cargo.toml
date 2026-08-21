@@ -18,7 +18,7 @@ serde_json.workspace = true
 sha2 = { version = "0.10", features = ["oid"] }
 # why: narinfo signature verification and signing; pure Rust, deterministic
 # signatures, no rng on the sign path.
-ed25519-dalek = { version = "2", default-features = false, features = ["alloc", "digest"] }
+ed25519-dalek = { version = "3", default-features = false, features = ["alloc", "digest"] }
 # why: secret material is zeroized on drop where we hold it.
 zeroize = { version = "1", features = ["zeroize_derive"] }
 # why: pure-Rust zstd DECODER; the C crate does not build for wasm32.
