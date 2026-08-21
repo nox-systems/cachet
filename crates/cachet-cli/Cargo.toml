@@ -5,11 +5,43 @@ edition.workspace = true
 version.workspace = true
 publish.workspace = true
 license.workspace = true
+repository = "https://github.com/nox-systems/cachet"
 
 [lints]
 workspace = true
+
+# why: the workspace sets publish = false for everything, and cargo-dist
+# reads that as "no apps here" without this explicit opt-in.
+[package.metadata.dist]
+dist = true
+
+[[bin]]
+name = "cachet"
+path = "src/main.rs"
 
 [dependencies]
 cachet-core = { path = "../cachet-core" }
 cachet-crypto = { path = "../cachet-crypto" }
 cachet-push = { path = "../cachet-push" }
+# why: the public config document the CLI fetches is the same type the
+# worker serializes; one shape, no drift.
+cachet-api = { path = "../cachet-api" }
+serde.workspace = true
+serde_json.workspace = true
+# why: five subcommands with flags and help text. Hand-rolled argv parsing
+# grows its own bug classes (help drift, unknown-flag silence) that clap
+# has already solved, and nothing else in the tree parses argv.
+clap = { version = "4", features = ["derive"] }
+# why: push rides the same runtime cachet-push already pins; the CLI adds
+# no features of its own.
+tokio = { version = "1", features = ["fs", "macros", "process", "rt-multi-thread"] }
+# why: device-flow, doctor probes, and the push pipeline share one client;
+# rustls matches cachet-push's TLS choice for the same reason.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# why: keygen needs 32 bytes of OS entropy on the native side only; the
+# worker's js feature ships separately.
+getrandom = "0.2"
+# why: the push pipeline stages through a directory that must exist for
+# exactly one run; hand-rolled uniqueness is an entropy bug waiting to
+# happen.
+tempfile = "3"
