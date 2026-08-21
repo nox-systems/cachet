@@ -1,0 +1,126 @@
+{
+  "cli_version": "0.10.2",
+  "checkpoint_id": "01M0K4K6B487AFPR6KNVPR5P8Y",
+  "session_id": "d50e44b4-93a7-4a75-8ce8-2f52bde07903",
+  "strategy": "manual-commit",
+  "created_at": "2026-08-21T21:45:59.978687Z",
+  "branch": "main",
+  "checkpoints_count": 2,
+  "save_step_count": 2,
+  "files_touched": [
+    "CLAUDE.md",
+    "README.md",
+    "deny.toml",
+    "docs/DEPLOY.md",
+    "docs/adr/0001-server-side-signing.md",
+    "docs/adr/0002-three-authentication-flows.md",
+    "docs/adr/0003-kv-ceiling.md",
+    "docs/adr/0004-the-crypto-set.md",
+    "docs/adr/0005-gc-on-the-cron.md",
+    "docs/adr/0006-multipart-protocol.md",
+    "docs/adr/0007-openapi-from-code.md",
+    "docs/adr/0008-distribution.md",
+    "docs/adr/0009-alchemy-deployments.md",
+    "docs/adr/0010-deployment-identity-is-configuration.md",
+    "docs/adr/README.md",
+    "docs/security/threat-model.md"
+  ],
+  "agent": "Claude Code",
+  "model": "moonshotai/Kimi-K3[1m]",
+  "turn_id": "156a21ec12db",
+  "checkpoint_transcript_start": 6545,
+  "transcript_lines_at_start": 6545,
+  "compact_transcript_start": 1398,
+  "token_usage": {
+    "input_tokens": 17154714,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 17128640,
+    "output_tokens": 31527,
+    "api_call_count": 51,
+    "subagent_tokens": {
+      "input_tokens": 0,
+      "cache_creation_tokens": 0,
+      "cache_read_tokens": 0,
+      "output_tokens": 0,
+      "api_call_count": 0
+    }
+  },
+  "skill_events_version": 1,
+  "skill_events": [
+    {
+      "id": "claude-skill-Skill:1",
+      "event_type": "tool_invocation",
+      "skill": {
+        "name": "cloudflare"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "skill_tool_use",
+        "confidence": "explicit"
+      },
+      "turn_id": "156a21ec12db",
+      "transcript_anchor": {
+        "unit": "line",
+        "start": 16,
+        "end": 17,
+        "entry_ids": [
+          "5a13d610-6dd8-4c4c-92db-3836b46cfcc4"
+        ],
+        "tool_use_id": "Skill:1"
+      },
+      "native": {
+        "tool_name": "Skill",
+        "tool_use_id": "Skill:1"
+      },
+      "collapse": {
+        "target": "tool_pair",
+        "label": "Skill: cloudflare",
+        "default_collapsed": true
+      }
+    }
+  ],
+  "session_metrics": {
+    "turn_count": 11
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-08-21T21:45:59.224093Z",
+    "agent_lines": 747,
+    "agent_removed": 16,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 747,
+    "total_lines_changed": 763,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 1,
+      "user_lines_removed": 0,
+      "agent_lines_added": 747,
+      "agent_lines_removed": 16,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1
+      }
+    },
+    {
+      "checkpoint_number": 3,
+      "user_lines_added": 1,
+      "user_lines_removed": 0,
+      "agent_lines_added": 747,
+      "agent_lines_removed": 16,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1
+      }
+    }
+  ]
+}

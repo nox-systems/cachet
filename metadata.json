@@ -1,0 +1,48 @@
+{
+  "cli_version": "0.10.2",
+  "checkpoint_id": "01M0K4K6B487AFPR6KNVPR5P8Y",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "CLAUDE.md",
+    "README.md",
+    "deny.toml",
+    "docs/DEPLOY.md",
+    "docs/adr/0001-server-side-signing.md",
+    "docs/adr/0002-three-authentication-flows.md",
+    "docs/adr/0003-kv-ceiling.md",
+    "docs/adr/0004-the-crypto-set.md",
+    "docs/adr/0005-gc-on-the-cron.md",
+    "docs/adr/0006-multipart-protocol.md",
+    "docs/adr/0007-openapi-from-code.md",
+    "docs/adr/0008-distribution.md",
+    "docs/adr/0009-alchemy-deployments.md",
+    "docs/adr/0010-deployment-identity-is-configuration.md",
+    "docs/adr/README.md",
+    "docs/security/threat-model.md"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 17154714,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 17128640,
+    "output_tokens": 31527,
+    "api_call_count": 51,
+    "subagent_tokens": {
+      "input_tokens": 0,
+      "cache_creation_tokens": 0,
+      "cache_read_tokens": 0,
+      "output_tokens": 0,
+      "api_call_count": 0
+    }
+  }
+}
