@@ -73,7 +73,7 @@ export function loadStageConfig(stage: string): StageConfig {
   if (missing.length > 0) {
     throw new Error(
       `the ${stage} deployment is missing: ${missing.join(", ")}. ` +
-        `Set them in infra/.env.${stage} or as the CI environment's secrets (docs/DEPLOY.md).`,
+        `Set them in infra/.env.${stage} or in the CI environment's variables and secrets (docs/DEPLOY.md).`,
     );
   }
 
