@@ -1,0 +1,76 @@
+# Deploys. Staging follows every green ci run on main; production is manual
+# behind the GitHub environment's reviewer gate. Both stages read their
+# configuration from environment-scoped vars and secrets (same names as
+# infra/.env.<stage> locally), never from repository-level config, so the
+# two stages can diverge safely.
+name: deploy
+
+on:
+  workflow_run:
+    workflows: [ci]
+    branches: [main]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: The stage to deploy
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+        default: staging
+
+concurrency:
+  # why: one deploy per stage at a time, and never cancel a deploy in
+  # flight; a half-updated stage is worse than a queued one.
+  group: deploy-${{ github.event_name == 'workflow_dispatch' && inputs.stage || 'staging' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  staging:
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success'
+    environment: staging
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CACHET_SIGNING_KEY: ${{ secrets.CACHET_SIGNING_KEY }}
+      GITHUB_OAUTH_CLIENT_SECRET: ${{ secrets.GITHUB_OAUTH_CLIENT_SECRET }}
+      CACHET_DEPLOY_HOST: ${{ vars.CACHET_DEPLOY_HOST }}
+      CACHET_DEPLOY_ORGS: ${{ vars.CACHET_DEPLOY_ORGS }}
+      CACHET_DEPLOY_ADMINS: ${{ vars.CACHET_DEPLOY_ADMINS }}
+      CACHET_DEPLOY_OAUTH_CLIENT_ID: ${{ vars.CACHET_DEPLOY_OAUTH_CLIENT_ID }}
+      CACHET_DEPLOY_AUDIENCE: ${{ vars.CACHET_DEPLOY_AUDIENCE }}
+      CACHET_DEPLOY_DEFAULT_BRANCH_REF: ${{ vars.CACHET_DEPLOY_DEFAULT_BRANCH_REF }}
+      CACHET_DEPLOY_DOMAIN: ${{ vars.CACHET_DEPLOY_DOMAIN }}
+      CACHET_DEPLOY_UI_ORIGIN: ${{ vars.CACHET_DEPLOY_UI_ORIGIN }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
+      - run: nix develop --command just deploy staging
+
+  manual:
+    if: github.event_name == 'workflow_dispatch'
+    environment: ${{ inputs.stage }}
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CACHET_SIGNING_KEY: ${{ secrets.CACHET_SIGNING_KEY }}
+      GITHUB_OAUTH_CLIENT_SECRET: ${{ secrets.GITHUB_OAUTH_CLIENT_SECRET }}
+      CACHET_DEPLOY_HOST: ${{ vars.CACHET_DEPLOY_HOST }}
+      CACHET_DEPLOY_ORGS: ${{ vars.CACHET_DEPLOY_ORGS }}
+      CACHET_DEPLOY_ADMINS: ${{ vars.CACHET_DEPLOY_ADMINS }}
+      CACHET_DEPLOY_OAUTH_CLIENT_ID: ${{ vars.CACHET_DEPLOY_OAUTH_CLIENT_ID }}
+      CACHET_DEPLOY_AUDIENCE: ${{ vars.CACHET_DEPLOY_AUDIENCE }}
+      CACHET_DEPLOY_DEFAULT_BRANCH_REF: ${{ vars.CACHET_DEPLOY_DEFAULT_BRANCH_REF }}
+      CACHET_DEPLOY_DOMAIN: ${{ vars.CACHET_DEPLOY_DOMAIN }}
+      CACHET_DEPLOY_UI_ORIGIN: ${{ vars.CACHET_DEPLOY_UI_ORIGIN }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
+      - run: nix develop --command just deploy ${{ inputs.stage }}

@@ -102,6 +102,7 @@ exactly the repo's non-ADR Markdown, no more and no less.
 @README.md
 @PROSE.md
 @SECURITY.md
+@docs/DEPLOY.md
 @docs/testing/unit.md
 @docs/testing/property.md
 @docs/testing/golden.md
