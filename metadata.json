@@ -1,0 +1,28 @@
+{
+  "cli_version": "0.10.2",
+  "checkpoint_id": "01M0K0YDRPE15Z9GV2WFB2F5TW",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 5,
+  "files_touched": [
+    "crates/cachet-core/src/gc.rs",
+    "docs/testing/workerd.md",
+    "workerd/wrangler.toml"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 11237925,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 11223680,
+    "output_tokens": 17664,
+    "api_call_count": 30
+  }
+}
