@@ -100,6 +100,7 @@
               cp -r ${../docs} docs
               mkdir -p .github/workflows
               cp ${../.github/workflows/ci.yml} .github/workflows/ci.yml
+              cp ${../.github/workflows/deploy.yml} .github/workflows/deploy.yml
               cp ${../scripts/check-lane-manifest.sh} check-lane-manifest.sh
               bash ./check-lane-manifest.sh .
               touch $out

@@ -53,6 +53,32 @@ jobs:
       - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
       - run: nix develop --command just deploy staging
 
+  # The integration lane answers whether the deploy just made actually
+  # works: served truth, the runner's real OIDC, a push, and a verified
+  # substitution back (docs/testing/integration.md). The staging env's
+  # CACHET_DEPLOY_DOMAIN hosts it, because workers.dev URLs are
+  # unpredictable across accounts.
+  integration:
+    needs: [staging, manual]
+    if: >-
+      always() && (
+        (github.event_name == 'workflow_run' && needs.staging.result == 'success') ||
+        (github.event_name == 'workflow_dispatch' && inputs.stage == 'staging' && needs.manual.result == 'success')
+      )
+    environment: staging
+    permissions:
+      contents: read
+      # The lane mints the org's real OIDC token against this repository.
+      id-token: write
+    runs-on: ubuntu-latest
+    env:
+      CACHET_INTEGRATION_URL: https://${{ vars.CACHET_DEPLOY_DOMAIN || vars.CACHET_DEPLOY_HOST }}
+      CACHET_INTEGRATION_AUDIENCE: ${{ vars.CACHET_DEPLOY_AUDIENCE }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
+      - run: nix develop --command just integration
+
   manual:
     if: github.event_name == 'workflow_dispatch'
     environment: ${{ inputs.stage }}

@@ -20,8 +20,8 @@ export interface StageConfig {
   audience: string;
   /** The ref permitted to renew leases. */
   defaultBranchRef: string;
-  /** The custom domain to attach; production only by default. */
-  domain: string | undefined;
+  /** The custom domain to attach; production defaults it to the host. */
+  domain: string;
   /** The browser OAuth flow's redirect target, when a UI exists. */
   uiOrigin: string | undefined;
   /** The GC grace override; zeroed for staging, the code default elsewhere. */
@@ -76,6 +76,15 @@ export function loadStageConfig(stage: string): StageConfig {
   }
 
   const production = stage === "production";
+  const domain = value("DOMAIN") ?? (production ? host : undefined);
+  if (domain === undefined) {
+    // why: workers.dev and preview URLs are disabled on every stage, so a
+    // stage without a custom domain is a worker that answers nowhere.
+    throw new Error(
+      `the ${stage} deployment has no domain: set CACHET_DEPLOY_DOMAIN ` +
+        `(production defaults it to CACHET_DEPLOY_HOST; every other stage must name its own hostname).`,
+    );
+  }
   return {
     stage,
     host,
@@ -84,7 +93,7 @@ export function loadStageConfig(stage: string): StageConfig {
     oauthClientId: value("OAUTH_CLIENT_ID") as string,
     audience: value("AUDIENCE") ?? "cachet",
     defaultBranchRef: value("DEFAULT_BRANCH_REF") ?? "refs/heads/main",
-    domain: value("DOMAIN") ?? (production ? host : undefined),
+    domain,
     uiOrigin: value("UI_ORIGIN"),
     gcGraceMs: value("GC_GRACE_MS") ?? (production ? undefined : "0"),
   };

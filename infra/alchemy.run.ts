@@ -58,7 +58,11 @@ export default Alchemy.Stack(
       },
       // The collector fires daily; GC_ARMED stays unset (armed by default).
       crons: ["0 5 * * *"],
-      ...(cfg.domain === undefined ? {} : { domain: { name: cfg.domain } }),
+      // Only the custom domain serves: no workers.dev URL, no per-version
+      // preview URLs. A cache answers on one name, and that name is the
+      // signing key's identity.
+      workersDev: false,
+      domain: { name: cfg.domain },
     });
 
     return {

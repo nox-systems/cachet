@@ -68,8 +68,12 @@ These variables name the deployment:
 ## Staging
 
 `just deploy staging` deploys the same stack as `cachet-staging-*` with
-no custom domain and with the GC grace window zeroed, so a seeded object
-is sweepable on the very next collector tick. Use it to rehearse changes:
+the GC grace window zeroed, so a seeded object is sweepable on the very
+next collector tick. Set `CACHET_DEPLOY_DOMAIN` to a staging hostname in
+your zone (for example `cache-staging.example.com`): without it staging
+lives on an account-specific workers.dev URL that nothing else can
+predict, and the integration lane that follows staging deploys needs to
+know where to point. Use staging to rehearse changes:
 deploy staging, exercise it, then `just deploy production`. Tear a stage
 down with `just destroy <stage>`; alchemy asks before deleting.
 

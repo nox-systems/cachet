@@ -139,3 +139,7 @@ destroy stage:
 # checklists for the GitHub and Cloudflare sides
 bootstrap:
     bash scripts/bootstrap.sh
+
+# the integration lane: the live round trip against a deployment
+integration:
+    bash scripts/integration.sh

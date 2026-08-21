@@ -29,6 +29,12 @@ if [ -n "$docless" ]; then
   exit 1
 fi
 
+# Lanes run as jobs in ci.yml; the integration lane runs after staging
+# deploys in deploy.yml, because its subject exists only there. A lane's
+# home moves; it never leaves the bijection.
+JOBFILES=("$CI")
+[ -f .github/workflows/deploy.yml ] && JOBFILES+=(.github/workflows/deploy.yml)
+
 jobs="$(awk '
   /^jobs:[[:space:]]*$/ { injobs = 1; next }
   injobs && /^[^ ]/ { injobs = 0 }
@@ -37,7 +43,7 @@ jobs="$(awk '
     sub(/:$/, "", name)
     print name
   }
-' "$CI" | sort)"
+' "${JOBFILES[@]}" | sort -u)"
 
 jobless="$(comm -23 <(printf '%s\n' "$lanes") <(printf '%s\n' "$jobs"))"
 if [ -n "$jobless" ]; then
@@ -47,13 +53,20 @@ if [ -n "$jobless" ]; then
 fi
 
 for lane in $lanes; do
-  if ! awk -v lane="$lane" '
-    $0 == "  " lane ":" { inlane = 1; next }
-    inlane && /^  [a-z0-9-]+:$/ { inlane = 0 }
-    inlane && $0 ~ "just +" lane "([[:space:]]|$)" { found = 1 }
-    END { exit !found }
-  ' "$CI"; then
-    echo "lane $lane has a job that never runs 'just $lane'"
+  lane_found=0
+  for jobfile in "${JOBFILES[@]}"; do
+    if awk -v lane="$lane" '
+      $0 == "  " lane ":" { inlane = 1; next }
+      inlane && /^  [a-z0-9-]+:$/ { inlane = 0 }
+      inlane && $0 ~ "just +" lane "([[:space:]]|$)" { found = 1 }
+      END { exit !found }
+    ' "$jobfile"; then
+      lane_found=1
+      break
+    fi
+  done
+  if [ "$lane_found" -ne 1 ]; then
+    echo "lane $lane has no job anywhere that runs 'just $lane'"
     exit 1
   fi
 done

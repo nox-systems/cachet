@@ -109,3 +109,4 @@ exactly the repo's non-ADR Markdown, no more and no less.
 @docs/testing/golden.md
 @docs/testing/kani.md
 @docs/testing/workerd.md
+@docs/testing/integration.md
