@@ -5,9 +5,13 @@
   "branch": "main",
   "checkpoints_count": 5,
   "files_touched": [
+    "crates/cachet-core/src/constants.rs",
     "crates/cachet-core/src/gc.rs",
+    "crates/cachet-core/tests/golden.rs",
     "crates/cachet-worker/src/gc.rs",
+    "crates/cachet-worker/src/lib.rs",
     "docs/testing/workerd.md",
+    "workerd/check.mjs",
     "workerd/wrangler.toml"
   ],
   "sessions": [
@@ -16,14 +20,14 @@
       "transcript": "/0/full.jsonl",
       "compact_transcript": "/0/transcript.jsonl",
       "content_hash": "/0/content_hash.txt",
-      "prompt": "/0/prompt.txt"
+      "prompt": ""
     }
   ],
   "token_usage": {
-    "input_tokens": 33462227,
+    "input_tokens": 357140,
     "cache_creation_tokens": 0,
-    "cache_read_tokens": 32960128,
-    "output_tokens": 92462,
-    "api_call_count": 115
+    "cache_read_tokens": 356864,
+    "output_tokens": 388,
+    "api_call_count": 1
   }
 }

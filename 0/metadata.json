@@ -3,27 +3,31 @@
   "checkpoint_id": "01M0K0HQM5TW9YW5WMVT3310YS",
   "session_id": "d50e44b4-93a7-4a75-8ce8-2f52bde07903",
   "strategy": "manual-commit",
-  "created_at": "2026-08-21T20:35:22.876382Z",
+  "created_at": "2026-08-21T20:35:42.895393Z",
   "branch": "main",
   "checkpoints_count": 5,
   "files_touched": [
+    "crates/cachet-core/src/constants.rs",
     "crates/cachet-core/src/gc.rs",
+    "crates/cachet-core/tests/golden.rs",
     "crates/cachet-worker/src/gc.rs",
+    "crates/cachet-worker/src/lib.rs",
     "docs/testing/workerd.md",
+    "workerd/check.mjs",
     "workerd/wrangler.toml"
   ],
   "agent": "Claude Code",
   "model": "moonshotai/Kimi-K3[1m]",
   "turn_id": "74395ed7008c",
-  "checkpoint_transcript_start": 4547,
-  "transcript_lines_at_start": 4547,
-  "compact_transcript_start": 981,
+  "checkpoint_transcript_start": 5120,
+  "transcript_lines_at_start": 5120,
+  "compact_transcript_start": 1096,
   "token_usage": {
-    "input_tokens": 33462227,
+    "input_tokens": 357140,
     "cache_creation_tokens": 0,
-    "cache_read_tokens": 32960128,
-    "output_tokens": 92462,
-    "api_call_count": 115
+    "cache_read_tokens": 356864,
+    "output_tokens": 388,
+    "api_call_count": 1
   },
   "skill_events_version": 1,
   "skill_events": [
@@ -63,32 +67,15 @@
     "turn_count": 8
   },
   "initial_attribution": {
-    "calculated_at": "2026-08-21T20:35:22.284624Z",
-    "agent_lines": 1108,
-    "agent_removed": 33,
-    "human_added": 273,
-    "human_modified": 32,
+    "calculated_at": "2026-08-21T20:35:42.34639Z",
+    "agent_lines": 0,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 0,
     "human_removed": 0,
-    "total_committed": 1413,
-    "total_lines_changed": 1447,
-    "agent_percentage": 78.852798894264,
+    "total_committed": 0,
+    "total_lines_changed": 0,
+    "agent_percentage": 0,
     "metric_version": 2
-  },
-  "prompt_attributions": [
-    {
-      "checkpoint_number": 1,
-      "user_lines_added": 397,
-      "user_lines_removed": 32,
-      "agent_lines_added": 0,
-      "agent_lines_removed": 0,
-      "user_added_per_file": {
-        ".claude/scheduled_tasks.lock": 1,
-        "crates/cachet-core/src/constants.rs": 19,
-        "crates/cachet-core/src/gc.rs": 377
-      },
-      "user_removed_per_file": {
-        "crates/cachet-core/src/gc.rs": 32
-      }
-    }
-  ]
+  }
 }
