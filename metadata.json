@@ -1,0 +1,34 @@
+{
+  "cli_version": "0.10.2",
+  "checkpoint_id": "01M0K3ASD39XPYKQQWBEXSQTVB",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    ".github/workflows/release.yml",
+    "Cargo.toml",
+    "action/action.yml",
+    "action/post/action.yml",
+    "action/post/main.cjs",
+    "action/post/post.cjs",
+    "dist-workspace.toml",
+    "nix/checks.nix",
+    "nix/treefmt.nix"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 296129301,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 294126656,
+    "output_tokens": 846515,
+    "api_call_count": 1119
+  }
+}

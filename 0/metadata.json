@@ -1,0 +1,81 @@
+{
+  "cli_version": "0.10.2",
+  "checkpoint_id": "01M0K3ASD39XPYKQQWBEXSQTVB",
+  "session_id": "d50e44b4-93a7-4a75-8ce8-2f52bde07903",
+  "strategy": "manual-commit",
+  "created_at": "2026-08-21T21:23:55.582966Z",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "save_step_count": 1,
+  "files_touched": [
+    ".github/workflows/release.yml",
+    "Cargo.toml",
+    "action/action.yml",
+    "action/post/action.yml",
+    "action/post/main.cjs",
+    "action/post/post.cjs",
+    "dist-workspace.toml",
+    "nix/checks.nix",
+    "nix/treefmt.nix"
+  ],
+  "agent": "Claude Code",
+  "model": "moonshotai/Kimi-K3[1m]",
+  "turn_id": "af7c1fa11cf6",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 296129301,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 294126656,
+    "output_tokens": 846515,
+    "api_call_count": 1119
+  },
+  "skill_events_version": 1,
+  "skill_events": [
+    {
+      "id": "claude-skill-Skill:1",
+      "event_type": "tool_invocation",
+      "skill": {
+        "name": "cloudflare"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "skill_tool_use",
+        "confidence": "explicit"
+      },
+      "turn_id": "af7c1fa11cf6",
+      "transcript_anchor": {
+        "unit": "line",
+        "start": 16,
+        "end": 17,
+        "entry_ids": [
+          "5a13d610-6dd8-4c4c-92db-3836b46cfcc4"
+        ],
+        "tool_use_id": "Skill:1"
+      },
+      "native": {
+        "tool_name": "Skill",
+        "tool_use_id": "Skill:1"
+      },
+      "collapse": {
+        "target": "tool_pair",
+        "label": "Skill: cloudflare",
+        "default_collapsed": true
+      }
+    }
+  ],
+  "session_metrics": {
+    "turn_count": 9
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-08-21T21:23:54.907224Z",
+    "agent_lines": 628,
+    "agent_removed": 4,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 628,
+    "total_lines_changed": 632,
+    "agent_percentage": 100,
+    "metric_version": 2
+  }
+}
