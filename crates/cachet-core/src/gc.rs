@@ -77,6 +77,22 @@ impl core::fmt::Display for GateTrip {
     }
 }
 
+impl GateTrip {
+    /// The stable name the report records: machine-matchable, unlike the
+    /// Display text, which carries occurrence specifics.
+    pub const fn name(&self) -> &'static str {
+        match self {
+            Self::UnreadableRootNarinfo { .. } => "unreadable_root_narinfo",
+            Self::UnparseableLease { .. } => "unparseable_lease",
+            Self::InventoryTruncated => "inventory_truncated",
+            Self::LeasesTruncated => "leases_truncated",
+            Self::WalkBudgetExhausted { .. } => "walk_budget_exhausted",
+            Self::SweepFractionExceeded { .. } => "sweep_fraction_exceeded",
+            Self::GenerationCorrupt => "generation_corrupt",
+        }
+    }
+}
+
 /// Why a narinfo read failed during the walk.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WalkReadError {
@@ -102,51 +118,164 @@ pub struct WalkOutcome {
     pub gate: Option<GateTrip>,
 }
 
+/// The closure walk as an incremental state machine: `next_read` names
+/// the path whose narinfo must be read, `answer` applies the read. The worker
+/// awaits one bucket read per step this way, and a run can freeze the
+/// walker into its cursor and resume the next tick with the visited set,
+/// the frontier order, and the marks bit-identical.
+#[derive(Debug, Clone)]
+pub struct ClosureWalker {
+    roots: BTreeSet<StorePathHash>,
+    visited: BTreeSet<StorePathHash>,
+    queue: VecDeque<StorePathHash>,
+    outcome: WalkOutcome,
+}
+
+impl ClosureWalker {
+    /// Start a walk from the root set, sorted so the walk order never
+    /// depends on how the roots arrived.
+    pub fn new(roots: &[StorePathHash]) -> Self {
+        let mut walker = Self {
+            roots: roots.iter().cloned().collect(),
+            visited: BTreeSet::new(),
+            queue: VecDeque::new(),
+            outcome: WalkOutcome::default(),
+        };
+        let mut sorted = roots.to_vec();
+        sorted.sort();
+        walker.queue.extend(sorted);
+        walker
+    }
+
+    /// Restore a frozen walker from a cursor; cursor prefixes clamp the
+    /// continuation to the same deterministic order the frozen run had.
+    #[must_use]
+    pub fn from_mark_cursor(cursor: &MarkCursor) -> Self {
+        let roots: Vec<StorePathHash> = cursor
+            .roots
+            .iter()
+            .filter_map(|text| StorePathHash::parse(text).ok())
+            .collect();
+        let mut walker = Self::new(&roots);
+        walker.visited = cursor
+            .visited
+            .iter()
+            .filter_map(|text| StorePathHash::parse(text).ok())
+            .collect();
+        walker.queue = cursor
+            .frontier
+            .iter()
+            .filter_map(|text| StorePathHash::parse(text).ok())
+            .collect();
+        walker.outcome.marked = walker.visited.clone();
+        walker.outcome.marked_urls = cursor
+            .marked_urls
+            .iter()
+            .filter_map(|(hash, url)| {
+                Some((
+                    StorePathHash::parse(hash).ok()?,
+                    crate::keys::parse_nar_key(url).ok()?,
+                ))
+            })
+            .collect();
+        walker.outcome.unreadable_deep =
+            usize::try_from(cursor.unreadable_deep).unwrap_or(usize::MAX);
+        walker
+    }
+
+    /// Freeze the walker into its cursor form.
+    #[must_use]
+    pub fn to_mark_cursor(&self) -> MarkCursor {
+        MarkCursor {
+            roots: self.roots.iter().map(ToString::to_string).collect(),
+            visited: self.visited.iter().map(ToString::to_string).collect(),
+            frontier: self.queue.iter().map(ToString::to_string).collect(),
+            marked_urls: self
+                .outcome
+                .marked_urls
+                .iter()
+                .map(|(hash, url)| (hash.to_string(), url.as_str().to_string()))
+                .collect(),
+            unreadable_deep: self.outcome.unreadable_deep as u64,
+        }
+    }
+
+    /// The hash whose narinfo must be read next, or `None` when the walk is
+    /// done. Already-visited front names are skipped over without budget:
+    /// duplicates from converging fans cost a queue pop, never a read.
+    pub fn next_read(&mut self) -> Option<StorePathHash> {
+        while let Some(hash) = self.queue.pop_front() {
+            if !self.visited.contains(&hash) {
+                return Some(hash);
+            }
+        }
+        None
+    }
+
+    /// Apply the read for the hash `next_read` just handed out.
+    pub fn answer(
+        &mut self,
+        hash: StorePathHash,
+        read: std::result::Result<Narinfo, WalkReadError>,
+    ) {
+        self.visited.insert(hash.clone());
+        if self.visited.len() > CLOSURE_WALK_PATHS_MAX {
+            self.outcome.gate = Some(GateTrip::WalkBudgetExhausted {
+                visited: self.visited.len(),
+            });
+            return;
+        }
+        if let Ok(document) = read {
+            let url = document.url.clone();
+            for edge in document.reference_hashes() {
+                if !self.visited.contains(&edge) {
+                    self.queue.push_back(edge);
+                }
+            }
+            self.outcome.marked.insert(hash.clone());
+            self.outcome.marked_urls.insert(hash, url);
+        } else {
+            let is_root = self.roots.contains(&hash);
+            self.outcome.marked.insert(hash.clone());
+            if is_root {
+                self.outcome.gate = Some(GateTrip::UnreadableRootNarinfo { hash });
+                return;
+            }
+            self.outcome.unreadable_deep += 1;
+        }
+    }
+
+    /// The walk's final accounting.
+    #[must_use]
+    pub fn into_outcome(self) -> WalkOutcome {
+        self.outcome
+    }
+
+    /// The gate tripped so far, if any: checked after every answer by an
+    /// async driver that must stop before asking for another read.
+    pub fn gate(&self) -> Option<&GateTrip> {
+        self.outcome.gate.as_ref()
+    }
+}
+
 /// Walk the reference graph from the root hashes, breadth-first, one
 /// narinfo read per newly visited path. Root read failures trip the
 /// walk-aborting gate; deep failures mark the node without descending,
 /// because the alternative, deleting under it, would eat descendants we
-/// cannot see. The walk is deterministic: insertion-ordered queue over
-/// sorted roots, `BTreeSet` visited set.
+/// cannot see.
 pub fn closure_walk(
     roots: &[StorePathHash],
     mut read_narinfo: impl FnMut(&StorePathHash) -> std::result::Result<Narinfo, WalkReadError>,
 ) -> WalkOutcome {
-    let mut outcome = WalkOutcome::default();
-    let mut visited = BTreeSet::new();
-    let mut queue: VecDeque<StorePathHash> = roots.iter().cloned().collect();
-    queue.make_contiguous().sort();
-
-    while let Some(hash) = queue.pop_front() {
-        if !visited.insert(hash.clone()) {
-            continue;
-        }
-        if visited.len() > CLOSURE_WALK_PATHS_MAX {
-            outcome.gate = Some(GateTrip::WalkBudgetExhausted {
-                visited: visited.len(),
-            });
-            return outcome;
-        }
-        if let Ok(document) = read_narinfo(&hash) {
-            let url = document.url.clone();
-            for edge in document.reference_hashes() {
-                if !visited.contains(&edge) {
-                    queue.push_back(edge);
-                }
-            }
-            outcome.marked.insert(hash.clone());
-            outcome.marked_urls.insert(hash, url);
-        } else {
-            let is_root = roots.contains(&hash);
-            outcome.marked.insert(hash.clone());
-            if is_root {
-                outcome.gate = Some(GateTrip::UnreadableRootNarinfo { hash });
-                return outcome;
-            }
-            outcome.unreadable_deep += 1;
-        }
+    let mut walker = ClosureWalker::new(roots);
+    while walker.outcome.gate.is_none() {
+        let Some(hash) = walker.next_read() else {
+            break;
+        };
+        let read = read_narinfo(&hash);
+        walker.answer(hash, read);
     }
-    outcome
+    walker.into_outcome()
 }
 
 /// One object from the bucket listing.
@@ -174,14 +303,45 @@ pub struct DeletionPlan {
     pub gate: Option<GateTrip>,
 }
 
+/// The sweep's candidate narinfos: unmarked and past the grace window.
+/// Extracted as one predicate because two consumers must agree exactly:
+/// the planner, which orders their deletion, and the driver, which reads
+/// each candidate's URL before the plan can name NARs.
+pub fn sweep_candidates(
+    inventory: &[InventoryItem],
+    marked: &BTreeSet<StorePathHash>,
+    now: UnixMillis,
+    grace_ms: u64,
+) -> Vec<(StorePathHash, String)> {
+    let mut candidates = Vec::new();
+    for item in inventory {
+        if is_reserved_key(&item.key) || !item.key.ends_with(crate::constants::NARINFO_KEY_SUFFIX) {
+            continue;
+        }
+        let Ok(hash) = StorePathHash::parse(
+            &item.key[..item.key.len() - crate::constants::NARINFO_KEY_SUFFIX.len()],
+        ) else {
+            // Unnameable narinfo-shaped object: it cannot map to a
+            // lease-protected path either way, so it is left alone.
+            continue;
+        };
+        if !marked.contains(&hash)
+            && now.saturating_ms_since(UnixMillis::new(item.uploaded_at_ms)) > grace_ms
+        {
+            candidates.push((hash, item.key.clone()));
+        }
+    }
+    candidates.sort_by(|(a, _), (b, _)| a.cmp(b));
+    candidates
+}
+
 /// Decide the destructive plan.
 ///
-/// Candidates are narinfo objects that are unmarked and older than the
-/// grace window. NAR deletions resolve from the candidate narinfos' own
-/// URLs minus every URL a marked narinfo still names, so a NAR shared
-/// between a live and a dead path survives. The fraction gate compares
-/// candidate count against the full narinfo inventory: a run that would
-/// empty the cache is refused outright.
+/// Candidates come from [`sweep_candidates`]. NAR deletions resolve from
+/// the candidate narinfos' own URLs minus every URL a marked narinfo
+/// still names, so a NAR shared between a live and a dead path survives.
+/// The fraction gate compares candidate count against the full narinfo
+/// inventory: a run that would empty the cache is refused outright.
 pub fn plan_deletions(
     inventory: &[InventoryItem],
     marked: &BTreeSet<StorePathHash>,
@@ -192,30 +352,21 @@ pub fn plan_deletions(
 ) -> DeletionPlan {
     let mut plan = DeletionPlan::default();
 
-    let mut narinfo_inventory = 0usize;
-    let mut narinfo_deletes = Vec::new();
-    for item in inventory {
-        if is_reserved_key(&item.key) {
-            continue;
-        }
-        if item.key.ends_with(crate::constants::NARINFO_KEY_SUFFIX) {
-            let Ok(hash) = StorePathHash::parse(
-                &item.key[..item.key.len() - crate::constants::NARINFO_KEY_SUFFIX.len()],
-            ) else {
-                // Unnameable narinfo-shaped object: it cannot map to a
-                // lease-protected path either way, so plan says nothing and
-                // the report's gate list has it noted by the driver.
-                continue;
-            };
-            narinfo_inventory += 1;
-            if !marked.contains(&hash)
-                && now.saturating_ms_since(UnixMillis::new(item.uploaded_at_ms)) > grace_ms
-            {
-                narinfo_deletes.push(item.key.clone());
-            }
-        }
-    }
-    narinfo_deletes.sort();
+    let narinfo_inventory = inventory
+        .iter()
+        .filter(|item| {
+            !is_reserved_key(&item.key)
+                && item.key.ends_with(crate::constants::NARINFO_KEY_SUFFIX)
+                && StorePathHash::parse(
+                    &item.key[..item.key.len() - crate::constants::NARINFO_KEY_SUFFIX.len()],
+                )
+                .is_ok()
+        })
+        .count();
+    let narinfo_deletes: Vec<String> = sweep_candidates(inventory, marked, now, grace_ms)
+        .into_iter()
+        .map(|(_, key)| key)
+        .collect();
 
     // why: the fraction gate compares in integers, not floats: usize→f64
     // casts lose precision at pathological cache sizes, and a safety gate
@@ -286,10 +437,297 @@ pub struct GcReport {
     pub gate: Option<String>,
 }
 
+impl GcReport {
+    /// Serialize the report the way the driver stores it: two-space
+    /// indent and a trailing newline, so a diff between two runs of a
+    /// debugging session stays legible.
+    pub fn serialize(&self) -> String {
+        let mut body = serde_json::to_string_pretty(self).expect("the report fields serialize");
+        body.push('\n');
+        body
+    }
+
+    /// Read a stored report back, for the API surface. Field-missing
+    /// documents fail rather than fabricate numbers.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError::MalformedRoots`] (the document-rejection vocabulary's
+    /// shared member) when the JSON does not describe a report.
+    pub fn parse(text: &str) -> crate::error::Result<Self> {
+        serde_json::from_str(text).map_err(|_| crate::error::ClientError::MalformedRoots)
+    }
+}
+
+/// Where one invocation hands the bucket to the next tick. Ordering is
+/// the run's stage sequence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GcStage {
+    /// Enumerating the bucket.
+    Inventory,
+    /// Reading the lease documents.
+    Leases,
+    /// Walking the closures.
+    Mark,
+    /// Reading each candidate narinfo's URL.
+    Candidates,
+    /// Executing the deletion plan.
+    Sweep,
+    /// Writing artifacts, bumping the generation, reaping stale uploads.
+    Report,
+}
+
+/// The frozen half of a mark stage: the visited set, the walk frontier in
+/// its deterministic order, and the marks so far.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct MarkCursor {
+    /// The root set the walk started with: frozen, because root-ness
+    /// decides which unreadable narinfos abort the run, and an answer's
+    /// meaning must not drift when leases change mid-run.
+    pub roots: Vec<String>,
+    /// Visited hashes, sorted by the set.
+    pub visited: BTreeSet<String>,
+    /// Frontier hashes in walk order.
+    pub frontier: Vec<String>,
+    /// For each readable marked hash, the NAR key its narinfo named.
+    #[serde(rename = "markedUrls", default)]
+    pub marked_urls: BTreeMap<String, String>,
+    /// Deep narinfo reads that failed so far.
+    #[serde(rename = "unreadableDeep")]
+    pub unreadable_deep: u64,
+}
+
+/// One candidate whose URL the collect stage has read.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CollectedUrl {
+    /// The store-path hash.
+    pub hash: String,
+    /// The NAR key the narinfo named.
+    pub url: String,
+}
+
+/// The frozen half of the collect stage: which of the candidates the run
+/// has read the URL of so far. Candidates themselves recompute from the
+/// tick's fresh inventory, and the index walks that tick's list, so a
+/// candidate list that shifted between ticks settles at plan time, not
+/// mid-collect: the frozen URLs pair with hashes, so each read is applied
+/// exactly once regardless of ordering.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CollectCursor {
+    /// One-based progress through the candidate list.
+    #[serde(rename = "nextIndex")]
+    pub next_index: u64,
+    /// Hash-URL pairs read so far.
+    pub collected: Vec<CollectedUrl>,
+}
+
+/// The frozen half of a sweep stage: the fixed plan and how much of it
+/// this run has executed. The plan is computed once and persisted; ages
+/// answer to the tick that computed them, and boundary objects settle on
+/// the next run.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SweepCursor {
+    /// Narinfo keys to delete, sorted.
+    #[serde(rename = "narinfoDeletes")]
+    pub narinfo_deletes: Vec<String>,
+    /// NAR keys to delete after the narinfos, sorted and deduplicated.
+    #[serde(rename = "narDeletes")]
+    pub nar_deletes: Vec<String>,
+    /// The leading prefix of each list already deleted.
+    #[serde(rename = "narinfosDeleted")]
+    pub narinfos_deleted: u64,
+    /// NAR deletions executed so far.
+    #[serde(rename = "narsDeleted")]
+    pub nars_deleted: u64,
+    /// Bytes freed by deletions executed so far.
+    #[serde(rename = "bytesFreed", default)]
+    pub bytes_freed: u64,
+    /// Listing sizes by key, so the report's freed bytes sum without
+    /// re-reading inventory.
+    #[serde(rename = "bytesByKey", default)]
+    pub bytes_by_key: BTreeMap<String, u64>,
+}
+
+/// The whole freeze: everything the next tick needs to resume this run
+/// rather than start over. Stored under `meta/gc-cursor`, which the
+/// reserved-prefix grammar keeps out of both the sweep and every request.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct GcCursor {
+    /// The run's id: `{startedAtMs}-{entropy hex}`, so artifacts sort.
+    #[serde(rename = "runId")]
+    pub run_id: String,
+    /// When the run started.
+    #[serde(rename = "startedAtMs")]
+    pub started_at_ms: u64,
+    /// The stage the next tick resumes.
+    pub stage: GcStage,
+    /// Counts the report accumulates across ticks.
+    #[serde(rename = "inventoryPaths")]
+    pub inventory_paths: u64,
+    /// Active leases read so far.
+    #[serde(rename = "activeLeases")]
+    pub active_leases: u64,
+    /// Paths the walk marked reachable, set when the mark stage completes.
+    #[serde(rename = "markedPaths")]
+    pub marked_paths: u64,
+    /// Deep narinfo reads that failed in the walk, set at completion.
+    #[serde(rename = "unreadableDeep")]
+    pub unreadable_deep: u64,
+    /// Frozen mark state, present exactly at a mark-boundary freeze.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mark: Option<MarkCursor>,
+    /// Frozen collect state, present exactly while the URL reads continue.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collect: Option<CollectCursor>,
+    /// Frozen sweep state, present exactly at a sweep-boundary freeze.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sweep: Option<SweepCursor>,
+    /// Stale uploads aborted so far.
+    #[serde(rename = "uploadsAborted")]
+    pub uploads_aborted: u64,
+}
+
+impl GcCursor {
+    /// Serialize with the document conventions (indent, trailing newline).
+    pub fn serialize(&self) -> String {
+        let mut body = serde_json::to_string_pretty(self).expect("the cursor fields serialize");
+        body.push('\n');
+        body
+    }
+
+    /// Read a stored cursor. A corrupt cursor is fatal information for a
+    /// run, never a parse to defaults: the caller names the gate.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError::MalformedRoots`] when the stored bytes are not a
+    /// cursor.
+    pub fn parse(text: &str) -> crate::error::Result<Self> {
+        serde_json::from_str(text).map_err(|_| crate::error::ClientError::MalformedRoots)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::constants::GRACE_WINDOW_MS;
+
+    #[test]
+    fn a_frozen_walk_resumes_to_the_same_outcome() {
+        let a = "a".repeat(32);
+        let b = "b".repeat(32);
+        let c = "c".repeat(32);
+        let docs: BTreeMap<String, Narinfo> = [
+            (a.clone(), narinfo_for(&a, &[format!("{b}-dep")])),
+            (b.clone(), narinfo_for(&b, &[format!("{c}-dep")])),
+            (c.clone(), narinfo_for(&c, &[])),
+        ]
+        .into_iter()
+        .collect();
+        let roots = [StorePathHash::parse(&a).unwrap()];
+
+        let whole = closure_walk(&roots, |h| {
+            docs.get(h.as_str()).cloned().ok_or(WalkReadError::Absent)
+        });
+
+        // Freeze after exactly one answer, resume, and finish.
+        let mut walker = ClosureWalker::new(&roots);
+        let first = walker.next_read().expect("a root waits");
+        walker.answer(
+            first.clone(),
+            docs.get(first.as_str())
+                .cloned()
+                .ok_or(WalkReadError::Absent),
+        );
+        let cursor = walker.to_mark_cursor();
+        let mut resumed = ClosureWalker::from_mark_cursor(&cursor);
+        while resumed.outcome.gate.is_none() {
+            let Some(hash) = resumed.next_read() else {
+                break;
+            };
+            let read = docs
+                .get(hash.as_str())
+                .cloned()
+                .ok_or(WalkReadError::Absent);
+            resumed.answer(hash, read);
+        }
+        let halved = resumed.into_outcome();
+
+        assert_eq!(whole.marked, halved.marked);
+        assert_eq!(whole.marked_urls, halved.marked_urls);
+        assert_eq!(whole.unreadable_deep, halved.unreadable_deep);
+        assert_eq!(whole.gate.is_none(), halved.gate.is_none());
+    }
+
+    #[test]
+    fn the_walk_marks_roots_first_and_terminates_self_loops() {
+        let a = "a".repeat(32);
+        let docs: BTreeMap<String, Narinfo> =
+            [(a.clone(), narinfo_for(&a, &[format!("{a}-self")]))]
+                .into_iter()
+                .collect();
+        let mut walker = ClosureWalker::new(&[StorePathHash::parse(&a).unwrap()]);
+        let mut reads = 0;
+        while let Some(hash) = walker.next_read() {
+            reads += 1;
+            let read = docs
+                .get(hash.as_str())
+                .cloned()
+                .ok_or(WalkReadError::Absent);
+            walker.answer(hash, read);
+        }
+        assert_eq!(reads, 1, "the self loop never re-reads");
+        assert_eq!(walker.into_outcome().marked.len(), 1);
+    }
+
+    #[test]
+    fn the_report_and_cursor_round_trip() {
+        let report = GcReport {
+            run_id: "1780000000000-00ff".to_string(),
+            started_at_ms: 1_780_000_000_000,
+            finished_at_ms: 1_780_000_000_500,
+            inventory_paths: 12,
+            active_leases: 2,
+            marked_paths: 9,
+            unreadable_deep: 1,
+            narinfos_deleted: 3,
+            nars_deleted: 2,
+            bytes_freed: 486_400,
+            uploads_aborted: 1,
+            gate: Some("sweep_fraction_exceeded".to_string()),
+        };
+        let text = report.serialize();
+        assert!(text.ends_with("}\n"));
+        assert_eq!(
+            GcReport::parse(&text).expect("a written report parses"),
+            report
+        );
+
+        let cursor = GcCursor {
+            run_id: report.run_id.clone(),
+            started_at_ms: report.started_at_ms,
+            stage: GcStage::Sweep,
+            inventory_paths: 12,
+            active_leases: 2,
+            marked_paths: 9,
+            unreadable_deep: 1,
+            mark: None,
+            collect: None,
+            sweep: Some(SweepCursor {
+                narinfo_deletes: vec!["a".repeat(32) + ".narinfo"],
+                nar_deletes: vec!["nar/".to_string() + &"b".repeat(52) + ".nar.zst"],
+                narinfos_deleted: 1,
+                nars_deleted: 0,
+                bytes_freed: 0,
+                bytes_by_key: BTreeMap::new(),
+            }),
+            uploads_aborted: 0,
+        };
+        let parsed = GcCursor::parse(&cursor.serialize()).expect("a written cursor parses");
+        assert_eq!(parsed, cursor);
+        assert!(GcCursor::parse("{not json").is_err());
+    }
 
     fn narinfo_for(hash: &str, refs: &[String]) -> Narinfo {
         let body = format!(
