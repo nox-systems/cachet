@@ -43,7 +43,7 @@ prompt() {
 
 preflight
 
-DEPLOYMENT_NAME="$(prompt "Deployment name (lowercase + dashes; one per deployment)" "production")"
+DEPLOYMENT_NAME="$(prompt "Deployment name (lowercase letters, digits, dashes)" "production")"
 [[ ${DEPLOYMENT_NAME} =~ ^[a-z][a-z0-9-]{1,31}$ ]] ||
   fail "deployment name must match ^[a-z][a-z0-9-]{1,31}\$: resources are named cachet-${DEPLOYMENT_NAME}*"
 
@@ -76,7 +76,7 @@ cat >&2 <<CHECKLIST
 cachet: bootstrap needs one GitHub OAuth App. In the GitHub org you will
 serve, open Settings > Developer settings > OAuth Apps > New OAuth App:
 
-    Application name:               cachet-${DEPLOYMENT_NAME}
+    Application name:               ${DEPLOYMENT_NAME}
     Homepage URL:                   https://${CACHET_DEPLOY_HOST}
     Authorization callback URL:     https://${CACHET_DEPLOY_HOST}/_auth/callback
     Enable Device Flow:             on
