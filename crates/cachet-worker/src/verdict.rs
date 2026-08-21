@@ -242,6 +242,42 @@ pub async fn authorize_read(env: &Env, now: UnixMillis, req: &Request) -> Result
     Err(ClientError::Unauthorized)
 }
 
+/// The admins list: the CACHET_ADMINS comma list, absent meaning nobody.
+/// Comparison is exact: GitHub logins are case-preserving and the config
+/// value is operator-written.
+pub(crate) fn admins(env: &Env) -> Vec<String> {
+    env.var("CACHET_ADMINS")
+        .ok()
+        .map(|value| {
+            value
+                .to_string()
+                .split(',')
+                .map(|part| part.trim().to_string())
+                .filter(|part| !part.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Resolve a read credential and require adminship on top: every
+/// `/api/self` route's single gate.
+///
+/// # Errors
+///
+/// [`ClientError::Unauthorized`] for a missing or unusable credential;
+/// [`ClientError::ForbiddenAdmin`] for a working credential whose login
+/// the deployment does not list.
+pub(crate) async fn require_admin(env: &Env, now: UnixMillis, req: &Request) -> Result<String> {
+    let identity = authorize_read(env, now, req).await?;
+    let (ReadIdentity::Token { login } | ReadIdentity::Session { login }) = identity;
+    if admins(env).iter().any(|admin| admin == &login) {
+        Ok(login)
+    } else {
+        log::event("info", "api.admin_refused", &[("login", login)]);
+        Err(ClientError::ForbiddenAdmin)
+    }
+}
+
 /// The password half of `Authorization: Basic base64(user:password)`: the
 /// GitHub token arrives as the password because netrc clients speak basic
 /// auth, never as a Bearer scheme.

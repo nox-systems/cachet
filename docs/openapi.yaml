@@ -96,6 +96,133 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/ProblemBody'
+  /api/self/gc-runs:
+    get:
+      tags:
+      - routes
+      summary: |-
+        `GET /api/self/gc-runs`: one page of run ids, oldest first. Admins
+        only: the login from the read credential must enter CACHET_ADMINS.
+      operationId: gc_runs_list
+      parameters:
+      - name: cursor
+        in: query
+        description: The nextCursor from the previous page
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: The run ids, oldest first; cache-control no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GcRunList'
+        '401':
+          description: problem+json; code=unauthorized
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '403':
+          description: problem+json; code=forbidden_admin
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '503':
+          description: problem+json; code=auth_unavailable or storage_unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+  /api/self/gc-runs/{runId}:
+    get:
+      tags:
+      - routes
+      summary: '`GET /api/self/gc-runs/{runId}`: one run''s full report, as stored.'
+      operationId: gc_run_get
+      parameters:
+      - name: runId
+        in: path
+        description: 'The run id: milliseconds, a dash, sixteen lowercase hex characters'
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: The run's report document; cache-control no-store
+          content:
+            application/json: {}
+        '400':
+          description: problem+json; code=malformed_key
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '401':
+          description: problem+json; code=unauthorized
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '403':
+          description: problem+json; code=forbidden_admin
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '404':
+          description: problem+json; code=not_found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '503':
+          description: problem+json; code=auth_unavailable or storage_unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+  /api/self/stats:
+    get:
+      tags:
+      - routes
+      summary: |-
+        `GET /api/self/stats`: the cache's current shape, derived from the
+        newest completed report.
+      operationId: stats_get
+      responses:
+        '200':
+          description: The totals from the newest report; cache-control no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatsBody'
+        '401':
+          description: problem+json; code=unauthorized
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '403':
+          description: problem+json; code=forbidden_admin
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '404':
+          description: problem+json; code=not_found when no run has completed
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '503':
+          description: problem+json; code=auth_unavailable or storage_unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
   /logout:
     post:
       tags:
@@ -647,6 +774,22 @@ paths:
                 $ref: '#/components/schemas/ProblemBody'
 components:
   schemas:
+    GcRunList:
+      type: object
+      description: '`GET /api/self/gc-runs`: one page of run ids, oldest first.'
+      required:
+      - runs
+      properties:
+        nextCursor:
+          type:
+          - string
+          - 'null'
+          description: The cursor for the next page, when more runs exist.
+        runs:
+          type: array
+          items:
+            type: string
+          description: The run ids in chronological order.
     ProblemBody:
       type: object
       description: |-
@@ -731,6 +874,52 @@ components:
           items:
             type: string
           description: Full nix store paths whose closures must stay alive.
+    StatsBody:
+      type: object
+      description: |-
+        `GET /api/self/stats`: the cache's current shape, derived from the
+        newest completed report rather than recomputed live.
+      required:
+      - basedOnRunId
+      - inventoryPaths
+      - narinfosDeleted
+      - narsDeleted
+      - bytesFreed
+      - finishedAtMs
+      properties:
+        basedOnRunId:
+          type: string
+          description: The run the numbers came from.
+        bytesFreed:
+          type: integer
+          format: int64
+          description: Bytes the sweep freed.
+          minimum: 0
+        finishedAtMs:
+          type: integer
+          format: int64
+          description: When that run finished.
+          minimum: 0
+        gate:
+          type:
+          - string
+          - 'null'
+          description: The gate the run aborted on, when one tripped.
+        inventoryPaths:
+          type: integer
+          format: int64
+          description: Narinfos in the bucket at that run's inventory.
+          minimum: 0
+        narinfosDeleted:
+          type: integer
+          format: int64
+          description: Narinfos its sweep deleted.
+          minimum: 0
+        narsDeleted:
+          type: integer
+          format: int64
+          description: NAR objects its sweep deleted.
+          minimum: 0
     UploadCreated:
       type: object
       description: |-

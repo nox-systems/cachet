@@ -79,6 +79,46 @@ pub struct UploadedPartBody {
     pub etag: String,
 }
 
+/// `GET /api/self/gc-runs`: one page of run ids, oldest first.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct GcRunList {
+    /// The run ids in chronological order.
+    pub runs: Vec<String>,
+    /// The cursor for the next page, when more runs exist.
+    #[serde(
+        rename = "nextCursor",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub next_cursor: Option<String>,
+}
+
+/// `GET /api/self/stats`: the cache's current shape, derived from the
+/// newest completed report rather than recomputed live.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct StatsBody {
+    /// The run the numbers came from.
+    #[serde(rename = "basedOnRunId")]
+    pub based_on_run_id: String,
+    /// Narinfos in the bucket at that run's inventory.
+    #[serde(rename = "inventoryPaths")]
+    pub inventory_paths: u64,
+    /// Narinfos its sweep deleted.
+    #[serde(rename = "narinfosDeleted")]
+    pub narinfos_deleted: u64,
+    /// NAR objects its sweep deleted.
+    #[serde(rename = "narsDeleted")]
+    pub nars_deleted: u64,
+    /// Bytes the sweep freed.
+    #[serde(rename = "bytesFreed")]
+    pub bytes_freed: u64,
+    /// The gate the run aborted on, when one tripped.
+    pub gate: Option<String>,
+    /// When that run finished.
+    #[serde(rename = "finishedAtMs")]
+    pub finished_at_ms: u64,
+}
+
 /// The RFC 9457 problem document every non-2xx answer carries. Described
 /// here rather than serialized from it: the worker emits cachet-core's
 /// problem writer, whose byte shape is golden-locked, and this type is
@@ -127,8 +167,11 @@ pub struct ProblemBody {
         routes::auth_login,
         routes::auth_callback,
         routes::auth_logout,
+        routes::gc_runs_list,
+        routes::gc_run_get,
+        routes::stats_get,
     ),
-    components(schemas(PublicConfig, ProjectList, RenewalBody, ProblemBody, UploadCreated, UploadedPartBody))
+    components(schemas(PublicConfig, ProjectList, RenewalBody, ProblemBody, UploadCreated, UploadedPartBody, GcRunList, StatsBody))
 )]
 pub struct ApiDoc;
 

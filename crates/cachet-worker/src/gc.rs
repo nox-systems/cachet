@@ -421,11 +421,20 @@ async fn finish_run(
         );
     }
     budget.spend();
+    let body = report.serialize();
     bucket
         .put(
             format!("{GC_REPORTS_KEY_PREFIX}{}.json", cursor.run_id),
-            report.serialize(),
+            body.clone(),
         )
+        .execute()
+        .await?;
+    // The index copy: the stats endpoint and operators answer "the newest
+    // run" with one read, and writing it here keeps the answer atomic with
+    // the run that produced it.
+    budget.spend();
+    bucket
+        .put(cachet_core::constants::GC_LATEST_REPORT_KEY, body)
         .execute()
         .await?;
     budget.spend();

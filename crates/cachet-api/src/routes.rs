@@ -5,7 +5,10 @@
 //! the shared types in the crate root; anything a description names that
 //! the worker would not answer fails review in the workerd lane first.
 
-use crate::{ProblemBody, ProjectList, PublicConfig, RenewalBody, UploadCreated, UploadedPartBody};
+use crate::{
+    GcRunList, ProblemBody, ProjectList, PublicConfig, RenewalBody, StatsBody, UploadCreated,
+    UploadedPartBody,
+};
 
 /// `GET /nix-cache-info`: the nix handshake. Immutable per deployment
 /// generation; always 200 because it describes configuration, not data.
@@ -324,6 +327,56 @@ pub fn upload_complete() {}
     )
 )]
 pub fn upload_abort() {}
+
+/// `GET /api/self/gc-runs`: one page of run ids, oldest first. Admins
+/// only: the login from the read credential must enter CACHET_ADMINS.
+#[utoipa::path(
+    get,
+    path = "/api/self/gc-runs",
+    params(
+        ("cursor" = Option<String>, Query, description = "The nextCursor from the previous page"),
+    ),
+    responses(
+        (status = 200, description = "The run ids, oldest first; cache-control no-store", body = GcRunList),
+        (status = 401, description = "problem+json; code=unauthorized", body = ProblemBody, content_type = "application/problem+json"),
+        (status = 403, description = "problem+json; code=forbidden_admin", body = ProblemBody, content_type = "application/problem+json"),
+        (status = 503, description = "problem+json; code=auth_unavailable or storage_unavailable", body = ProblemBody, content_type = "application/problem+json"),
+    )
+)]
+pub fn gc_runs_list() {}
+
+/// `GET /api/self/gc-runs/{runId}`: one run's full report, as stored.
+#[utoipa::path(
+    get,
+    path = "/api/self/gc-runs/{runId}",
+    params(
+        ("runId" = String, Path, description = "The run id: milliseconds, a dash, sixteen lowercase hex characters"),
+    ),
+    responses(
+        (status = 200, description = "The run's report document; cache-control no-store", content_type = "application/json"),
+        (status = 400, description = "problem+json; code=malformed_key", body = ProblemBody, content_type = "application/problem+json"),
+        (status = 401, description = "problem+json; code=unauthorized", body = ProblemBody, content_type = "application/problem+json"),
+        (status = 403, description = "problem+json; code=forbidden_admin", body = ProblemBody, content_type = "application/problem+json"),
+        (status = 404, description = "problem+json; code=not_found", body = ProblemBody, content_type = "application/problem+json"),
+        (status = 503, description = "problem+json; code=auth_unavailable or storage_unavailable", body = ProblemBody, content_type = "application/problem+json"),
+    )
+)]
+pub fn gc_run_get() {}
+
+/// `GET /api/self/stats`: the cache's current shape, derived from the
+/// newest completed report.
+#[utoipa::path(
+    get,
+    path = "/api/self/stats",
+    responses(
+        (status = 200, description = "The totals from the newest report; cache-control no-store", body = StatsBody),
+        (status = 401, description = "problem+json; code=unauthorized", body = ProblemBody, content_type = "application/problem+json"),
+        (status = 403, description = "problem+json; code=forbidden_admin", body = ProblemBody, content_type = "application/problem+json"),
+        (status = 404, description = "problem+json; code=not_found when no run has completed", body = ProblemBody, content_type = "application/problem+json"),
+        (status = 503, description = "problem+json; code=auth_unavailable or storage_unavailable", body = ProblemBody, content_type = "application/problem+json"),
+    )
+)]
+pub fn stats_get() {}
 
 /// `GET /_auth/login`: begin the browser flow. Redirects to GitHub with
 /// the state stored in KV for ten minutes.

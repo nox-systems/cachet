@@ -51,6 +51,7 @@ mod tests {
             ClientError::StorageUnavailable,
             ClientError::MalformedOauth,
             ClientError::OauthStateUnknown,
+            ClientError::ForbiddenAdmin,
         ] {
             let body = problem_body(error);
             let parsed: serde_json::Value =

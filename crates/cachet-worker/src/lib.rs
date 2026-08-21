@@ -154,6 +154,15 @@ async fn fixed_get_routes(
     if path == "/api/openapi.json" {
         return Some(api::openapi_document());
     }
+    if path == "/api/self/gc-runs" {
+        return Some(api::gc_runs_list(env, now, req).await);
+    }
+    if let Some(run_id) = path.strip_prefix("/api/self/gc-runs/") {
+        return Some(api::gc_run_read(env, now, req, run_id).await);
+    }
+    if path == "/api/self/stats" {
+        return Some(api::stats(env, now, req).await);
+    }
     if path == "/_auth/login" {
         return Some(oauth::login(env, now).await);
     }
