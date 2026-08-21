@@ -104,3 +104,38 @@ wasm-hygiene:
 # clippy gate excludes it because it is wasm32-only)
 clippy-wasm:
     cargo clippy -p cachet-worker --target wasm32-unknown-unknown --all-features -- --deny warnings
+
+# deploy one stage end to end: build the bundle, source the stage's env
+# file when present, run the alchemy stack. The operator's two secrets and
+# the CACHET_DEPLOY_* set come from infra/.env.<stage> or the environment.
+deploy stage:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just wasm
+    cd infra
+    bun install --frozen-lockfile --silent
+    if [ -f ".env.{{ stage }}" ]; then
+        set -a
+        # shellcheck disable=SC1090
+        . ".env.{{ stage }}"
+        set +a
+    fi
+    bun run deploy --stage "{{ stage }}"
+
+# tear one stage down; alchemy confirms before deleting anything
+destroy stage:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd infra
+    if [ -f ".env.{{ stage }}" ]; then
+        set -a
+        # shellcheck disable=SC1090
+        . ".env.{{ stage }}"
+        set +a
+    fi
+    bun run destroy --stage "{{ stage }}"
+
+# the first-run walkthrough: writes infra/.env.production and prints the
+# checklists for the GitHub and Cloudflare sides
+bootstrap:
+    bash scripts/bootstrap.sh
