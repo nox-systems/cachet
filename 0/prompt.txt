@@ -1,0 +1,51 @@
+<task-notification>
+<task-id>buxdv75u0</task-id>
+<summary>Monitor event: "CI run 32533127791 (audit commit d84e432) job completions"</summary>
+<event>actionlint:success
+deny:success
+doc-manifest:success
+fmt:success
+lane-manifest:success
+scripts:success</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>buxdv75u0</task-id>
+<summary>Monitor event: "CI run 32533127791 (audit commit d84e432) job completions"</summary>
+<event>kani:success
+openapi:success</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>buxdv75u0</task-id>
+<summary>Monitor event: "CI run 32533127791 (audit commit d84e432) job completions"</summary>
+<event>wasm:success</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>buxdv75u0</task-id>
+<summary>Monitor event: "CI run 32533127791 (audit commit d84e432) job completions"</summary>
+<event>wasm-hygiene:success
+workerd:failure
+RUN TERMINAL: failure detected</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>buxdv75u0</task-id>
+<tool-use-id>Monitor:60</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-shivanshvij-Development-nox-cachet/42edac1a-a168-4f46-9e01-b6b2b41db64a/tasks/buxdv75u0.output</output-file>
+<status>completed</status>
+<summary>Monitor "CI run 32533127791 (audit commit d84e432) job completions" stream ended</summary>
+</task-notification>
