@@ -10,6 +10,7 @@
 mod api;
 mod auth;
 mod error;
+mod gc;
 mod log;
 mod oauth;
 mod read;
@@ -230,6 +231,15 @@ fn query_value(req: &Request, name: &str) -> Option<String> {
 }
 
 /// The write-path credential against the request's Authorization header.
+/// The cron entry point: the armed collector. Failures land in the event
+/// log; a scheduled tick throwing is how workerd marks invocations failed.
+#[event(scheduled)]
+async fn scheduled(_event: worker::ScheduledEvent, env: Env, _ctx: worker::ScheduleContext) {
+    if let Err(failure) = gc::drive(&env).await {
+        log::event("error", "gc.run_failed", &[("error", failure.to_string())]);
+    }
+}
+
 async fn authorize_write(
     env: &Env,
     now: UnixMillis,

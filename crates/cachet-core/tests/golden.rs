@@ -146,6 +146,91 @@ fn the_generation_document_writes_compactly() {
     insta::assert_snapshot!(document.serialize(), @"{\"generation\":7,\"bumpedAtMs\":1780000000000}\n");
 }
 
+// The collector's documents: the report every run lands and the cursor a
+// parked run leaves, both byte-locked because runs and ticks read each
+// other's bytes.
+#[test]
+fn the_gc_documents_write_stably() {
+    use cachet_core::gc::{GcCursor, GcReport, GcStage, SweepCursor};
+    let report = GcReport {
+        run_id: "1780000000000-00ff112233445566".to_string(),
+        started_at_ms: 1_780_000_000_000,
+        finished_at_ms: 1_780_000_000_500,
+        inventory_paths: 12,
+        active_leases: 2,
+        marked_paths: 9,
+        unreadable_deep: 1,
+        narinfos_deleted: 3,
+        nars_deleted: 2,
+        bytes_freed: 486_400,
+        uploads_aborted: 1,
+        gate: None,
+    };
+    insta::assert_snapshot!(report.serialize(), @"
+    {
+      \"runId\": \"1780000000000-00ff112233445566\",
+      \"startedAtMs\": 1780000000000,
+      \"finishedAtMs\": 1780000000500,
+      \"inventoryPaths\": 12,
+      \"activeLeases\": 2,
+      \"markedPaths\": 9,
+      \"unreadableDeep\": 1,
+      \"narinfosDeleted\": 3,
+      \"narsDeleted\": 2,
+      \"bytesFreed\": 486400,
+      \"uploadsAborted\": 1,
+      \"gate\": null
+    }
+    ");
+
+    let cursor = GcCursor {
+        run_id: report.run_id.clone(),
+        started_at_ms: report.started_at_ms,
+        stage: GcStage::Sweep,
+        inventory_paths: 12,
+        active_leases: 2,
+        marked_paths: 9,
+        unreadable_deep: 1,
+        mark: None,
+        collect: None,
+        sweep: Some(SweepCursor {
+            narinfo_deletes: vec!["aa".to_string()],
+            nar_deletes: vec!["nar/bb".to_string()],
+            narinfos_deleted: 1,
+            nars_deleted: 0,
+            bytes_freed: 1024,
+            bytes_by_key: [("aa".to_string(), 1024_u64)].into_iter().collect(),
+        }),
+        uploads_aborted: 0,
+    };
+    insta::assert_snapshot!(cursor.serialize(), @"
+    {
+      \"runId\": \"1780000000000-00ff112233445566\",
+      \"startedAtMs\": 1780000000000,
+      \"stage\": \"sweep\",
+      \"inventoryPaths\": 12,
+      \"activeLeases\": 2,
+      \"markedPaths\": 9,
+      \"unreadableDeep\": 1,
+      \"sweep\": {
+        \"narinfoDeletes\": [
+          \"aa\"
+        ],
+        \"narDeletes\": [
+          \"nar/bb\"
+        ],
+        \"narinfosDeleted\": 1,
+        \"narsDeleted\": 0,
+        \"bytesFreed\": 1024,
+        \"bytesByKey\": {
+          \"aa\": 1024
+        }
+      },
+      \"uploadsAborted\": 0
+    }
+    ");
+}
+
 #[test]
 fn a_scrambled_narinfo_emits_the_canonical_form() {
     let scrambled = "X-Custom-Facts: kept because a cache is not an authority\nNarSize: 42\nReferences: cccccccccccccccccccccccccccccccc-dep-3 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bash-5.2\nURL: nar/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.nar.zst\nStorePath: /nix/store/0123456789abcdfghijklmnpqrsvwxyz-bash-5.2\nSig: example:mhQ=\nCompression: zstd\nNarHash: sha256:0iqi00iqi00iqi00iqi00iqi00iqi00iqi00iqi00iqi00iqi00j\n";

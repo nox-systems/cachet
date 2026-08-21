@@ -2,7 +2,7 @@
 
 The workerd lane runs the built worker bundle under `wrangler dev --local`,
 which is miniflare over the real workerd binary: R2, KV, the Cache API,
-waitUntil draining, and the module-pipeline semantics are the runtime's
+scheduled invocations, and the module-pipeline semantics are the runtime's
 own rather than a mock's. Assertions reach the worker over real HTTP from
 `workerd/check.mjs`, a node script with no npm dependencies (the
 devshell's node 22 supplies fetch and child_process).
@@ -49,7 +49,12 @@ redirect's exact parameters through state consumption (a replayed state
 never reaches the exchange), the outsider's forbidden_org refusal, the
 session cookie's attributes, and logout's session deletion. The served
 OpenAPI document is asserted byte-identical to the committed one, which is
-the served half of the drift bijection (CLAUDE.md §8). GC scenarios join
-it with the collector.
+the served half of the drift bijection (CLAUDE.md §8). The GC scenarios
+invoke the scheduled handler over wrangler's dev endpoint with grace
+zeroed: one proves the collector sweeps a dead path's narinfo and NAR,
+spares the leased path, reaps a stale upload, bumps the generation, and
+lands its report and stage artifacts, with the bucket state read back
+through `wrangler r2 object get`; the other proves the fraction gate
+aborts a wholesale sweep with nothing deleted.
 
 Run it: `just workerd`.

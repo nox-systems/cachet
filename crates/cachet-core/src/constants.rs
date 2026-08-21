@@ -169,6 +169,25 @@ pub const CLOSURE_WALK_PATHS_MAX: usize = 100_000;
 /// GC run artifacts older than this are pruned; reports keep forever.
 pub const GC_RUNS_RETENTION_MS: u64 = 30 * MILLIS_PER_DAY;
 
+/// Binding operations one GC invocation may spend before it hands the run
+/// to the next tick: list pages, reads, puts, and delete batches count one
+/// each.
+pub const GC_OP_BUDGET: u64 = 900;
+
+/// Wall time one invocation may use before handing off, in milliseconds.
+/// The scheduled-event ceiling is fifteen minutes and the margin absorbs
+/// the final stage's writes.
+pub const GC_HEADROOM_MS: u64 = 13 * 60 * 1_000;
+
+/// Keys per deletion call: one batch is one binding operation, and the
+/// batch shape is what keeps a 900-operation tick honest about real
+/// deletions.
+pub const GC_DELETE_BATCH: usize = 128;
+
+/// The run cursor's bucket key, inside the reserved prefix: the sweep
+/// grammar and every request path already refuse it.
+pub const GC_CURSOR_OBJECT_KEY: &str = "meta/gc-cursor";
+
 /// GitHub rotates its JWKS on its own schedule; ten minutes bounds our
 /// staleness.
 pub const JWKS_CACHE_TTL_MS: u64 = 600_000;

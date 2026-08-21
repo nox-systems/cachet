@@ -34,3 +34,11 @@ CACHET_OAUTH_CLIENT_ID = "lane-oauth-client"
 # origin is fixed here so the callback's redirect branch is lane-tested;
 # absent in a deployment without a UI, where the callback answers 204.
 CACHET_UI_ORIGIN = "https://ui.lane.invalid"
+# The collector runs armed with grace zeroed: the lane's seeded objects
+# are seconds old and must still be sweepable.
+CACHET_GC_GRACE_MS = "0"
+
+# The deployment's collector binding; the lane invokes the scheduled
+# handler directly over its dev endpoint.
+[triggers]
+crons = ["0 5 * * *"]

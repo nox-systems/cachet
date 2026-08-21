@@ -250,7 +250,7 @@ async function scenario(name, seed, assertions) {
     }
     const events = () => captured;
     const clearEvents = () => (captured = "");
-    await assertions({ base, events, clearEvents });
+    await assertions({ base, events, clearEvents, persist });
   } finally {
     try {
       process.kill(-proc.pid, "SIGKILL");
@@ -1028,6 +1028,211 @@ try {
 } finally {
   await rm(devVarsPath, { force: true });
 }
+
+// The collector's own helpers and scenarios: the scheduled handler over
+// its dev endpoint, and bucket state read back through wrangler, because
+// the reports and the cursor are internal keys by design.
+const triggerScheduled = async (base) => {
+  for (const path of ["/cdn-cgi/handler/scheduled", "/cdn-cgi/mf/scheduled"]) {
+    const res = await fetch(`${base}${path}`);
+    if (res.status === 200) {
+      return true;
+    }
+  }
+  return false;
+};
+
+const r2Get = async (persist, key) => {
+  const got = spawnSync(
+    "wrangler",
+    [
+      "r2",
+      "object",
+      "get",
+      `cachet-lane/${key}`,
+      "--local",
+      "--persist-to",
+      persist,
+      "--config",
+      configPath,
+      "--pipe",
+    ],
+    { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 },
+  );
+  return { ok: got.status === 0, body: got.stdout, stderr: got.stderr };
+};
+
+const deadNarinfoFor = async (hash, narBase52) => {
+  const doc = await readFile(path.join(fixturesDir, NARINFO_KEY), "utf8");
+  return doc
+    .replaceAll("qvqa04f0m85m0a6xxnan5vxnwg2jkgl9", hash)
+    .replace(NAR_KEY, `nar/${narBase52}.nar.zst`);
+};
+
+const captureRunId = (events) => {
+  const match = events().match(
+    /"event":"gc\.(?:run_finished|run_aborted)"[^\n]*"runId":"(\d+-[0-9a-f]{16})"/,
+  );
+  assert.ok(
+    match,
+    `a concluded run logged its id in:\n${events().slice(-1200)}`,
+  );
+  return match[1];
+};
+
+const LEASE_DOC =
+  JSON.stringify(
+    {
+      project: "lane-org-lane-repo",
+      renewedAtMs: Date.now(),
+      repository: "lane-org/lane-repo",
+      ref: "refs/heads/main",
+      runId: "41",
+      commitSha: "abc",
+      installables: [],
+      storePaths: [
+        "/nix/store/qvqa04f0m85m0a6xxnan5vxnwg2jkgl9-payload",
+        `/nix/store/${"b".repeat(32)}-alive-two`,
+        `/nix/store/${"c".repeat(32)}-alive-three`,
+      ],
+    },
+    null,
+    2,
+  ) + "\n";
+
+await scenario(
+  "the collector sweeps the dead and spares the leased",
+  async () => [
+    [NARINFO_KEY, await readFile(path.join(fixturesDir, NARINFO_KEY))],
+    [NAR_KEY, await readFile(path.join(fixturesDir, NAR_FILE))],
+    ["roots/lane-org-lane-repo", LEASE_DOC],
+    // why the roster: the fraction gate refuses a sweep past 25% of the
+    // narinfo inventory, so the happy path needs a cache big enough that
+    // one dead path is a quarter or less of it.
+    [
+      `${"b".repeat(32)}.narinfo`,
+      await deadNarinfoFor("b".repeat(32), "q".repeat(52)),
+    ],
+    [
+      `${"c".repeat(32)}.narinfo`,
+      await deadNarinfoFor("c".repeat(32), "r".repeat(52)),
+    ],
+    [
+      `${"d".repeat(32)}.narinfo`,
+      await deadNarinfoFor("d".repeat(32), "w".repeat(52)),
+    ],
+    [
+      `nar/${"q".repeat(52)}.nar.zst`,
+      await readFile(path.join(fixturesDir, NAR_FILE)),
+    ],
+    [
+      `nar/${"r".repeat(52)}.nar.zst`,
+      await readFile(path.join(fixturesDir, NAR_FILE)),
+    ],
+    [
+      `nar/${"w".repeat(52)}.nar.zst`,
+      await readFile(path.join(fixturesDir, NAR_FILE)),
+    ],
+    [
+      "uploads/stale-record-1",
+      `${JSON.stringify({
+        key: `nar/${"q".repeat(52)}.nar.zst`,
+        totalBytes: 10,
+        expectedParts: 1,
+        createdAtMs: 0,
+      })}\n`,
+    ],
+  ],
+  async ({ base, events, persist }) => {
+    await check("the scheduled run sweeps, reports, and reaps", async () => {
+      assert.ok(
+        await triggerScheduled(base),
+        "the dev endpoint ran the handler",
+      );
+
+      const dead = await fetch(`${base}/${"d".repeat(32)}.narinfo`);
+      assert.equal(
+        dead.status,
+        404,
+        `the dead narinfo was swept; worker said:\n${events().slice(-2000)}`,
+      );
+      const alive = await fetch(`${base}/${NARINFO_KEY}`);
+      assert.equal(alive.status, 200, "the leased narinfo survived");
+      const deadNar = await r2Get(persist, `nar/${"w".repeat(52)}.nar.zst`);
+      assert.ok(!deadNar.ok, "the dead NAR followed its narinfo");
+      const staleRecord = await r2Get(persist, "uploads/stale-record-1");
+      assert.ok(!staleRecord.ok, "the stale upload record was reaped");
+      const cursor = await r2Get(persist, "meta/gc-cursor");
+      assert.ok(!cursor.ok, "the cursor is gone when the run ends");
+      const generation = await r2Get(persist, "meta/generation");
+      assert.ok(generation.ok, "the sweep bumped the generation");
+      assert.ok(
+        JSON.parse(generation.body).generation >= 1,
+        `the epoch moved: ${generation.body}`,
+      );
+
+      const runId = captureRunId(events);
+      const report = await r2Get(persist, `gc-reports/${runId}.json`);
+      assert.ok(report.ok, `the report landed: ${report.stderr}`);
+      const body = JSON.parse(report.body);
+      assert.equal(body.gate, null);
+      assert.equal(body.runId, runId);
+      assert.equal(body.activeLeases, 1);
+      assert.ok(body.narinfosDeleted >= 1, body.runId);
+      assert.ok(body.narsDeleted >= 1, body.runId);
+      assert.ok(body.bytesFreed > 0, body.runId);
+      assert.equal(body.uploadsAborted, 1);
+      const artifact = await r2Get(persist, `gc-runs/${runId}/mark.json`);
+      assert.ok(artifact.ok, "the mark artifact landed");
+    });
+  },
+);
+
+await scenario(
+  "the fraction gate aborts a wholesale sweep",
+  async () => [
+    [
+      `${"d".repeat(32)}.narinfo`,
+      await deadNarinfoFor("d".repeat(32), "w".repeat(52)),
+    ],
+    [
+      `${"v".repeat(32)}.narinfo`,
+      await deadNarinfoFor("v".repeat(32), "q".repeat(52)),
+    ],
+    [
+      `${"x".repeat(32)}.narinfo`,
+      await deadNarinfoFor("x".repeat(32), "r".repeat(52)),
+    ],
+    [
+      `nar/${"w".repeat(52)}.nar.zst`,
+      await readFile(path.join(fixturesDir, NAR_FILE)),
+    ],
+  ],
+  async ({ base, events, persist }) => {
+    await check(
+      "a run that would empty the cache deletes nothing",
+      async () => {
+        assert.ok(
+          await triggerScheduled(base),
+          "the dev endpoint ran the handler",
+        );
+        const stillThere = await fetch(`${base}/${"d".repeat(32)}.narinfo`);
+        assert.equal(stillThere.status, 200, "the gate kept every key");
+        assert.ok(
+          events().includes('"event":"gc.gate_tripped"'),
+          `the trip logged:\n${events().slice(-800)}`,
+        );
+        const runId = captureRunId(events);
+        const report = await r2Get(persist, `gc-reports/${runId}.json`);
+        const body = JSON.parse(report.body);
+        assert.equal(body.gate, "sweep_fraction_exceeded");
+        assert.equal(body.narinfosDeleted, 0);
+        const cursor = await r2Get(persist, "meta/gc-cursor");
+        assert.ok(!cursor.ok, "an aborted run still ends: no parked cursor");
+      },
+    );
+  },
+);
 
 const failed = results.filter(([status]) => status !== "ok").length;
 if (failed > 0) {
