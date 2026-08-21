@@ -1,0 +1,83 @@
+{
+  "cli_version": "0.10.2",
+  "checkpoint_id": "01M0K5ZXASB0DC3J5MNR4R0NWE",
+  "session_id": "d50e44b4-93a7-4a75-8ce8-2f52bde07903",
+  "strategy": "manual-commit",
+  "created_at": "2026-08-21T22:10:25.720904Z",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "save_step_count": 1,
+  "files_touched": [
+    ".github/workflows/deploy.yml",
+    "CLAUDE.md",
+    "docs/DEPLOY.md",
+    "docs/testing/integration.md",
+    "docs/testing/lanes.toml",
+    "infra/alchemy.run.ts",
+    "infra/src/config.ts",
+    "justfile",
+    "nix/checks.nix",
+    "scripts/check-lane-manifest.sh",
+    "scripts/integration.sh"
+  ],
+  "agent": "Claude Code",
+  "model": "moonshotai/Kimi-K3[1m]",
+  "turn_id": "1183c3a70a82",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 378181004,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 376054784,
+    "output_tokens": 969611,
+    "api_call_count": 1354
+  },
+  "skill_events_version": 1,
+  "skill_events": [
+    {
+      "id": "claude-skill-Skill:1",
+      "event_type": "tool_invocation",
+      "skill": {
+        "name": "cloudflare"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "skill_tool_use",
+        "confidence": "explicit"
+      },
+      "turn_id": "1183c3a70a82",
+      "transcript_anchor": {
+        "unit": "line",
+        "start": 16,
+        "end": 17,
+        "entry_ids": [
+          "5a13d610-6dd8-4c4c-92db-3836b46cfcc4"
+        ],
+        "tool_use_id": "Skill:1"
+      },
+      "native": {
+        "tool_name": "Skill",
+        "tool_use_id": "Skill:1"
+      },
+      "collapse": {
+        "target": "tool_pair",
+        "label": "Skill: cloudflare",
+        "default_collapsed": true
+      }
+    }
+  ],
+  "session_metrics": {
+    "turn_count": 12
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-08-21T22:10:24.959703Z",
+    "agent_lines": 238,
+    "agent_removed": 14,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 238,
+    "total_lines_changed": 252,
+    "agent_percentage": 100,
+    "metric_version": 2
+  }
+}
