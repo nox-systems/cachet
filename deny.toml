@@ -23,10 +23,8 @@ ignore = [
     # The Marvin advisory covers RSA private-key operations (decrypt and
     # sign) leaking through timing. cachet has no private RSA key anywhere:
     # the only RSA use is PUBLIC-key verification of GitHub OIDC tokens
-    # against presented JWKs, so the vulnerable path is unreachable. The
-    # `rsa` crate exists for hosts and tests; the deployed worker verifies
-    # with workerd crypto, at which point `rsa` leaves the production
-    # graph and this ignore dies with it.
+    # against presented JWKs, in tests and in the worker alike, so the
+    # vulnerable path is unreachable on every target.
     "RUSTSEC-2023-0071",
 ]
 

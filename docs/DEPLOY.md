@@ -88,10 +88,11 @@ secrets.
 
 `curl https://<host>/api/public/config` answers the orgs, the host, the
 OAuth client id, and the public key; the key must match what bootstrap
-printed. Then on a laptop: install the CLI from the release page, run
-`cachet login --cache-url https://<host>`, `cachet setup`, and
-`cachet doctor`; every probe should print `ok`. The collector fires on
-the cron, and its runs appear under `/api/self/gc-runs` for an admin.
+printed. Then on a laptop: install the CLI with the one-line installer
+in the README, run `cachet login --cache-url https://<host>`,
+`cachet setup`, and `cachet doctor`; every probe should print `ok`. The
+collector fires on the cron, and its runs appear under
+`/api/self/gc-runs` for an admin.
 
 ## Rollback
 
