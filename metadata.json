@@ -1,0 +1,45 @@
+{
+  "cli_version": "0.10.2",
+  "checkpoint_id": "01M0K39XT5WMJ7HJP4XY8Y2X9X",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "Cargo.lock",
+    "crates/cachet-push/Cargo.toml",
+    "crates/cachet-push/src/adapters.rs",
+    "crates/cachet-push/src/error.rs",
+    "crates/cachet-push/src/filter.rs",
+    "crates/cachet-push/src/lib.rs",
+    "crates/cachet-push/src/oidc.rs",
+    "crates/cachet-push/src/pipeflow.rs",
+    "crates/cachet-push/src/pipeline.rs",
+    "crates/cachet-push/src/plan.rs",
+    "crates/cachet-push/src/real.rs",
+    "crates/cachet-push/src/retry.rs",
+    "crates/cachet-push/src/snapshot.rs"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 295645626,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 293643584,
+    "output_tokens": 845740,
+    "api_call_count": 1117,
+    "subagent_tokens": {
+      "input_tokens": 1200359,
+      "cache_creation_tokens": 0,
+      "cache_read_tokens": 1084544,
+      "output_tokens": 36938,
+      "api_call_count": 29
+    }
+  }
+}

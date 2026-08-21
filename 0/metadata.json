@@ -1,0 +1,154 @@
+{
+  "cli_version": "0.10.2",
+  "checkpoint_id": "01M0K39XT5WMJ7HJP4XY8Y2X9X",
+  "session_id": "d50e44b4-93a7-4a75-8ce8-2f52bde07903",
+  "strategy": "manual-commit",
+  "created_at": "2026-08-21T21:23:27.335135Z",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "save_step_count": 2,
+  "files_touched": [
+    "Cargo.lock",
+    "crates/cachet-push/Cargo.toml",
+    "crates/cachet-push/src/adapters.rs",
+    "crates/cachet-push/src/error.rs",
+    "crates/cachet-push/src/filter.rs",
+    "crates/cachet-push/src/lib.rs",
+    "crates/cachet-push/src/oidc.rs",
+    "crates/cachet-push/src/pipeflow.rs",
+    "crates/cachet-push/src/pipeline.rs",
+    "crates/cachet-push/src/plan.rs",
+    "crates/cachet-push/src/real.rs",
+    "crates/cachet-push/src/retry.rs",
+    "crates/cachet-push/src/snapshot.rs"
+  ],
+  "agent": "Claude Code",
+  "model": "moonshotai/Kimi-K3[1m]",
+  "turn_id": "af7c1fa11cf6",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 295645626,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 293643584,
+    "output_tokens": 845740,
+    "api_call_count": 1117,
+    "subagent_tokens": {
+      "input_tokens": 1200359,
+      "cache_creation_tokens": 0,
+      "cache_read_tokens": 1084544,
+      "output_tokens": 36938,
+      "api_call_count": 29
+    }
+  },
+  "skill_events_version": 1,
+  "skill_events": [
+    {
+      "id": "claude-skill-Skill:1",
+      "event_type": "tool_invocation",
+      "skill": {
+        "name": "cloudflare"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "skill_tool_use",
+        "confidence": "explicit"
+      },
+      "turn_id": "af7c1fa11cf6",
+      "transcript_anchor": {
+        "unit": "line",
+        "start": 16,
+        "end": 17,
+        "entry_ids": [
+          "5a13d610-6dd8-4c4c-92db-3836b46cfcc4"
+        ],
+        "tool_use_id": "Skill:1"
+      },
+      "native": {
+        "tool_name": "Skill",
+        "tool_use_id": "Skill:1"
+      },
+      "collapse": {
+        "target": "tool_pair",
+        "label": "Skill: cloudflare",
+        "default_collapsed": true
+      }
+    }
+  ],
+  "session_metrics": {
+    "turn_count": 9
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-08-21T21:23:26.671191Z",
+    "agent_lines": 283,
+    "agent_removed": 0,
+    "human_added": 2735,
+    "human_modified": 31,
+    "human_removed": 0,
+    "total_committed": 3049,
+    "total_lines_changed": 3064,
+    "agent_percentage": 9.236292428198434,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 5706,
+      "user_lines_removed": 38,
+      "agent_lines_added": 341,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1,
+        ".github/workflows/release.yml": 296,
+        "Cargo.lock": 732,
+        "Cargo.toml": 5,
+        "action/action.yml": 221,
+        "action/post/action.yml": 20,
+        "action/post/main.cjs": 24,
+        "action/post/post.cjs": 21,
+        "crates/cachet-cli/Cargo.toml": 32,
+        "crates/cachet-cli/src/config.rs": 210,
+        "crates/cachet-cli/src/doctor.rs": 279,
+        "crates/cachet-cli/src/keygen.rs": 86,
+        "crates/cachet-cli/src/lib.rs": 36,
+        "crates/cachet-cli/src/login.rs": 436,
+        "crates/cachet-cli/src/main.rs": 369,
+        "crates/cachet-cli/src/push.rs": 371,
+        "crates/cachet-cli/src/setup.rs": 523,
+        "crates/cachet-push/Cargo.toml": 19,
+        "crates/cachet-push/src/adapters.rs": 115,
+        "crates/cachet-push/src/error.rs": 11,
+        "crates/cachet-push/src/filter.rs": 130,
+        "crates/cachet-push/src/lib.rs": 19,
+        "crates/cachet-push/src/oidc.rs": 143,
+        "crates/cachet-push/src/pipeflow.rs": 677,
+        "crates/cachet-push/src/pipeline.rs": 549,
+        "crates/cachet-push/src/plan.rs": 35,
+        "crates/cachet-push/src/real.rs": 279,
+        "crates/cachet-push/src/retry.rs": 33,
+        "crates/cachet-push/src/snapshot.rs": 2,
+        "dist-workspace.toml": 13,
+        "nix/checks.nix": 16,
+        "nix/treefmt.nix": 3
+      },
+      "user_removed_per_file": {
+        "Cargo.lock": 4,
+        "crates/cachet-cli/src/lib.rs": 3,
+        "crates/cachet-push/src/error.rs": 1,
+        "crates/cachet-push/src/plan.rs": 23,
+        "crates/cachet-push/src/snapshot.rs": 3,
+        "nix/checks.nix": 2,
+        "nix/treefmt.nix": 2
+      }
+    },
+    {
+      "checkpoint_number": 3,
+      "user_lines_added": 1,
+      "user_lines_removed": 0,
+      "agent_lines_added": 6019,
+      "agent_lines_removed": 11,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1
+      }
+    }
+  ]
+}
