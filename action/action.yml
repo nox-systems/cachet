@@ -1,0 +1,221 @@
+# The action consumers wire into their CI: install Determinate Nix trusting
+# this cache, provision the job's read credential before the daemon starts,
+# download the pinned cachet binary, and hand the push phases to the nested
+# main/post action. Signing happens server-side, so the action holds no key
+# material; the job's OIDC token is the only credential it ever touches.
+name: cachet setup
+description: >-
+  Install Determinate Nix wired to a cachet deployment, then push what the
+  job builds. Needs `permissions: { contents: read, id-token: write }`.
+author: nox-systems
+inputs:
+  cache-url:
+    description: The cache's base URL.
+    required: true
+  roots:
+    description: >-
+      Flake installables whose closures this project keeps. Their outputs
+      are pushed unconditionally and, on the default branch, become the
+      project's garbage-collection lease.
+    required: false
+    default: ""
+  audience:
+    description: The OIDC audience the cache requires.
+    required: false
+    default: cachet
+  project:
+    description: >-
+      The lease name for this repository. Defaults to the owner and name
+      joined by a hyphen (`my-org-my-repo`), because a renewal replaces the
+      lease wholesale: two same-named repositories in one org would
+      otherwise overwrite each other's.
+    required: false
+    default: ""
+  upstream-url:
+    description: The upstream cache to filter against before pushing.
+    required: false
+    default: https://cache.nixos.org
+  default-branch-ref:
+    description: >-
+      The ref permitted to renew the lease. The cache enforces this itself;
+      this input only avoids a request that would be refused.
+    required: false
+    default: refs/heads/main
+  push:
+    description: Set to false to use the cache read-only.
+    required: false
+    default: "true"
+  cachet-version:
+    description: The cachet release to download and run.
+    required: false
+    default: 0.0.1
+
+runs:
+  using: composite
+  steps:
+    # Provision the read credential BEFORE Determinate is installed and its
+    # daemon starts. determinate-nixd synthesizes the netrc the daemon reads
+    # at daemon start, merging every file under
+    # authentication.additionalNetrcSources, and that startup synthesis is
+    # the only reliable one on these runners. Writing the credential and its
+    # registration here means the daemon's start-up synthesis sees both.
+    - name: Provision the cachet read credential before Determinate starts
+      shell: bash
+      env:
+        CACHET_CACHE_URL: ${{ inputs.cache-url }}
+        CACHET_AUDIENCE: ${{ inputs.audience }}
+      run: |
+        set -euo pipefail
+
+        # The OIDC token authenticates this job's reads; the runner is
+        # authorized because it is provably the org's CI. Minted here,
+        # without nix, because Determinate is not installed yet. This check
+        # fails the job on purpose: every later step assumes the token.
+        if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+          echo "cachet: this job cannot mint an OIDC token." >&2
+          echo "  Add 'permissions: { contents: read, id-token: write }' to the job." >&2
+          exit 1
+        fi
+        token="$(curl -fsSL \
+          -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+          "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${CACHET_AUDIENCE}" | jq -r '.value')"
+        host="$(printf '%s' "${CACHET_CACHE_URL}" | sed -e 's#^https\?://##' -e 's#/.*$##')"
+
+        # The credential file: real, outside the nix store, 0600.
+        sudo mkdir -p /etc/nix /etc/determinate
+        printf 'machine %s login cachet password %s\n' "${host}" "${token}" \
+          | sudo tee /etc/nix/netrc >/dev/null
+        sudo chmod 600 /etc/nix/netrc
+
+        # Register it under authentication.additionalNetrcSources, merging
+        # when the installer pre-seeded the file.
+        if [ -f /etc/determinate/config.json ]; then
+          sudo cat /etc/determinate/config.json \
+            | jq '.authentication.additionalNetrcSources = ((.authentication.additionalNetrcSources // []) + ["/etc/nix/netrc"] | unique)' \
+            | sudo tee /etc/determinate/config.json.tmp >/dev/null
+          sudo mv /etc/determinate/config.json.tmp /etc/determinate/config.json
+        else
+          printf '{"authentication":{"additionalNetrcSources":["/etc/nix/netrc"]}}\n' \
+            | sudo tee /etc/determinate/config.json >/dev/null
+        fi
+
+        # The deployment names its own signing key: fetch the public half
+        # from the worker rather than asking consumers to paste it. This
+        # doubles as the connectivity check: a cache that cannot answer its
+        # public config fails the job here, before the build starts.
+        public_key="$(curl -fsSL "${CACHET_CACHE_URL%/}/api/public/config" | jq -r '.publicKey')"
+        echo "CACHET_TRUSTED_PUBLIC_KEY=${public_key}" >> "${GITHUB_ENV}"
+        echo "cachet: read credential provisioned before Determinate starts"
+
+    - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
+      with:
+        # The substituter and trusted key ride the install because a
+        # substituter added after the daemon has started is never consulted.
+        extra-conf: |
+          extra-substituters = ${{ inputs.cache-url }}
+          extra-trusted-public-keys = ${{ env.CACHET_TRUSTED_PUBLIC_KEY }}
+
+    # The Determinate installer logged into FlakeHub on this runner (any job
+    # granting id-token: write gets one), which adds cache.flakehub.com as a
+    # substituter: every lookup then pays a 401 round trip before falling
+    # through to cachet. Log out; the cachet credential is independent.
+    - name: Log out of FlakeHub Cache, which this deployment does not use
+      shell: bash
+      run: |
+        set -euo pipefail
+        # `|| true`: a job without id-token never logged in, so logout is a
+        # no-op there, and this action must not fail a build over a cache it
+        # does not use.
+        sudo determinate-nixd auth logout || true
+        sudo determinate-nixd status || true
+
+    - name: Download and verify the cachet binary
+      shell: bash
+      env:
+        CACHET_VERSION: ${{ inputs.cachet-version }}
+      run: |
+        set -euo pipefail
+        case "${{ runner.os }}-${{ runner.arch }}" in
+          Linux-X64) triple="x86_64-unknown-linux-gnu" ;;
+          Linux-ARM64) triple="aarch64-unknown-linux-gnu" ;;
+          macOS-X64) triple="x86_64-apple-darwin" ;;
+          macOS-ARM64) triple="aarch64-apple-darwin" ;;
+          *)
+            echo "cachet: no cachet release for ${{ runner.os }}-${{ runner.arch }}" >&2
+            exit 1
+            ;;
+        esac
+        base="https://github.com/nox-systems/cachet/releases/download/v${CACHET_VERSION}"
+        # cargo-dist names archives after the package, not the binary.
+        artifact="cachet-cli-${triple}.tar.xz"
+        work="$(mktemp -d)"
+        # The checksum verifies before the archive opens: a tampered or
+        # truncated download fails the job, it does not limp onward.
+        curl -fsSL -o "${work}/${artifact}" "${base}/${artifact}"
+        curl -fsSL -o "${work}/${artifact}.sha256" "${base}/${artifact}.sha256"
+        (cd "${work}" && shasum -a 256 -c "${artifact}.sha256")
+        install_dir="${RUNNER_TEMP}/cachet-bin"
+        mkdir -p "${install_dir}"
+        tar -xJf "${work}/${artifact}" -C "${install_dir}" --strip-components=1
+        rm -rf "${work}"
+        echo "CACHET_BIN=${install_dir}/cachet" >> "${GITHUB_ENV}"
+        "${install_dir}/cachet" --version
+
+    - name: Configure cachet
+      shell: bash
+      env:
+        CACHET_CACHE_URL: ${{ inputs.cache-url }}
+        CACHET_AUDIENCE: ${{ inputs.audience }}
+        CACHET_PROJECT: ${{ inputs.project }}
+        CACHET_ROOTS: ${{ inputs.roots }}
+        CACHET_UPSTREAM_URL: ${{ inputs.upstream-url }}
+        CACHET_DEFAULT_BRANCH_REF: ${{ inputs.default-branch-ref }}
+        CACHET_PUSH: ${{ inputs.push }}
+      run: |
+        set -euo pipefail
+
+        # Confirm the daemon's netrc authenticates against cachet, so a
+        # regression surfaces in the log rather than as a silent rebuild: a
+        # 404 means the credential is present and authenticated (the probed
+        # path is simply absent), while a 401 means it is not.
+        daemon_netrc="$(nix config show netrc-file 2>/dev/null || echo /nix/var/determinate/netrc)"
+        probe_code="$(curl -s -o /dev/null -w '%{http_code}' --netrc-file "${daemon_netrc}" \
+          "${CACHET_CACHE_URL%/}/0000000000000000000000000000000a.narinfo" 2>/dev/null || echo 000)"
+        echo "cachet: read auth probe returned ${probe_code} (404 = authenticated, 401 = not)"
+
+        # Everything the post step reads is exported here, and this is the
+        # only place any of it is resolved. A step-level `env:` block is
+        # scoped to its own step, so passing these to the nested action as
+        # `with:` inputs left the post step reading empty strings.
+        project="${CACHET_PROJECT}"
+        if [ -z "${project}" ]; then
+          project="${GITHUB_REPOSITORY//\//-}"
+        fi
+        # why: the heredoc form rather than `NAME=value`. `roots` takes
+        # several installables and the post step splits on any whitespace,
+        # so a caller writing them one per line with a YAML block scalar is
+        # using the documented shape, and a bare `NAME=value` line cannot
+        # express a newline: GitHub rejects the whole file with "Invalid
+        # format" when it sees the continuation.
+        env_file() {
+          printf '%s<<CACHET_EOF_1c7f\n%s\nCACHET_EOF_1c7f\n' "$1" "$2" >> "${GITHUB_ENV}"
+        }
+        env_file CACHET_CACHE_URL "${CACHET_CACHE_URL%/}"
+        env_file CACHET_AUDIENCE "${CACHET_AUDIENCE}"
+        env_file CACHET_PROJECT "${project}"
+        env_file CACHET_ROOTS "${CACHET_ROOTS}"
+        env_file CACHET_UPSTREAM_URL "${CACHET_UPSTREAM_URL}"
+        env_file CACHET_DEFAULT_BRANCH_REF "${CACHET_DEFAULT_BRANCH_REF}"
+        env_file CACHET_PUSH "${CACHET_PUSH}"
+        echo "cachet: configured ${CACHET_CACHE_URL} as a substituter for project ${project}"
+
+    # The nested JavaScript action: its main step snapshots the store, and
+    # its post step, on success only, pushes. It reads no inputs, because
+    # the step above resolved everything into the job environment.
+    # why: the full owner/repo/path@ref form rather than `./post`. A
+    # composite action resolves a relative `./post` against the consumer's
+    # workspace rather than this action's own directory, so a cross-repo
+    # consumer failed with "Can't find 'action.yml'". The ref names the v1
+    # major tag, which every release in the 1.x line moves forward, so the
+    # composite and its post action always come from the same line.
+    - uses: nox-systems/cachet/action/post@v1

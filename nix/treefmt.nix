@@ -35,9 +35,10 @@
           "dist/**"
           ".alchemy/**"
           "wrangler.local.jsonc"
-          # why: the generator owns these bytes; a formatter fighting the
-          # generator would make the drift gate unwinnable.
+          # why: the generators own these bytes; a formatter fighting a
+          # generator would make the drift gates unwinnable.
           "docs/openapi.yaml"
+          ".github/workflows/release.yml"
         ];
       };
       checks.fmt = config.treefmt.build.check ../.;

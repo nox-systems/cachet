@@ -64,3 +64,8 @@ module_name_repetitions = "allow"
 # why: #[must_use] belongs on the call sites where ignoring the value is a
 # bug class, not on every function by default.
 must_use_candidate = "allow"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"

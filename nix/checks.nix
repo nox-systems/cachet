@@ -105,13 +105,36 @@
               touch $out
             '';
 
+        # Every workflow and action file the repo ships, with shellcheck on
+        # the PATH so the `run:` blocks lint too. actionlint only detects
+        # action files by their project-relative name, so the sources land
+        # under a scratch project layout and the scan runs argument-free.
+        # release.yml is cargo-dist's own output (regenerate, never edit):
+        # it gets actionlint's syntax and expression checks in a second
+        # project, but shellcheck's style findings belong to the generator,
+        # so its `run:` blocks are not linted here.
         actionlint =
           pkgs.runCommand "actionlint"
             {
-              nativeBuildInputs = [ pkgs.actionlint ];
+              nativeBuildInputs = [
+                pkgs.actionlint
+                pkgs.shellcheck
+                pkgs.nodejs_22
+              ];
             }
             ''
-              actionlint ${../.github/workflows}/ci.yml
+              mkdir -p proj/.git
+              cp -r ${../.github} proj/.github
+              cp -r ${../action} proj/action
+              # Store copies arrive read-only, directories included.
+              chmod -R u+w proj
+              rm -f proj/.github/workflows/release.yml
+              (cd proj && actionlint)
+              mkdir -p proj-gen/.git proj-gen/.github/workflows
+              cp ${../.github/workflows/release.yml} proj-gen/.github/workflows/release.yml
+              (cd proj-gen && actionlint -shellcheck "" .github/workflows/release.yml)
+              node --check ${../action/post/main.cjs}
+              node --check ${../action/post/post.cjs}
               touch $out
             '';
 
