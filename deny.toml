@@ -47,10 +47,10 @@ allow = [
     # permissive than MIT (public-domain-equivalent, no attribution
     # required), so it carries no obligation at all.
     "0BSD",
-    # why: MPL-2.0 is weak, file-level copyleft: obligations trigger only
-    # when a covered file is modified and distributed, which cachet never
-    # does. Its consumer is webpki-roots, the CLI's certificate bundle.
-    "MPL-2.0",
+    # why: CDLA-Permissive is the Linux Foundation's permissive data
+    # license, attribution-only with no copyleft. Its consumer is
+    # webpki-roots, the TLS certificate bundle of the native crates.
+    "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.93
 # why: the workspace crates are publish = false; they are the product being
@@ -66,12 +66,15 @@ wildcards = "deny"
 # The internal crates depend on each other by path, which has no version and
 # reads as a wildcard; the ban still applies to external crates.
 allow-wildcard-paths = true
-# ring and aws-lc do not build for wasm32-unknown-unknown. The C zstd crate
-# does not either; ruzstd supplies the worker's only decompression need.
-# These crates are banned doc-first and this table is the enforcement: a
-# pull request that adds one fails here, before the wasm build would.
+# aws-lc and the C zstd crate do not build for wasm32-unknown-unknown;
+# ruzstd supplies the worker's only decompression need. ring carries the
+# same incompatibility, but the two native crates (cachet-push, cachet-cli)
+# need TLS on hosts and rustls's only remaining provider choices are ring
+# or aws-lc, so ring is allowed through exactly the rustls chain and no
+# further: a new dependant outside these wrappers fails the gate, and the
+# worker's artifact is scanned for it regardless (§5, check-wasm-hygiene).
 deny = [
-    { name = "ring", reason = "does not build for wasm32-unknown-unknown" },
+    { name = "ring", reason = "does not build for wasm32-unknown-unknown; allowed only as the rustls chain's native TLS provider", wrappers = ["rustls", "rustls-webpki"] },
     { name = "aws-lc-rs", reason = "does not build for wasm32-unknown-unknown" },
     { name = "aws-lc-sys", reason = "does not build for wasm32-unknown-unknown" },
     { name = "zstd", reason = "C library, does not build for wasm32-unknown-unknown; use ruzstd" },

@@ -12,3 +12,22 @@ workspace = true
 [dependencies]
 cachet-core = { path = "../cachet-core" }
 cachet-crypto = { path = "../cachet-crypto" }
+cachet-api = { path = "../cachet-api" }
+serde.workspace = true
+serde_json.workspace = true
+# why: the pipeline fans out presence probes sixteen wide and streams
+# bodies off disk; nothing else in the tree gives a native runtime with
+# completion-based file I/O, and hand-rolling one is not on the table.
+tokio = { version = "1", features = ["fs", "io-util", "macros", "process", "rt-multi-thread", "time"] }
+# why: the wire half of the pipeline. rustls keeps OpenSSL's platform
+# lottery off laptops and runners alike, and the stream feature is what
+# the multipart plan's ranged reads ride.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+# why: the probe pools bound concurrency with buffer_unordered; the
+# alternative is a handwritten worker pool around JoinSet for no gain.
+futures-util = "0.3"
+
+[dev-dependencies]
+# why: adapter tests stage into temporary directories; hand-rolled
+# uniqueness is an entropy bug waiting to happen.
+tempfile = "3"
