@@ -499,7 +499,7 @@ await scenario(
 // the driver writes .dev.vars and removes it when they finish.
 await writeFile(
   devVarsPath,
-  `CACHET_SIGNING_KEY=${laneSigningSecret}\nGITHUB_OAUTH_CLIENT_SECRET=${LANE_OAUTH_SECRET}\n`,
+  `CACHET_SIGNING_KEY=${laneSigningSecret}\nCACHET_OAUTH_CLIENT_SECRET=${LANE_OAUTH_SECRET}\n`,
 );
 try {
   await scenario(

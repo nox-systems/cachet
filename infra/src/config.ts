@@ -32,7 +32,7 @@ export interface StageConfig {
 
 const REQUIRED = ["HOST", "ORGS", "OAUTH_CLIENT_ID", "ADMINS"] as const;
 /** The worker's secrets, read by the stack through Config.redacted. */
-const SECRETS = ["CACHET_SIGNING_KEY", "GITHUB_OAUTH_CLIENT_SECRET"] as const;
+const SECRETS = ["CACHET_SIGNING_KEY", "CACHET_OAUTH_CLIENT_SECRET"] as const;
 
 /** One environment variable under the deploy prefix, empty reads as absent. */
 function value(name: string): string | undefined {

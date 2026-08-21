@@ -78,7 +78,7 @@ equivalents). These variables define the deployment:
 | `CACHET_DEPLOY_UI_ORIGIN` | no | Browser login's redirect target; unset answers 204 instead. |
 | `CACHET_DEPLOY_GC_GRACE_MS` | no | Grace override; default 14 days. Set 0 for throwaway test deployments. |
 | `CACHET_SIGNING_KEY` | yes | The `<host>-1:<base64>` secret from bootstrap. |
-| `GITHUB_OAUTH_CLIENT_SECRET` | yes | The OAuth App's client secret. |
+| `CACHET_OAUTH_CLIENT_SECRET` | yes | The OAuth App's client secret. |
 
 ## Rehearsing with a second deployment
 
@@ -102,7 +102,7 @@ Production is manual: Actions > deploy > Run workflow, choosing
 `production`, and the run waits for the `production` environment's
 reviewer approval. Each deployment's GitHub environment carries the same
 values the local file carries: the `CACHET_DEPLOY_*` set as environment
-variables, and `CACHET_SIGNING_KEY`, `GITHUB_OAUTH_CLIENT_SECRET`,
+variables, and `CACHET_SIGNING_KEY`, `CACHET_OAUTH_CLIENT_SECRET`,
 `CLOUDFLARE_API_TOKEN`, and `CLOUDFLARE_ACCOUNT_ID` as environment
 secrets.
 
@@ -119,7 +119,7 @@ environment per deployment is the whole setup:
    Then create a GitHub environment named exactly the deployment's
    name, carrying the same values the local file carries: the
    `CACHET_DEPLOY_*` set as environment variables, `CACHET_SIGNING_KEY`,
-   `GITHUB_OAUTH_CLIENT_SECRET`, `CLOUDFLARE_API_TOKEN`, and
+   `CACHET_OAUTH_CLIENT_SECRET`, `CLOUDFLARE_API_TOKEN`, and
    `CLOUDFLARE_ACCOUNT_ID` as environment secrets. Add required
    reviewers if deploys must wait for approval.
 2. Add one caller workflow to a repository you control:
@@ -143,7 +143,7 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       CACHET_SIGNING_KEY: ${{ secrets.CACHET_SIGNING_KEY }}
-      GITHUB_OAUTH_CLIENT_SECRET: ${{ secrets.GITHUB_OAUTH_CLIENT_SECRET }}
+      CACHET_OAUTH_CLIENT_SECRET: ${{ secrets.CACHET_OAUTH_CLIENT_SECRET }}
 ```
 
 The called workflow downloads the release's deploy package (the alchemy

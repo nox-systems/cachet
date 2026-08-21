@@ -57,8 +57,8 @@ export default Alchemy.Stack(
           ? {}
           : { CACHET_GC_GRACE_MS: cfg.gcGraceMs }),
         CACHET_SIGNING_KEY: Config.redacted("CACHET_SIGNING_KEY"),
-        GITHUB_OAUTH_CLIENT_SECRET: Config.redacted(
-          "GITHUB_OAUTH_CLIENT_SECRET",
+        CACHET_OAUTH_CLIENT_SECRET: Config.redacted(
+          "CACHET_OAUTH_CLIENT_SECRET",
         ),
       },
       // The collector fires daily; GC_ARMED stays unset (armed by default).

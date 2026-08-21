@@ -89,12 +89,12 @@ CHECKLIST
 CACHET_DEPLOY_ORGS="$(prompt "GitHub org slug(s) to serve, comma-separated")"
 CACHET_DEPLOY_ADMINS="$(prompt "Admin GitHub login(s), comma-separated")"
 CACHET_DEPLOY_OAUTH_CLIENT_ID="$(prompt "OAuth App client id")"
-GITHUB_OAUTH_CLIENT_SECRET="$(prompt "OAuth App client secret")"
+CACHET_OAUTH_CLIENT_SECRET="$(prompt "OAuth App client secret")"
 CACHET_DEPLOY_AUDIENCE="$(prompt "OIDC audience" "cachet")"
 CACHET_DEPLOY_DEFAULT_BRANCH_REF="$(prompt "Default branch ref" "refs/heads/main")"
 
 for pair in "org slug(s):${CACHET_DEPLOY_ORGS}" "admin login(s):${CACHET_DEPLOY_ADMINS}" \
-  "OAuth client id:${CACHET_DEPLOY_OAUTH_CLIENT_ID}" "OAuth client secret:${GITHUB_OAUTH_CLIENT_SECRET}"; do
+  "OAuth client id:${CACHET_DEPLOY_OAUTH_CLIENT_ID}" "OAuth client secret:${CACHET_OAUTH_CLIENT_SECRET}"; do
   [ -n "${pair#*:}" ] || fail "the ${pair%%:*} cannot be empty"
 done
 
@@ -167,7 +167,7 @@ CACHET_DEPLOY_ADMINS=${CACHET_DEPLOY_ADMINS}
 CACHET_DEPLOY_OAUTH_CLIENT_ID=${CACHET_DEPLOY_OAUTH_CLIENT_ID}
 CACHET_DEPLOY_AUDIENCE=${CACHET_DEPLOY_AUDIENCE}
 CACHET_DEPLOY_DEFAULT_BRANCH_REF=${CACHET_DEPLOY_DEFAULT_BRANCH_REF}
-GITHUB_OAUTH_CLIENT_SECRET=${GITHUB_OAUTH_CLIENT_SECRET}
+CACHET_OAUTH_CLIENT_SECRET=${CACHET_OAUTH_CLIENT_SECRET}
 CACHET_SIGNING_KEY=${signing_key}
 # Optional: the future UI's origin for the browser login redirect.
 #CACHET_DEPLOY_UI_ORIGIN=https://ui.example.com

@@ -2,7 +2,7 @@
 //! `/logout`. The flow's decisions (URL construction, query grammar,
 //! cookie strings, target choice) are cachet-core's; this module samples
 //! the entropy in, performs the KV and GitHub I/O, and renders. The
-//! client secret enters only as the `GITHUB_OAUTH_CLIENT_SECRET` binding
+//! client secret enters only as the `CACHET_OAUTH_CLIENT_SECRET` binding
 //! and is never logged or returned, and a consumed state is deleted
 //! before its validity is judged so a callback can never be replayed.
 
@@ -16,7 +16,7 @@ use worker::{Env, Fetch, Headers, Method, Request, RequestInit, Response, Result
 use crate::{error, log, verdict};
 
 /// The binding name of the OAuth client secret.
-const CLIENT_SECRET_BINDING: &str = "GITHUB_OAUTH_CLIENT_SECRET";
+const CLIENT_SECRET_BINDING: &str = "CACHET_OAUTH_CLIENT_SECRET";
 
 /// The deployment's OAuth configuration. Missing pieces cannot run the
 /// flow, so they answer auth_unavailable like every other auth backend.
