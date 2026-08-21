@@ -174,7 +174,8 @@ cachet: next steps, in order:
        (docs/DEPLOY.md).
     3. Deploy: CLOUDFLARE_API_TOKEN=... CLOUDFLARE_ACCOUNT_ID=... just deploy ${DEPLOYMENT_NAME}
        The token needs Workers Scripts:Edit, Workers KV Storage:Edit,
-       R2:Edit, Zone:Read, and Zone:DNS:Edit on the zone above.
+       Workers R2 Storage:Edit, and Secrets Store:Edit on the account,
+       plus Zone:Read and Zone:DNS:Edit on the zone above.
     4. If GitHub let you set the callback URL only roughly, make sure it
        reads exactly https://${CACHET_DEPLOY_HOST}/_auth/callback.
     5. On a laptop: install the cachet binary from the release page, then

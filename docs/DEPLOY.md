@@ -15,10 +15,14 @@ surrounds it.
 
 Bring these before the first deploy:
 
-1. A Cloudflare account and an API token with Workers Scripts:Edit,
-   Workers KV Storage:Edit, R2:Edit, Zone:Read, and Zone:DNS:Edit on the
-   zone that will serve the cache. The account id comes from the
-   dashboard's right-hand sidebar.
+1. A Cloudflare account and a custom API token (My Profile > API
+   Tokens): on the account, Workers Scripts:Edit, Workers KV
+   Storage:Edit, Workers R2 Storage:Edit, and Secrets Store:Edit (the
+   deploy's state store lives there); on the zone that will serve the
+   cache, Zone:Read and Zone:DNS:Edit. The account id comes from the
+   dashboard's right-hand sidebar. If the account has never run a
+   Worker, pick its workers.dev subdomain once in the dashboard first:
+   the deploy's state store answers on it.
 2. A zone in that account for the cache's custom domain (for example
    `cache.example.com`): the deploy attaches the host name as the
    domain, and `CACHET_DEPLOY_DOMAIN` only overrides it. The host name
