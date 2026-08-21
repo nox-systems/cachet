@@ -122,7 +122,9 @@ public_key="$(tr -d '\n' <"${keydir}/cachet-key.public")"
 rm -rf "${keydir}"
 trap - EXIT
 
-[[ ${signing_key} =~ ^.+:[A-Za-z0-9+/=]{43,44}$ ]] ||
+# The nix secret-key wire form is <name>:<base64 of 64 bytes> (secret+public
+# halves concatenated); the body of a well-formed key is always 88 chars.
+[[ ${signing_key} =~ ^"${CACHET_DEPLOY_HOST}"-1:[A-Za-z0-9+/=]{88}$ ]] ||
   fail "keygen produced a malformed secret: ${signing_key%%:*}:***"
 
 # A rerun regenerates the pair: if the live deployment serves a DIFFERENT
