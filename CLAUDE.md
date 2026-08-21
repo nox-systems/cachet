@@ -48,12 +48,16 @@ direction fails review.
 
 ## §5 Wasm and crypto hygiene
 
-ring, aws-lc-rs, aws-lc-sys, and the C zstd crate do not build for
-wasm32-unknown-unknown and are banned in deny.toml. Hashing uses sha2,
-signing uses ed25519-dalek, decompression uses ruzstd, and RS256 uses the
-crypto decided in docs/adr. scripts/check-wasm-hygiene.sh scans the shipped
-bundle for the banned runtimes and for secret-shaped strings; the gate
-protects the artifact, not intentions.
+aws-lc-rs, aws-lc-sys, and the C zstd crate do not build for
+wasm32-unknown-unknown and are banned in deny.toml. ring shares the
+incompatibility and is permitted only through the rustls chain
+(deny.toml's wrappers), because the native crates need TLS on hosts and
+rustls's provider choices are ring or aws-lc; every other path to ring
+fails the gate. Hashing uses sha2, signing uses ed25519-dalek,
+decompression uses ruzstd, and RS256 uses the crypto decided in docs/adr.
+scripts/check-wasm-hygiene.sh scans the shipped bundle for the banned
+runtimes and for secret-shaped strings; the gate protects the artifact,
+not intentions.
 
 ## §6 Dependencies
 
