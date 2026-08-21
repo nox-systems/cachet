@@ -231,19 +231,28 @@ pub(crate) fn session_id_from(cookie_header: Option<&str>) -> Option<String> {
 /// # Errors
 ///
 /// [`ClientError::Unauthorized`] for a missing or unusable credential;
+/// [`ClientError::MalformedAuth`] for a present header that cannot parse;
 /// [`ClientError::AuthUnavailable`] when a backend cannot answer.
 pub async fn authorize_read(env: &Env, now: UnixMillis, req: &Request) -> Result<ReadIdentity> {
     let headers = req.headers();
     let authorization = headers
         .get("authorization")
         .map_err(|_| ClientError::MalformedAuth)?;
-    if let Some(token) = authorization.as_deref().and_then(|header| {
-        header
+    if let Some(header) = authorization.as_deref() {
+        // A present-but-unparseable credential is malformed_auth (400),
+        // not unauthorized (401): the caller sent something and it was
+        // broken, which a retry-with-changes can fix while a retry cannot.
+        if header.len() > cachet_core::constants::AUTH_HEADER_BYTES_MAX {
+            return Err(ClientError::MalformedAuth);
+        }
+        return match header
             .strip_prefix("Bearer ")
             .map(ToString::to_string)
             .or_else(|| basic_password(header))
-    }) {
-        return resolve_token(env, now, &token).await;
+        {
+            Some(token) => resolve_token(env, now, &token).await,
+            None => Err(ClientError::MalformedAuth),
+        };
     }
     let cookie = headers
         .get("cookie")

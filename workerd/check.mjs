@@ -41,6 +41,10 @@ const jwksJwk = {
 // path: it recognizes exactly one good laptop token, and it counts its
 // hits so the KV-verdict caching is observable.
 const GOOD_LAPTOP_TOKEN = "lane-laptop-token";
+
+// The lane's plain read credential for object GET/HEADs: every object
+// read answers 401 without one.
+const READ_AUTH = () => ({ authorization: `Bearer ${GOOD_LAPTOP_TOKEN}` });
 const stubHits = { user: 0, memberships: 0, exchange: 0 };
 const LANE_OAUTH_CODE = "lane-code";
 const LANE_OUTSIDER_CODE = "lane-code-outsider";
@@ -165,8 +169,14 @@ async function check(name, fn) {
     results.push(["ok", name]);
     process.stdout.write(`ok ${name}\n`);
   } catch (failure) {
-    results.push(["FAIL", `${name}: ${failure.message}`]);
-    process.stdout.write(`FAIL ${name}: ${failure.message}\n`);
+    // assert.equal's message drops the values when the stack is terse;
+    // print them so a wire disagreement reads as a wire disagreement.
+    const detail =
+      failure.actual !== undefined
+        ? ` (actual ${JSON.stringify(failure.actual)}, expected ${JSON.stringify(failure.expected)})`
+        : "";
+    results.push(["FAIL", `${name}: ${failure.message}${detail}`]);
+    process.stdout.write(`FAIL ${name}: ${failure.message}${detail}\n`);
   }
 }
 
@@ -184,7 +194,7 @@ function freePort() {
 const settle = () => new Promise((resolve) => setTimeout(resolve, 200));
 
 // One scenario per persistence directory: fresh R2, fresh edge cache.
-async function scenario(name, seed, assertions) {
+async function scenario(name, seed, assertions, vars = {}) {
   const persist = await mkdtemp(path.join(os.tmpdir(), "cachet-lane-"));
   for (const [key, content] of await seed()) {
     const seedFile = path.join(persist, "seed-input");
@@ -229,6 +239,10 @@ async function scenario(name, seed, assertions) {
       `CACHET_GITHUB_API_URL:${githubApiUrl}`,
       "--var",
       `CACHET_GITHUB_WEB_URL:${githubApiUrl}`,
+      ...Object.entries(vars).flatMap(([name, value]) => [
+        "--var",
+        `${name}:${value}`,
+      ]),
     ],
     { detached: true, stdio: ["ignore", "pipe", "pipe"] },
   );
@@ -258,7 +272,17 @@ async function scenario(name, seed, assertions) {
     }
     const events = () => captured;
     const clearEvents = () => (captured = "");
+    const failuresBefore = results.filter(([state]) => state === "FAIL").length;
     await assertions({ base, events, clearEvents, persist });
+    // why: a wire answer alone (a 503) never says WHICH 503; the worker's
+    // event stream does. Spill it attached to the scenario that failed,
+    // or the CI log reads as noise.
+    const failuresAfter = results.filter(([state]) => state === "FAIL").length;
+    if (failuresAfter > failuresBefore) {
+      process.stdout.write(
+        `--- worker log tail for "${name}" ---\n${captured.slice(-3000)}\n--- end worker log ---\n`,
+      );
+    }
   } finally {
     try {
       process.kill(-proc.pid, "SIGKILL");
@@ -287,7 +311,9 @@ await scenario(
     });
 
     await check("a seeded narinfo serves with the wire headers", async () => {
-      const res = await fetch(`${base}/${NARINFO_KEY}`);
+      const res = await fetch(`${base}/${NARINFO_KEY}`, {
+        headers: READ_AUTH(),
+      });
       const seeded = await readFile(
         path.join(fixturesDir, NARINFO_KEY),
         "utf8",
@@ -309,7 +335,9 @@ await scenario(
 
     await check("the second get comes from the edge", async () => {
       clearEvents();
-      const res = await fetch(`${base}/${NARINFO_KEY}`);
+      const res = await fetch(`${base}/${NARINFO_KEY}`, {
+        headers: READ_AUTH(),
+      });
       assert.equal(res.status, 200);
       await settle();
       assert.match(events(), /"event":"read\.edge_hit"/);
@@ -318,7 +346,9 @@ await scenario(
 
     await check("a missing narinfo is a cacheable 404", async () => {
       clearEvents();
-      const res = await fetch(`${base}/${OTHER_NARINFO}`);
+      const res = await fetch(`${base}/${OTHER_NARINFO}`, {
+        headers: READ_AUTH(),
+      });
       assert.equal(res.status, 404);
       assert.equal(
         res.headers.get("content-type"),
@@ -333,7 +363,9 @@ await scenario(
       "the missing narinfo answers from the edge the second time",
       async () => {
         clearEvents();
-        const res = await fetch(`${base}/${OTHER_NARINFO}`);
+        const res = await fetch(`${base}/${OTHER_NARINFO}`, {
+          headers: READ_AUTH(),
+        });
         assert.equal(res.status, 404);
         await settle();
         assert.match(events(), /"event":"read\.edge_hit"/);
@@ -342,14 +374,20 @@ await scenario(
     );
 
     await check("HEAD answers from bucket metadata alone", async () => {
-      const res = await fetch(`${base}/${NARINFO_KEY}`, { method: "HEAD" });
+      const res = await fetch(`${base}/${NARINFO_KEY}`, {
+        method: "HEAD",
+        headers: READ_AUTH(),
+      });
       assert.equal(res.status, 200);
       assert.equal(res.headers.get("content-type"), "text/x-nix-narinfo");
       assert.equal(await res.text(), "");
     });
 
     await check("HEAD on a miss is an empty 404", async () => {
-      const res = await fetch(`${base}/${OTHER_NARINFO}`, { method: "HEAD" });
+      const res = await fetch(`${base}/${OTHER_NARINFO}`, {
+        method: "HEAD",
+        headers: READ_AUTH(),
+      });
       assert.equal(res.status, 404);
       assert.equal(await res.text(), "");
     });
@@ -417,11 +455,15 @@ await scenario(
   },
   async ({ base, events, clearEvents }) => {
     await check("the service degrades to bucket reads", async () => {
-      const first = await fetch(`${base}/${NARINFO_KEY}`);
+      const first = await fetch(`${base}/${NARINFO_KEY}`, {
+        headers: READ_AUTH(),
+      });
       assert.equal(first.status, 200);
       await settle();
       clearEvents();
-      const second = await fetch(`${base}/${NARINFO_KEY}`);
+      const second = await fetch(`${base}/${NARINFO_KEY}`, {
+        headers: READ_AUTH(),
+      });
       assert.equal(second.status, 200);
       await settle();
       assert.match(events(), /"event":"generation\.document_corrupt"/);
@@ -436,11 +478,15 @@ await scenario(
   async () => [],
   async ({ base, events, clearEvents }) => {
     await check("miss then edge-cached miss on an empty bucket", async () => {
-      const first = await fetch(`${base}/${OTHER_NARINFO}`);
+      const first = await fetch(`${base}/${OTHER_NARINFO}`, {
+        headers: READ_AUTH(),
+      });
       assert.equal(first.status, 404);
       await settle();
       clearEvents();
-      const second = await fetch(`${base}/${OTHER_NARINFO}`);
+      const second = await fetch(`${base}/${OTHER_NARINFO}`, {
+        headers: READ_AUTH(),
+      });
       assert.equal(second.status, 404);
       await settle();
       assert.match(events(), /"event":"read\.edge_hit"/);
@@ -537,6 +583,44 @@ try {
         }
       });
 
+      await check("an unparseable Authorization header is 400", async () => {
+        const res = await fetch(`${base}/${NAR_KEY}`, {
+          method: "PUT",
+          headers: { authorization: "JustSomeGarbage" },
+          body: narBytes,
+        });
+        assert.equal(res.status, 400);
+        assert.equal((await res.json()).code, "malformed_auth");
+      });
+
+      await check("an oversized Authorization header is 400", async () => {
+        const res = await fetch(`${base}/${NARINFO_KEY}`, {
+          headers: { authorization: `Bearer ${"x".repeat(9000)}` },
+        });
+        assert.equal(res.status, 400);
+        assert.equal((await res.json()).code, "malformed_auth");
+      });
+
+      await check("an unparseable narinfo document is 400", async () => {
+        const res = await fetch(`${base}/${NARINFO_KEY}`, {
+          method: "PUT",
+          headers: auth(validToken),
+          body: "this is not a narinfo at all",
+        });
+        assert.equal(res.status, 400);
+        assert.equal((await res.json()).code, "malformed_narinfo");
+      });
+
+      await check("an unparseable roots payload is 400", async () => {
+        const res = await fetch(`${base}/roots/lane-org-lane-repo`, {
+          method: "POST",
+          headers: auth(validToken),
+          body: "a lease body is JSON, not this",
+        });
+        assert.equal(res.status, 400);
+        assert.equal((await res.json()).code, "malformed_roots");
+      });
+
       await check("a narinfo over its byte cap is 413", async () => {
         const res = await fetch(`${base}/${NARINFO_KEY}`, {
           method: "PUT",
@@ -598,6 +682,20 @@ try {
         assert.equal((await res.json()).code, "narinfo_nar_missing");
       });
 
+      await check("a file-hash lie is refused before signing", async () => {
+        const body = narinfoFixture.replace(
+          "FileHash: sha256:1",
+          "FileHash: sha256:2",
+        );
+        const res = await fetch(`${base}/${NARINFO_KEY}`, {
+          method: "PUT",
+          headers: auth(validToken),
+          body,
+        });
+        assert.equal(res.status, 400);
+        assert.equal((await res.json()).code, "file_hash_mismatch");
+      });
+
       await check("a nar-size lie is refused after measurement", async () => {
         const body = narinfoFixture.replace(
           /NarSize: (\d+)/,
@@ -627,7 +725,9 @@ try {
       await check(
         "the stored narinfo serves both signatures and the file facts",
         async () => {
-          const res = await fetch(`${base}/${NARINFO_KEY}`);
+          const res = await fetch(`${base}/${NARINFO_KEY}`, {
+            headers: READ_AUTH(),
+          });
           assert.equal(res.status, 200);
           const body = await res.text();
           assert.match(
@@ -644,6 +744,28 @@ try {
         },
       );
     },
+  );
+
+  await scenario(
+    "a cold JWKS is 503, never a bypass",
+    async () => [],
+    async ({ base }) => {
+      await check(
+        "an unreachable JWKS endpoint answers 503, not a guess",
+        async () => {
+          const res = await fetch(`${base}/${NAR_KEY}`, {
+            method: "PUT",
+            headers: { authorization: `Bearer ${mint()}` },
+            body: Buffer.from("x"),
+          });
+          assert.equal(res.status, 503);
+          assert.equal((await res.json()).code, "auth_unavailable");
+        },
+      );
+    },
+    // The JWKS URL points at nothing: the isolate has no cached document,
+    // the fetch cannot complete, and the only honest answer is 503.
+    { CACHET_JWKS_URL: "http://127.0.0.1:9/jwks" },
   );
 
   await scenario(
@@ -734,6 +856,19 @@ try {
         assert.equal(res.status, 404);
         assert.equal((await res.json()).code, "upload_unknown");
       });
+
+      await check(
+        "a completion disagreeing with the record is refused",
+        async () => {
+          const res = await fetch(`${base}/${objectKey}?uploadId=${uploadId}`, {
+            method: "POST",
+            headers: auth,
+            body: JSON.stringify([]),
+          });
+          assert.equal(res.status, 400);
+          assert.equal((await res.json()).code, "complete_parts_mismatch");
+        },
+      );
 
       const etag = await (async () => {
         const res = await fetch(
@@ -957,6 +1092,14 @@ try {
         await login();
       });
 
+      await check("a callback without its query fields is 400", async () => {
+        const res = await fetch(`${base}/_auth/callback`, {
+          redirect: "manual",
+        });
+        assert.equal(res.status, 400);
+        assert.equal((await res.json()).code, "malformed_oauth");
+      });
+
       await check("the callback issues a session and redirects", async () => {
         const state = await login();
         const res = await callback(LANE_OAUTH_CODE, state);
@@ -1165,13 +1308,17 @@ await scenario(
         "the dev endpoint ran the handler",
       );
 
-      const dead = await fetch(`${base}/${"d".repeat(32)}.narinfo`);
+      const dead = await fetch(`${base}/${"d".repeat(32)}.narinfo`, {
+        headers: READ_AUTH(),
+      });
       assert.equal(
         dead.status,
         404,
         `the dead narinfo was swept; worker said:\n${events().slice(-2000)}`,
       );
-      const alive = await fetch(`${base}/${NARINFO_KEY}`);
+      const alive = await fetch(`${base}/${NARINFO_KEY}`, {
+        headers: READ_AUTH(),
+      });
       assert.equal(alive.status, 200, "the leased narinfo survived");
       const deadNar = await r2Get(persist, `nar/${"w".repeat(52)}.nar.zst`);
       assert.ok(!deadNar.ok, "the dead NAR followed its narinfo");
@@ -1277,7 +1424,9 @@ await scenario(
           await triggerScheduled(base),
           "the dev endpoint ran the handler",
         );
-        const stillThere = await fetch(`${base}/${"d".repeat(32)}.narinfo`);
+        const stillThere = await fetch(`${base}/${"d".repeat(32)}.narinfo`, {
+          headers: READ_AUTH(),
+        });
         assert.equal(stillThere.status, 200, "the gate kept every key");
         assert.ok(
           events().includes('"event":"gc.gate_tripped"'),

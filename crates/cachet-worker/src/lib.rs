@@ -79,6 +79,10 @@ async fn fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
                 Ok(hash) => hash,
                 Err(code) => return error::problem_response(code),
             };
+            let authorized = verdict::authorize_read(&env, now, &req).await;
+            if let Err(code) = authorized {
+                return error::problem_response(code);
+            }
             let bucket_key = format!("{hash}{NARINFO_KEY_SUFFIX}");
             return match method {
                 Method::Head => read::head_object(&env, &bucket_key, ObjectKind::Narinfo).await,

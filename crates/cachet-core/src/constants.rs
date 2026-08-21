@@ -68,6 +68,11 @@ pub const ROOTS_PATHS_MAX: usize = 4_096;
 /// The collector enumerates at most this many project leases per run.
 pub const ROOTS_PROJECTS_MAX: usize = 256;
 
+/// An Authorization header longer than this is refused as malformed_auth:
+/// JWTs run a few kilobytes, so 8 KiB is generous room while still a hard
+/// guard in front of the parsers.
+pub const AUTH_HEADER_BYTES_MAX: usize = 8_192;
+
 /// The nix `Compression` value narinfos default to when the field is
 /// absent.
 pub const DEFAULT_COMPRESSION: &str = "bzip2";

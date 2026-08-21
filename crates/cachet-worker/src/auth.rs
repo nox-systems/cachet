@@ -147,10 +147,11 @@ async fn jwks_key_for(
 ///
 /// # Errors
 ///
-/// [`ClientError::Unauthorized`] for a missing, malformed, forged, or
-/// expired token; [`ClientError::ForbiddenOrg`] for a valid token outside
-/// the deployment's orgs; [`ClientError::AuthUnavailable`] when no
-/// trustworthy JWKS can be had.
+/// [`ClientError::Unauthorized`] for a missing, forged, or expired token;
+/// [`ClientError::MalformedAuth`] for a credential whose header shape
+/// cannot parse (oversized, wrong scheme); [`ClientError::ForbiddenOrg`]
+/// for a valid token outside the deployment's orgs;
+/// [`ClientError::AuthUnavailable`] when no trustworthy JWKS can be had.
 pub async fn authorize_write(
     env: &Env,
     now: UnixMillis,
@@ -158,9 +159,15 @@ pub async fn authorize_write(
 ) -> cachet_core::error::Result<OidcIdentity> {
     let config = oidc_config(env)?;
 
-    let token = authorization
-        .and_then(|header| header.strip_prefix("Bearer "))
-        .ok_or(ClientError::Unauthorized)?;
+    let token = match authorization {
+        None => return Err(ClientError::Unauthorized),
+        Some(header) if header.len() > cachet_core::constants::AUTH_HEADER_BYTES_MAX => {
+            return Err(ClientError::MalformedAuth);
+        }
+        Some(header) => header
+            .strip_prefix("Bearer ")
+            .ok_or(ClientError::MalformedAuth)?,
+    };
     let decoded = decode_jwt(token).map_err(|_| ClientError::Unauthorized)?;
     // why: algorithm selection is policy, and it happens before any
     // signature work: a stripped or downgraded header must never negotiate

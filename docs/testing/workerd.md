@@ -60,4 +60,14 @@ lands then serve through the admin API: the run list, the report read,
 and the stats derivation answer the admin token, 401 the anonymous
 request, and 403 forbidden_admin the org member outside CACHET_ADMINS.
 
+Every code in the error table (cachet-core/src/error.rs) has at least one
+wire-level assertion here, with one documented exception:
+storage_unavailable, whose trigger is the platform's own R2 or KV
+failing, has no deterministic stand-in under wrangler --local; its
+problem body is pinned byte-for-byte in the golden lane instead. A
+uniform Authorization-header contract holds on both paths: a
+present-but-unparseable credential (oversized header, wrong scheme)
+answers 400 malformed_auth, a parseable-but-wrong one answers 401
+unauthorized.
+
 Run it: `just workerd`.
