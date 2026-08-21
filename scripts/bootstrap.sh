@@ -76,7 +76,7 @@ cat >&2 <<CHECKLIST
 cachet: bootstrap needs one GitHub OAuth App. In the GitHub org you will
 serve, open Settings > Developer settings > OAuth Apps > New OAuth App:
 
-    Application name:               cachet
+    Application name:               cachet-${DEPLOYMENT_NAME}
     Homepage URL:                   https://${CACHET_DEPLOY_HOST}
     Authorization callback URL:     https://${CACHET_DEPLOY_HOST}/_auth/callback
     Enable Device Flow:             on
