@@ -1,0 +1,81 @@
+{
+  "cli_version": "0.10.2",
+  "checkpoint_id": "01M0K3AAD94G1A8MATB9HSFX9E",
+  "session_id": "d50e44b4-93a7-4a75-8ce8-2f52bde07903",
+  "strategy": "manual-commit",
+  "created_at": "2026-08-21T21:23:42.177756Z",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "save_step_count": 1,
+  "files_touched": [
+    "crates/cachet-cli/Cargo.toml",
+    "crates/cachet-cli/src/config.rs",
+    "crates/cachet-cli/src/doctor.rs",
+    "crates/cachet-cli/src/keygen.rs",
+    "crates/cachet-cli/src/lib.rs",
+    "crates/cachet-cli/src/login.rs",
+    "crates/cachet-cli/src/main.rs",
+    "crates/cachet-cli/src/push.rs",
+    "crates/cachet-cli/src/setup.rs"
+  ],
+  "agent": "Claude Code",
+  "model": "moonshotai/Kimi-K3[1m]",
+  "turn_id": "af7c1fa11cf6",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 295887178,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 293884736,
+    "output_tokens": 846142,
+    "api_call_count": 1118
+  },
+  "skill_events_version": 1,
+  "skill_events": [
+    {
+      "id": "claude-skill-Skill:1",
+      "event_type": "tool_invocation",
+      "skill": {
+        "name": "cloudflare"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "skill_tool_use",
+        "confidence": "explicit"
+      },
+      "turn_id": "af7c1fa11cf6",
+      "transcript_anchor": {
+        "unit": "line",
+        "start": 16,
+        "end": 17,
+        "entry_ids": [
+          "5a13d610-6dd8-4c4c-92db-3836b46cfcc4"
+        ],
+        "tool_use_id": "Skill:1"
+      },
+      "native": {
+        "tool_name": "Skill",
+        "tool_use_id": "Skill:1"
+      },
+      "collapse": {
+        "target": "tool_pair",
+        "label": "Skill: cloudflare",
+        "default_collapsed": true
+      }
+    }
+  ],
+  "session_metrics": {
+    "turn_count": 9
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-08-21T21:23:41.496807Z",
+    "agent_lines": 2342,
+    "agent_removed": 3,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 2342,
+    "total_lines_changed": 2345,
+    "agent_percentage": 100,
+    "metric_version": 2
+  }
+}

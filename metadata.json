@@ -1,0 +1,34 @@
+{
+  "cli_version": "0.10.2",
+  "checkpoint_id": "01M0K3AAD94G1A8MATB9HSFX9E",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "crates/cachet-cli/Cargo.toml",
+    "crates/cachet-cli/src/config.rs",
+    "crates/cachet-cli/src/doctor.rs",
+    "crates/cachet-cli/src/keygen.rs",
+    "crates/cachet-cli/src/lib.rs",
+    "crates/cachet-cli/src/login.rs",
+    "crates/cachet-cli/src/main.rs",
+    "crates/cachet-cli/src/push.rs",
+    "crates/cachet-cli/src/setup.rs"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 295887178,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 293884736,
+    "output_tokens": 846142,
+    "api_call_count": 1118
+  }
+}

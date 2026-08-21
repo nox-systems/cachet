@@ -1,0 +1,15 @@
+parity?
+
+---
+
+what is supposed to have parity? I'm cofnused
+
+---
+
+<task-notification>
+<task-id>b2m9463fl</task-id>
+<tool-use-id>Bash:99</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-shivanshvij-Development-nox-cachet/42edac1a-a168-4f46-9e01-b6b2b41db64a/tasks/b2m9463fl.output</output-file>
+<status>completed</status>
+<summary>Background command "Format, stage, full parity run" completed (exit code 0)</summary>
+</task-notification>
