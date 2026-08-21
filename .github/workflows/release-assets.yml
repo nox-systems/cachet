@@ -1,0 +1,54 @@
+# Ships the operator deploy package: one tarball per release carrying the
+# alchemy program plus the worker bundle built by the flake's pinned
+# toolchain, so a deploying operator never builds wasm themselves. Runs
+# beside cargo-dist's release.yml (which owns the CLI artifacts); this
+# workflow only adds assets to the release it names.
+name: release-assets
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The existing release tag to (re)upload the package for
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
+      - name: Build the worker bundle with the pinned toolchain
+        run: nix develop --command just wasm
+      - name: Package the deploy tarball and checksums
+        run: |
+          set -euo pipefail
+          tag="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+          pkg="dist/cachet-deploy"
+          mkdir -p "${pkg}/crates/cachet-worker"
+          cp infra/alchemy.run.ts infra/package.json infra/bun.lock "${pkg}/"
+          cp -r infra/src "${pkg}/src"
+          cp -r crates/cachet-worker/build "${pkg}/crates/cachet-worker/build"
+          asset="cachet-deploy-${tag}.tar.gz"
+          (cd dist && tar -czf "${asset}" cachet-deploy)
+          (cd dist && sha256sum "${asset}" >"${asset}.sha256")
+          echo "ASSET=dist/${asset}" >>"${GITHUB_ENV}"
+      - name: Wait for the release and upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+          for _ in $(seq 1 60); do
+            gh release view "${tag}" >/dev/null 2>&1 && break
+            sleep 10
+          done
+          gh release view "${tag}" >/dev/null
+          asset="$(basename "${ASSET}")"
+          gh release upload "${tag}" "${ASSET}" "dist/${asset}.sha256" --clobber

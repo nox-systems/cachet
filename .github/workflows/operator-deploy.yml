@@ -1,0 +1,74 @@
+# The operator-facing deploy surface (docs/DEPLOY.md's CI section): an
+# operator's own repository calls this workflow pinned to a cachet release
+# tag, one GitHub environment per deployment carrying that deployment's
+# values. The environment name equals the deployment name, and the
+# environment's protection rules (reviewers, branches) apply here exactly
+# as if the job lived in the operator's repo — the deployment gate is
+# theirs. Secrets arrive explicitly by name; vars resolve inside the
+# environment, never at repository level.
+name: operator-deploy
+
+on:
+  workflow_call:
+    inputs:
+      cachet-tag:
+        description: The cachet release tag to deploy (for example v1.2.3)
+        required: true
+        type: string
+      stage:
+        description: The deployment name; also the caller environment's name
+        required: true
+        type: string
+    secrets:
+      CLOUDFLARE_API_TOKEN:
+        required: true
+      CLOUDFLARE_ACCOUNT_ID:
+        required: true
+      CACHET_SIGNING_KEY:
+        required: true
+      GITHUB_OAUTH_CLIENT_SECRET:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    environment: ${{ inputs.stage }}
+    runs-on: ubuntu-latest
+    concurrency:
+      # why: one deploy per deployment at a time, and never cancel in
+      # flight; a half-updated deployment is worse than a queued one.
+      group: cachet-deploy-${{ inputs.stage }}
+      cancel-in-progress: false
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CACHET_SIGNING_KEY: ${{ secrets.CACHET_SIGNING_KEY }}
+      GITHUB_OAUTH_CLIENT_SECRET: ${{ secrets.GITHUB_OAUTH_CLIENT_SECRET }}
+      CACHET_DEPLOY_HOST: ${{ vars.CACHET_DEPLOY_HOST }}
+      CACHET_DEPLOY_ORGS: ${{ vars.CACHET_DEPLOY_ORGS }}
+      CACHET_DEPLOY_ADMINS: ${{ vars.CACHET_DEPLOY_ADMINS }}
+      CACHET_DEPLOY_OAUTH_CLIENT_ID: ${{ vars.CACHET_DEPLOY_OAUTH_CLIENT_ID }}
+      CACHET_DEPLOY_AUDIENCE: ${{ vars.CACHET_DEPLOY_AUDIENCE }}
+      CACHET_DEPLOY_DEFAULT_BRANCH_REF: ${{ vars.CACHET_DEPLOY_DEFAULT_BRANCH_REF }}
+      CACHET_DEPLOY_DOMAIN: ${{ vars.CACHET_DEPLOY_DOMAIN }}
+      CACHET_DEPLOY_UI_ORIGIN: ${{ vars.CACHET_DEPLOY_UI_ORIGIN }}
+      CACHET_DEPLOY_GC_GRACE_MS: ${{ vars.CACHET_DEPLOY_GC_GRACE_MS }}
+    steps:
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - name: Fetch and verify the tagged deploy package
+        run: |
+          set -euo pipefail
+          asset="cachet-deploy-${{ inputs.cachet-tag }}.tar.gz"
+          base="https://github.com/nox-systems/cachet/releases/download/${{ inputs.cachet-tag }}"
+          curl -fsSL "${base}/${asset}" -o "${asset}"
+          curl -fsSL "${base}/${asset}.sha256" -o "${asset}.sha256"
+          sha256sum -c "${asset}.sha256"
+          tar -xzf "${asset}"
+      - name: Install the infra program from its lockfile
+        working-directory: cachet-deploy/infra
+        run: bun install --frozen-lockfile
+      - name: Deploy
+        working-directory: cachet-deploy/infra
+        run: bun run deploy --stage "${{ inputs.stage }}"

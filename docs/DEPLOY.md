@@ -88,7 +88,7 @@ so the collector sweeps anything you seed on the very next tick; real
 deployments keep the 14-day default. Tear a deployment down with
 `just destroy <name>`; alchemy asks before deleting.
 
-## CI deploys
+## This repository's own deploys
 
 The `deploy` workflow in this repository runs staging automatically
 after a green `ci` on main, with the grace window pinned to zero in the
@@ -100,6 +100,60 @@ values the local file carries: the `CACHET_DEPLOY_*` set as environment
 variables, and `CACHET_SIGNING_KEY`, `GITHUB_OAUTH_CLIENT_SECRET`,
 `CLOUDFLARE_API_TOKEN`, and `CLOUDFLARE_ACCOUNT_ID` as environment
 secrets.
+
+## Deploying from your own GitHub Actions
+
+A repository you own can deploy cachet at a release tag without forking
+this one: the reusable workflow in
+`.github/workflows/operator-deploy.yml` runs a release's deploy package
+with your environment's values. One caller workflow plus one GitHub
+environment per deployment is the whole setup:
+
+1. Create the deployment first with `just bootstrap` + a manual
+   `just deploy <name>` (keys and the OAuth App exist only after it).
+   Then create a GitHub environment named exactly the deployment's
+   name, carrying the same values the local file carries: the
+   `CACHET_DEPLOY_*` set as environment variables, `CACHET_SIGNING_KEY`,
+   `GITHUB_OAUTH_CLIENT_SECRET`, `CLOUDFLARE_API_TOKEN`, and
+   `CLOUDFLARE_ACCOUNT_ID` as environment secrets. Add required
+   reviewers if deploys must wait for approval.
+2. Add one caller workflow to a repository you control:
+
+```yaml
+name: deploy-cachet
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  deploy:
+    permissions:
+      contents: read
+    uses: nox-systems/cachet/.github/workflows/operator-deploy.yml@v1.2.3
+    with:
+      cachet-tag: v1.2.3
+      stage: production
+    secrets:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CACHET_SIGNING_KEY: ${{ secrets.CACHET_SIGNING_KEY }}
+      GITHUB_OAUTH_CLIENT_SECRET: ${{ secrets.GITHUB_OAUTH_CLIENT_SECRET }}
+```
+
+The called workflow downloads the release's deploy package (the alchemy
+program plus the worker bundle built from that tag by the pinned
+toolchain), verifies its checksum, and runs `bun run deploy --stage
+<name>`; the package ships with every release from v0.0.1 on. Upgrading
+is a one-line bump of `cachet-tag` and the `uses:` ref, and Dependabot
+and Renovate both propose that bump automatically. Pin the `uses:` ref
+to a full tag or commit SHA, as with any action.
+
+One honest trust note: a reusable workflow runs upstream-authored code
+with your secrets in its environment. The checkpoints are yours: pin the
+ref, scope the Cloudflare token to exactly what the deploy needs (the
+permission list under Prerequisites), and let the environment's required
+reviewers gate production.
 
 ## Verifying a deployment
 
