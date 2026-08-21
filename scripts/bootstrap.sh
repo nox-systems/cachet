@@ -113,14 +113,31 @@ MISMATCH
   fi
 fi
 
-echo "cachet: generating the signing keypair..."
-keydir="$(mktemp -d)"
-trap 'rm -rf "${keydir}"' EXIT
-cargo run -q -p cachet-cli -- keygen --name "${CACHET_DEPLOY_HOST}-1" --out-dir "${keydir}" >/dev/null
-signing_key="$(tr -d '\n' <"${keydir}/cachet-key.secret")"
-public_key="$(tr -d '\n' <"${keydir}/cachet-key.public")"
-rm -rf "${keydir}"
-trap - EXIT
+# The signing key is deployment identity, never a byproduct of reruns:
+# an existing env file for the SAME host keeps its key (the public half
+# derives from the secret's last 32 bytes, no keygen needed), and only a
+# missing key or a changed host mints a new pair.
+prior_key="" prior_host=""
+if [ -e "${env_file}" ]; then
+  prior_key="$(sed -n 's/^CACHET_SIGNING_KEY=//p' "${env_file}" | tr -d '[:space:]')"
+  prior_host="$(sed -n 's/^CACHET_DEPLOY_HOST=//p' "${env_file}" | tr -d '[:space:]')"
+fi
+
+if [ -n "${prior_key}" ] && [ "${prior_host}" = "${CACHET_DEPLOY_HOST}" ]; then
+  signing_key="${prior_key}"
+  public_body="$(printf '%s' "${prior_key#*:}" | base64 -d | tail -c 32 | base64 | tr -d '\n')"
+  public_key="${CACHET_DEPLOY_HOST}-1:${public_body}"
+  echo "cachet: keeping the existing signing key (rerun of an existing deployment; rotate deliberately with cachet keygen instead)." >&2
+else
+  echo "cachet: generating the signing keypair..."
+  keydir="$(mktemp -d)"
+  trap 'rm -rf "${keydir}"' EXIT
+  cargo run -q -p cachet-cli -- keygen --name "${CACHET_DEPLOY_HOST}-1" --out-dir "${keydir}" >/dev/null
+  signing_key="$(tr -d '\n' <"${keydir}/cachet-key.secret")"
+  public_key="$(tr -d '\n' <"${keydir}/cachet-key.public")"
+  rm -rf "${keydir}"
+  trap - EXIT
+fi
 
 # The nix secret-key wire form is <name>:<base64 of 64 bytes> (secret+public
 # halves concatenated); the body of a well-formed key is always 88 chars.
