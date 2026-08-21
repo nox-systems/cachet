@@ -1,0 +1,110 @@
+{
+  "cli_version": "0.10.2",
+  "checkpoint_id": "01M0K5ZCYF9QBRTKTPVFTBEYMZ",
+  "session_id": "d50e44b4-93a7-4a75-8ce8-2f52bde07903",
+  "strategy": "manual-commit",
+  "created_at": "2026-08-21T22:10:10.203978Z",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "crates/cachet-core/src/constants.rs",
+    "crates/cachet-worker/src/auth.rs",
+    "crates/cachet-worker/src/lib.rs",
+    "crates/cachet-worker/src/verdict.rs",
+    "docs/testing/workerd.md"
+  ],
+  "agent": "Claude Code",
+  "model": "moonshotai/Kimi-K3[1m]",
+  "turn_id": "1183c3a70a82",
+  "checkpoint_transcript_start": 6846,
+  "transcript_lines_at_start": 6846,
+  "compact_transcript_start": 1459,
+  "token_usage": {
+    "input_tokens": 40727627,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 40674496,
+    "output_tokens": 49573,
+    "api_call_count": 99
+  },
+  "skill_events_version": 1,
+  "skill_events": [
+    {
+      "id": "claude-skill-Skill:1",
+      "event_type": "tool_invocation",
+      "skill": {
+        "name": "cloudflare"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "skill_tool_use",
+        "confidence": "explicit"
+      },
+      "turn_id": "1183c3a70a82",
+      "transcript_anchor": {
+        "unit": "line",
+        "start": 16,
+        "end": 17,
+        "entry_ids": [
+          "5a13d610-6dd8-4c4c-92db-3836b46cfcc4"
+        ],
+        "tool_use_id": "Skill:1"
+      },
+      "native": {
+        "tool_name": "Skill",
+        "tool_use_id": "Skill:1"
+      },
+      "collapse": {
+        "target": "tool_pair",
+        "label": "Skill: cloudflare",
+        "default_collapsed": true
+      }
+    }
+  ],
+  "session_metrics": {
+    "turn_count": 12
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-08-21T22:10:09.406007Z",
+    "agent_lines": 840,
+    "agent_removed": 0,
+    "human_added": 44,
+    "human_modified": 14,
+    "human_removed": 0,
+    "total_committed": 898,
+    "total_lines_changed": 915,
+    "agent_percentage": 91.80327868852459,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 371,
+      "user_lines_removed": 24,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1,
+        ".github/workflows/deploy.yml": 26,
+        "crates/cachet-core/src/constants.rs": 5,
+        "crates/cachet-worker/src/auth.rs": 14,
+        "crates/cachet-worker/src/verdict.rs": 13,
+        "docs/DEPLOY.md": 6,
+        "docs/testing/integration.md": 47,
+        "docs/testing/lanes.toml": 3,
+        "docs/testing/workerd.md": 10,
+        "justfile": 4,
+        "nix/checks.nix": 1,
+        "scripts/check-lane-manifest.sh": 21,
+        "scripts/integration.sh": 112,
+        "workerd/check.mjs": 108
+      },
+      "user_removed_per_file": {
+        "crates/cachet-worker/src/auth.rs": 7,
+        "crates/cachet-worker/src/verdict.rs": 4,
+        "docs/DEPLOY.md": 2,
+        "scripts/check-lane-manifest.sh": 8,
+        "workerd/check.mjs": 3
+      }
+    }
+  ]
+}
