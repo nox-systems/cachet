@@ -6,7 +6,8 @@
 /** Everything a stage deploys with. */
 export interface StageConfig {
   /** The deployment's name as invoked: the alchemy stage and the
-   *  resource-name suffix (`cachet-<name>`). */
+   *  resource names (`cachet-<name>`, or the name as-is when it
+   *  already starts with the prefix). */
   stage: string;
   /** The deployment's host name: the signing-key name prefix and, in
    *  production, the custom domain. */
@@ -55,11 +56,11 @@ function commaList(raw: string): string {
  */
 export function loadStageConfig(stage: string): StageConfig {
   if (!/^[a-z][a-z0-9-]{1,31}$/.test(stage)) {
-    // why: the name suffixes R2 buckets, KV namespaces, and worker names,
-    // so it must fit the strictest of those grammars (bucket names).
+    // why: the name becomes the R2 bucket, KV namespace, and worker name
+    // (prefixed with cachet- when absent), so it must fit the strictest
+    // of those grammars (bucket names).
     throw new Error(
-      `deployment name "${stage}" must match ^[a-z][a-z0-9-]{1,31}$ ` +
-        `(bucket and worker names are built as cachet-${stage}*)`,
+      `deployment name "${stage}" must match ^[a-z][a-z0-9-]{1,31}$`,
     );
   }
   const missing = REQUIRED.filter((name) => value(name) === undefined).map(

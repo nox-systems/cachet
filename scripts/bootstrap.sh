@@ -6,7 +6,8 @@
 # at the points where they matter.
 #
 # The deployment NAME is housekeeping: it names the env file, the alchemy
-# stage, and the cachet-<name> resources. The HOST is the protocol identity
+# stage, and the deployment's resources (cachet-<name>, or the name as-is
+# when it already carries the prefix). The HOST is the protocol identity
 # that signs narinfos; renaming the deployment never re-signs anything.
 #
 # Safe to rerun: it refuses to overwrite an existing file without --force,
@@ -45,7 +46,7 @@ preflight
 
 DEPLOYMENT_NAME="$(prompt "Deployment name (lowercase letters, digits, dashes)" "production")"
 [[ ${DEPLOYMENT_NAME} =~ ^[a-z][a-z0-9-]{1,31}$ ]] ||
-  fail "deployment name must match ^[a-z][a-z0-9-]{1,31}\$: resources are named cachet-${DEPLOYMENT_NAME}*"
+  fail "deployment name must match ^[a-z][a-z0-9-]{1,31}\$"
 
 env_file="infra/.env.${DEPLOYMENT_NAME}"
 if [ -e "${env_file}" ] && [ "${1:-}" != "--force" ]; then

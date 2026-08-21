@@ -23,9 +23,11 @@ name-keyed special cases pushed deploy behavior into string comparisons.
 1. A deployment has an operator-chosen name matching
    `^[a-z][a-z0-9-]{1,31}$`, asked for first at `just bootstrap`. The
    name drives the env file (`infra/.env.<name>`), the alchemy stage,
-   and the resource prefix (`cachet-<name>` bucket, KV namespace,
-   worker). `infra/src/config.ts` enforces the grammar on every deploy,
-   so hand-written env files obey it too.
+   and the resource names (`cachet-<name>`; the prefix is a guarantee,
+   not a ritual — a name already starting with `cachet-` is used as-is,
+   so no stack ever reads `cachet-cachet-*`). `infra/src/config.ts`
+   enforces the grammar on every deploy, so hand-written env files obey
+   it too.
 2. The name is housekeeping. The protocol identity stays the host: the
    signing key is `<host>-1`, narinfo signatures name hosts, and
    renaming a deployment never re-signs anything.

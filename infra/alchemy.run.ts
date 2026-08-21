@@ -24,15 +24,20 @@ export default Alchemy.Stack(
     const stage = yield* Alchemy.Stage;
     const cfg = loadStageConfig(stage);
 
+    // why: resources live in the account's flat namespace, so they carry
+    // the cachet- prefix — but the prefix is a guarantee, not a ritual:
+    // a name that already starts with it stands alone.
+    const resourceName = stage.startsWith("cachet-") ? stage : `cachet-${stage}`;
+
     const bucket = yield* Cloudflare.R2.Bucket("Bucket", {
-      name: `cachet-${stage}`,
+      name: resourceName,
     });
     const kv = yield* Cloudflare.KV.Namespace("KV", {
-      title: `cachet-${stage}`,
+      title: resourceName,
     });
 
     const worker = yield* Cloudflare.Worker("Worker", {
-      name: `cachet-${stage}`,
+      name: resourceName,
       main: "../crates/cachet-worker/build/index.js",
       bundle: false,
       compatibility: { date: "2026-05-01" },

@@ -3,8 +3,9 @@
 cachet deploys into your own Cloudflare account. One deployment serves one
 or more GitHub orgs. A deployment has a name (`production`, `staging`,
 `prod-acme`, any short lowercase string): the name is housekeeping only —
-it names the env file, the alchemy stage, and the `cachet-<name>`
-resources — while the host name is the protocol identity that signs
+it names the env file, the alchemy stage, and the deployment's resources
+(`cachet-<name>`, or the name as-is when it already starts with the
+prefix) — while the host name is the protocol identity that signs
 narinfos. Deployments in one account share nothing but the account, and
 a name identifies one deployment per account: two stacks named
 `production` in the same account are one stack, converging. The deploy

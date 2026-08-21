@@ -17,14 +17,14 @@ on:
         required: true
         type: choice
         options:
-          - staging
+          - cachet-staging
           - production
-        default: staging
+        default: cachet-staging
 
 concurrency:
   # why: one deploy per stage at a time, and never cancel a deploy in
   # flight; a half-updated stage is worse than a queued one.
-  group: deploy-${{ github.event_name == 'workflow_dispatch' && inputs.stage || 'staging' }}
+  group: deploy-${{ github.event_name == 'workflow_dispatch' && inputs.stage || 'cachet-staging' }}
   cancel-in-progress: false
 
 permissions:
@@ -33,7 +33,7 @@ permissions:
 jobs:
   staging:
     if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success'
-    environment: staging
+    environment: cachet-staging
     runs-on: ubuntu-latest
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -55,11 +55,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
-      - run: nix develop --command just deploy staging
+      - run: nix develop --command just deploy cachet-staging
 
   # The integration lane answers whether the deploy just made actually
   # works: served truth, the runner's real OIDC, a push, and a verified
-  # substitution back (docs/testing/integration.md). The staging env's
+  # substitution back (docs/testing/integration.md). The deployment's
   # domain (which defaults to its host) hosts it, because workers.dev
   # URLs are unpredictable across accounts.
   integration:
@@ -67,9 +67,9 @@ jobs:
     if: >-
       always() && (
         (github.event_name == 'workflow_run' && needs.staging.result == 'success') ||
-        (github.event_name == 'workflow_dispatch' && inputs.stage == 'staging' && needs.manual.result == 'success')
+        (github.event_name == 'workflow_dispatch' && inputs.stage == 'cachet-staging' && needs.manual.result == 'success')
       )
-    environment: staging
+    environment: cachet-staging
     permissions:
       contents: read
       # The lane mints the org's real OIDC token against this repository.
