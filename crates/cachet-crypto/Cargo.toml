@@ -24,7 +24,7 @@ zeroize = { version = "1", features = ["zeroize_derive"] }
 # why: pure-Rust zstd DECODER; the C crate does not build for wasm32.
 ruzstd = "0.7"
 # why: base64 for key blobs and Sig values; base64url for JWKS integers.
-base64 = "0.22"
+base64 = "0.23"
 # why: RS256 verification of GitHub OIDC JWTs; pure Rust, wasm-clean
 # alternative to (banned) ring.
 rsa = "0.9"
