@@ -1,9 +1,15 @@
 # Deploying cachet
 
 cachet deploys into your own Cloudflare account. One deployment serves one
-or more GitHub orgs; stages (`staging`, `production`) are fully separate
-sets of resources that share nothing. The deploy itself is one command
-(`just deploy <stage>`); everything below is what surrounds it.
+or more GitHub orgs. A deployment has a name (`production`, `staging`,
+`prod-acme`, any short lowercase string): the name is housekeeping only —
+it names the env file, the alchemy stage, and the `cachet-<name>`
+resources — while the host name is the protocol identity that signs
+narinfos. Deployments in one account share nothing but the account, and
+a name identifies one deployment per account: two stacks named
+`production` in the same account are one stack, converging. The deploy
+itself is one command (`just deploy <name>`); everything below is what
+surrounds it.
 
 ## Prerequisites
 
@@ -14,10 +20,10 @@ Bring these before the first deploy:
    zone that will serve the cache. The account id comes from the
    dashboard's right-hand sidebar.
 2. A zone in that account for the cache's custom domain (for example
-   `cache.example.com`): production attaches its host name as the
-   domain, and every other stage names its own through
-   `CACHET_DEPLOY_DOMAIN`. The host name doubles as the signing key's
-   name and appears in every narinfo signature, so choose it once.
+   `cache.example.com`): the deploy attaches the host name as the
+   domain, and `CACHET_DEPLOY_DOMAIN` only overrides it. The host name
+   doubles as the signing key's name and appears in every narinfo
+   signature, so choose it once.
 3. A GitHub org whose Actions runners will write to the cache and whose
    members will read from it.
 4. A GitHub OAuth App in that org: homepage `https://<host>`, callback
@@ -27,11 +33,16 @@ Bring these before the first deploy:
 
 ## The first run
 
-Run `nix develop`, then `just bootstrap`. It asks for the values above,
-generates the signing keypair (`cachet keygen`), and writes
-`infra/.env.production` at mode 0600. That file holds the signing secret
-and the OAuth client secret; it is gitignored, and it is the canonical
-local store for them. The printed public key is what laptops will trust.
+Run `nix develop`, then `just bootstrap`. It asks for the deployment
+name (default `production`), then the values above, verifying what it
+can on the way: a `CLOUDFLARE_API_TOKEN` in the environment is probed
+against Cloudflare before anything writes, and when the host already
+answers, the served public config cross-checks your answers so a rerun
+after losing the file recovers the non-secret values. It generates the
+signing keypair (`cachet keygen`) and writes `infra/.env.<name>` at mode
+0600. That file holds the signing secret and the OAuth client secret; it
+is gitignored, and it is the canonical local store for them. The printed
+public key is what laptops will trust.
 
 Deploy with the Cloudflare credentials in the environment:
 
@@ -47,8 +58,8 @@ idempotent: rerunning converges, it never duplicates.
 
 ## The configuration contract
 
-`just deploy` reads `infra/.env.<stage>` (or exported equivalents).
-These variables name the deployment:
+`just deploy <name>` reads `infra/.env.<name>` (or exported
+equivalents). These variables define the deployment:
 
 | Variable | Required | Meaning |
 | --- | --- | --- |
@@ -58,31 +69,35 @@ These variables name the deployment:
 | `CACHET_DEPLOY_ADMINS` | yes | Comma-joined GitHub logins allowed on `/api/self/*`. |
 | `CACHET_DEPLOY_AUDIENCE` | no | OIDC audience; default `cachet`. |
 | `CACHET_DEPLOY_DEFAULT_BRANCH_REF` | no | The ref allowed to renew leases; default `refs/heads/main`. |
-| `CACHET_DEPLOY_DOMAIN` | every non-production stage | Custom domain; production defaults to the host. |
+| `CACHET_DEPLOY_DOMAIN` | no | Custom domain override; defaults to the host. |
 | `CACHET_DEPLOY_UI_ORIGIN` | no | Browser login's redirect target; unset answers 204 instead. |
-| `CACHET_DEPLOY_GC_GRACE_MS` | no | Grace override; staging defaults to 0, elsewhere 14 days. |
+| `CACHET_DEPLOY_GC_GRACE_MS` | no | Grace override; default 14 days. Set 0 for throwaway test deployments. |
 | `CACHET_SIGNING_KEY` | yes | The `<host>-1:<base64>` secret from bootstrap. |
 | `GITHUB_OAUTH_CLIENT_SECRET` | yes | The OAuth App's client secret. |
 
-## Staging
+## Rehearsing with a second deployment
 
-`just deploy staging` deploys the same stack as `cachet-staging-*` with
-the GC grace window zeroed, so a seeded object is sweepable on the very
-next collector tick. Set `CACHET_DEPLOY_DOMAIN` to a staging hostname in
-your zone (for example `cache-staging.example.com`): the deploy refuses
-without it, and the integration lane that follows staging deploys needs
-to know where to point. Use staging to rehearse changes:
-deploy staging, exercise it, then `just deploy production`. Tear a stage
-down with `just destroy <stage>`; alchemy asks before deleting.
+One account can hold any number of deployments, one per name. To
+rehearse a change, bootstrap a second name with its own host (for
+example name `staging`, host `cache-staging.example.com`) and deploy it:
+`just deploy staging` builds `cachet-staging-*` while `cachet-production-*`
+never enters the plan. Each deployment wants its own host and its own
+OAuth App, because the callback URL is fixed by the host. For a
+throwaway deployment, set `CACHET_DEPLOY_GC_GRACE_MS=0` in its env file
+so the collector sweeps anything you seed on the very next tick; real
+deployments keep the 14-day default. Tear a deployment down with
+`just destroy <name>`; alchemy asks before deleting.
 
 ## CI deploys
 
-The `deploy` workflow runs staging automatically after a green `ci` on
-main. Production is manual: Actions > deploy > Run workflow, choosing
+The `deploy` workflow in this repository runs staging automatically
+after a green `ci` on main, with the grace window pinned to zero in the
+workflow itself so the integration lane can sweep what it seeds.
+Production is manual: Actions > deploy > Run workflow, choosing
 `production`, and the run waits for the `production` environment's
-reviewer approval. Configure the two GitHub environments with the same
-variables the local file carries: `CACHET_DEPLOY_*` as environment
-variables, `CACHET_SIGNING_KEY`, `GITHUB_OAUTH_CLIENT_SECRET`,
+reviewer approval. Each deployment's GitHub environment carries the same
+values the local file carries: the `CACHET_DEPLOY_*` set as environment
+variables, and `CACHET_SIGNING_KEY`, `GITHUB_OAUTH_CLIENT_SECRET`,
 `CLOUDFLARE_API_TOKEN`, and `CLOUDFLARE_ACCOUNT_ID` as environment
 secrets.
 
@@ -96,12 +111,27 @@ in the README, run `cachet login --cache-url https://<host>`,
 collector fires on the cron, and its runs appear under
 `/api/self/gc-runs` for an admin.
 
+## Losing the env file
+
+The deployment keeps running without the clone; deleting the repository
+directory destroys only code. Recovering is a rerun: clone at the tag
+you deployed, run `nix develop`, run `just bootstrap` again, and the
+script cross-checks your answers against the live deployment's public
+config, which answers the host, the orgs, the OAuth client id, and the
+key prefix. The two secrets are what the file alone holds. The OAuth
+client secret regenerates in the OAuth App's settings. The signing key
+is write-only once bound, so keep a second copy at bootstrap time: a
+password manager entry, or the GitHub environment you deploy from. If
+every copy is gone, the way forward is the key rotation below, and
+narinfos signed before the rotation read as cache misses until their
+paths are pushed again.
+
 ## Rollback
 
 Redeploy the previous commit: `git checkout <previous> && just deploy
-<stage>` converges the stack to that state. The collector's grace window
+<name>` converges the stack to that state. The collector's grace window
 protects cache content through it; leases and reports persist in the
-bucket, which is stage-scoped, so a rollback never strands state.
+bucket, which is deployment-scoped, so a rollback never strands state.
 
 ## Key rotation
 

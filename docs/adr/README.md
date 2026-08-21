@@ -24,3 +24,4 @@ why, and the why is read on demand.
 | [0008](0008-distribution.md) | cargo-dist releases; the in-repo action wraps the released binary | Users get a verified binary per platform from a tag; the action downloads exactly that artifact with its checksum |
 | [0009](0009-alchemy-deployments.md) | alchemy provisions, stages isolate | Deploys converge via one stack program; stages share no resources; the worker bundle uploads byte-for-byte |
 | [0010](0010-deployment-identity-is-configuration.md) | Deployment identity is configuration | An open-source repo carries no hostname, no org slug, no key bytes: every deployment value arrives as a var or a secret |
+| [0011](0011-deployment-names.md) | Deployments are named, and the name is housekeeping | One name drives the env file, the alchemy stage, and the resource prefix; the host stays the only protocol identity |

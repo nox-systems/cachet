@@ -5,7 +5,8 @@
 
 /** Everything a stage deploys with. */
 export interface StageConfig {
-  /** The stage as invoked (`staging`, `production`). */
+  /** The deployment's name as invoked: the alchemy stage and the
+   *  resource-name suffix (`cachet-<name>`). */
   stage: string;
   /** The deployment's host name: the signing-key name prefix and, in
    *  production, the custom domain. */
@@ -20,11 +21,11 @@ export interface StageConfig {
   audience: string;
   /** The ref permitted to renew leases. */
   defaultBranchRef: string;
-  /** The custom domain to attach; production defaults it to the host. */
+  /** The custom domain to attach; defaults to the host. */
   domain: string;
   /** The browser OAuth flow's redirect target, when a UI exists. */
   uiOrigin: string | undefined;
-  /** The GC grace override; zeroed for staging, the code default elsewhere. */
+  /** The GC grace override; the worker's default (14 days) applies unset. */
   gcGraceMs: string | undefined;
 }
 
@@ -53,6 +54,14 @@ function commaList(raw: string): string {
  * operator fixes the set, not a drip-feed of one failure per run.
  */
 export function loadStageConfig(stage: string): StageConfig {
+  if (!/^[a-z][a-z0-9-]{1,31}$/.test(stage)) {
+    // why: the name suffixes R2 buckets, KV namespaces, and worker names,
+    // so it must fit the strictest of those grammars (bucket names).
+    throw new Error(
+      `deployment name "${stage}" must match ^[a-z][a-z0-9-]{1,31}$ ` +
+        `(bucket and worker names are built as cachet-${stage}*)`,
+    );
+  }
   const missing = REQUIRED.filter((name) => value(name) === undefined).map(
     (name) => `CACHET_DEPLOY_${name}`,
   );
@@ -75,16 +84,10 @@ export function loadStageConfig(stage: string): StageConfig {
     );
   }
 
-  const production = stage === "production";
-  const domain = value("DOMAIN") ?? (production ? host : undefined);
-  if (domain === undefined) {
-    // why: workers.dev and preview URLs are disabled on every stage, so a
-    // stage without a custom domain is a worker that answers nowhere.
-    throw new Error(
-      `the ${stage} deployment has no domain: set CACHET_DEPLOY_DOMAIN ` +
-        `(production defaults it to CACHET_DEPLOY_HOST; every other stage must name its own hostname).`,
-    );
-  }
+  // why: workers.dev and preview URLs are disabled on every stage, so the
+  // worker needs a custom domain; the host is the natural one because it
+  // already names the deployment and the signing key.
+  const domain = value("DOMAIN") ?? host;
   return {
     stage,
     host,
@@ -95,6 +98,6 @@ export function loadStageConfig(stage: string): StageConfig {
     defaultBranchRef: value("DEFAULT_BRANCH_REF") ?? "refs/heads/main",
     domain,
     uiOrigin: value("UI_ORIGIN"),
-    gcGraceMs: value("GC_GRACE_MS") ?? (production ? undefined : "0"),
+    gcGraceMs: value("GC_GRACE_MS"),
   };
 }

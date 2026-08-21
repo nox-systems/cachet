@@ -48,6 +48,10 @@ jobs:
       CACHET_DEPLOY_DEFAULT_BRANCH_REF: ${{ vars.CACHET_DEPLOY_DEFAULT_BRANCH_REF }}
       CACHET_DEPLOY_DOMAIN: ${{ vars.CACHET_DEPLOY_DOMAIN }}
       CACHET_DEPLOY_UI_ORIGIN: ${{ vars.CACHET_DEPLOY_UI_ORIGIN }}
+      # why: zeroed grace is a test-rig property (the integration lane
+      # sweeps what it seeds), so the workflow says it outright instead of
+      # riding a stage-name default in config.
+      CACHET_DEPLOY_GC_GRACE_MS: "0"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
@@ -56,8 +60,8 @@ jobs:
   # The integration lane answers whether the deploy just made actually
   # works: served truth, the runner's real OIDC, a push, and a verified
   # substitution back (docs/testing/integration.md). The staging env's
-  # CACHET_DEPLOY_DOMAIN hosts it, because workers.dev URLs are
-  # unpredictable across accounts.
+  # domain (which defaults to its host) hosts it, because workers.dev
+  # URLs are unpredictable across accounts.
   integration:
     needs: [staging, manual]
     if: >-
