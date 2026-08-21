@@ -240,9 +240,6 @@ pub async fn upload_part(
         Ok(length) => length,
         Err(code) => return rejected(code),
     };
-    let Ok(body) = req.stream() else {
-        return rejected(ClientError::LengthRequired);
-    };
     let record = match load_record(env, key, upload_id).await {
         Ok(record) => record,
         Err(code) => return rejected(code),
@@ -258,6 +255,12 @@ pub async fn upload_part(
         );
         return rejected(code);
     }
+    // why: the body stream is adopted only once every byte-free check has
+    // passed, so a refused part never leaves the client's upload body
+    // pinned open on the connection.
+    let Ok(body) = req.stream() else {
+        return rejected(ClientError::LengthRequired);
+    };
     let bucket = env.bucket("CACHE_BUCKET")?;
     let upload = bucket.resume_multipart_upload(key.as_str(), upload_id)?;
     // Safe: check_part established the bound 1..=expectedParts ≤ 1000.
