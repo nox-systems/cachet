@@ -1,0 +1,20 @@
+name: cachet push
+description: >-
+  Snapshots the nix store at main time and pushes what the job added at post
+  time, on success only. The cachet setup composite action wraps this; it is
+  not meant to be used directly.
+
+# why: no inputs. The composite resolves every value and exports it to the
+# job environment, which is what both phases read. Declaring inputs here as
+# well would hand the post step a second, differently-named source of the
+# same configuration (GitHub exposes an input as INPUT_<NAME>, not as the
+# name the code reads), and that mismatch is the bug that once made this
+# step decline to push while reporting success.
+runs:
+  using: node24
+  main: main.cjs
+  post: post.cjs
+  # why: on success only. A failed build must never populate the cache or
+  # refresh a lease: that is what keeps a broken artifact from becoming the
+  # one everybody substitutes.
+  post-if: success()
