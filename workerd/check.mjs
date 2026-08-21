@@ -818,6 +818,13 @@ try {
         },
       );
 
+      await check("an OIDC token opens reads, as CI expects", async () => {
+        const res = await fetch(`${base}/${NAR_KEY}`, {
+          headers: { authorization: `Bearer ${mint()}` },
+        });
+        assert.equal(res.status, 200);
+      });
+
       await check("a denied token caches the denial briefly", async () => {
         const denied = { authorization: "Bearer wrong-token-entirely" };
         const before = stubHits.user;

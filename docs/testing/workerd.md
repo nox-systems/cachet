@@ -42,7 +42,7 @@ confusion, staleness, expired tokens); guard ordering (411 before 413,
 upload through a signed narinfo with both signatures and the file facts;
 the multipart quartet with its record, part-size enforcement, replay, and
 abort; read verdicts cached in KV for both the admit and the deny
-direction; lease renewal bound to the token's own claims with
+direction, with OIDC tokens answering reads as CI expects; lease renewal bound to the token's own claims with
 forbidden_ref and forbidden_project refusals; the project listing; the
 public config document; and the browser login flow, from the login
 redirect's exact parameters through state consumption (a replayed state
