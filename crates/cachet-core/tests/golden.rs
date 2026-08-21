@@ -69,6 +69,7 @@ fn the_error_code_table_is_locked() {
         ClientError::StorageUnavailable,
         ClientError::MalformedOauth,
         ClientError::OauthStateUnknown,
+        ClientError::ForbiddenAdmin,
     ];
     let body = table
         .iter()
@@ -100,6 +101,7 @@ fn the_error_code_table_is_locked() {
     storage_unavailable 503
     malformed_oauth 400
     oauth_state_unknown 401
+    forbidden_admin 403
     ");
 }
 

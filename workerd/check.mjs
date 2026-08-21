@@ -45,6 +45,7 @@ const stubHits = { user: 0, memberships: 0, exchange: 0 };
 const LANE_OAUTH_CODE = "lane-code";
 const LANE_OUTSIDER_CODE = "lane-code-outsider";
 const OUTSIDER_TOKEN = "lane-outsider-token";
+const MEMBER_TOKEN = "lane-member-token";
 const LANE_OAUTH_SECRET = "lane-oauth-secret";
 const stubServer = http.createServer((req, res) => {
   const json = (status, body) => {
@@ -91,12 +92,19 @@ const stubServer = http.createServer((req, res) => {
     if (bearer === OUTSIDER_TOKEN) {
       return json(200, { login: "lane-outsider" });
     }
+    if (bearer === MEMBER_TOKEN) {
+      return json(200, { login: "lane-member" });
+    }
     return json(401, { message: "bad credentials" });
   }
   if (req.url.startsWith("/orgs/")) {
     stubHits.memberships += 1;
-    return bearer === GOOD_LAPTOP_TOKEN &&
-      req.url === "/orgs/lane-org/memberships/lane-dev"
+    const memberHit =
+      (bearer === GOOD_LAPTOP_TOKEN &&
+        req.url === "/orgs/lane-org/memberships/lane-dev") ||
+      (bearer === MEMBER_TOKEN &&
+        req.url === "/orgs/lane-org/memberships/lane-member");
+    return memberHit
       ? json(200, { state: "active" })
       : json(404, { message: "Not Found" });
   }
@@ -1184,6 +1192,52 @@ await scenario(
       assert.equal(body.uploadsAborted, 1);
       const artifact = await r2Get(persist, `gc-runs/${runId}/mark.json`);
       assert.ok(artifact.ok, "the mark artifact landed");
+    });
+
+    const laptop = { authorization: `Bearer ${GOOD_LAPTOP_TOKEN}` };
+    const member = { authorization: `Bearer ${MEMBER_TOKEN}` };
+
+    await check("the reports API serves admins and nobody else", async () => {
+      const anon = await fetch(`${base}/api/self/gc-runs`);
+      assert.equal(anon.status, 401);
+      const nonAdmin = await fetch(`${base}/api/self/gc-runs`, {
+        headers: member,
+      });
+      assert.equal(nonAdmin.status, 403);
+      assert.equal((await nonAdmin.json()).code, "forbidden_admin");
+
+      const list = await fetch(`${base}/api/self/gc-runs`, { headers: laptop });
+      assert.equal(list.status, 200);
+      assert.equal(list.headers.get("cache-control"), "no-store");
+      const runs = await list.json();
+      assert.ok(runs.runs.includes(captureRunId(events)), JSON.stringify(runs));
+
+      const detail = await fetch(
+        `${base}/api/self/gc-runs/${captureRunId(events)}`,
+        {
+          headers: laptop,
+        },
+      );
+      assert.equal(detail.status, 200);
+      assert.equal((await detail.json()).gate, null);
+
+      const missing = await fetch(
+        `${base}/api/self/gc-runs/1000000000000-0000000000000000`,
+        { headers: laptop },
+      );
+      assert.equal(missing.status, 404);
+      const malformed = await fetch(`${base}/api/self/gc-runs/nope`, {
+        headers: laptop,
+      });
+      assert.equal(malformed.status, 400);
+      assert.equal((await malformed.json()).code, "malformed_key");
+
+      const stats = await fetch(`${base}/api/self/stats`, { headers: laptop });
+      assert.equal(stats.status, 200);
+      const shape = await stats.json();
+      assert.equal(shape.basedOnRunId, captureRunId(events));
+      assert.equal(shape.inventoryPaths, 4);
+      assert.equal(shape.gate, null);
     });
   },
 );

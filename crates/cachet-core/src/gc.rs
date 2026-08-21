@@ -459,6 +459,29 @@ impl GcReport {
     }
 }
 
+/// Validate a run id from the wire: milliseconds, a dash, sixteen hex
+/// characters, nothing else. The report keys this shapes are internal,
+/// so a tidy grammar costs nothing and keeps oddballs out of the lookup
+/// path.
+///
+/// # Errors
+///
+/// [`crate::error::ClientError::MalformedKey`] for anything off the shape.
+pub fn parse_run_id(text: &str) -> crate::error::Result<()> {
+    let Some((digits, hex)) = text.split_once('-') else {
+        return Err(crate::error::ClientError::MalformedKey);
+    };
+    let digits_ok = !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit());
+    let hex_ok = hex.len() == 16
+        && hex
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+    if digits_ok && hex_ok {
+        return Ok(());
+    }
+    Err(crate::error::ClientError::MalformedKey)
+}
+
 /// Where one invocation hands the bucket to the next tick. Ordering is
 /// the run's stage sequence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -612,6 +635,24 @@ impl GcCursor {
 mod tests {
     use super::*;
     use crate::constants::GRACE_WINDOW_MS;
+
+    #[test]
+    fn run_ids_follow_their_grammar() {
+        assert!(parse_run_id("1780000000000-00ff112233445566").is_ok());
+        for bad in [
+            "",
+            "1780000000000",
+            "x-00ff112233445566",
+            "1780000000000-00ff11223344556",
+            "1780000000000-00ff11223344556677",
+            "1780000000000-00FF11223344556Z",
+            "../178-00ff112233445566",
+            "1780000000000-00ff112233445566/extra",
+            "1780000000000-00FF112233445566",
+        ] {
+            assert!(parse_run_id(bad).is_err(), "{bad} refused");
+        }
+    }
 
     #[test]
     fn a_frozen_walk_resumes_to_the_same_outcome() {

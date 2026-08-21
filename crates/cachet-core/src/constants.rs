@@ -179,6 +179,14 @@ pub const GC_OP_BUDGET: u64 = 900;
 /// the final stage's writes.
 pub const GC_HEADROOM_MS: u64 = 13 * 60 * 1_000;
 
+/// Run entries per gc-runs listing page: an admin page is a bounded read,
+/// and deeper history pages through.
+pub const GC_RUNS_PAGE_LIMIT: usize = 100;
+
+/// The index key the latest completed report's copy lives under, so the
+/// stats endpoint answers from one read instead of a listing scan.
+pub const GC_LATEST_REPORT_KEY: &str = "gc-reports/latest.json";
+
 /// Keys per deletion call: one batch is one binding operation, and the
 /// batch shape is what keeps a 900-operation tick honest about real
 /// deletions.
