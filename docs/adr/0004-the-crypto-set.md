@@ -1,4 +1,4 @@
-# ADR 0004 — The crypto set: sha2, ed25519-dalek, ruzstd, WebCrypto RS256
+# ADR 0004: The crypto set: sha2, ed25519-dalek, ruzstd, rsa
 
 - **Status:** Accepted
 - **Date:** 2026-08-21
@@ -50,8 +50,7 @@ its own build graph for no TLS benefit on the targets we support;
 rejected. A single builder for both targets with ring enabled both
 ways: ring does not build for wasm32-unknown-unknown; impossible, not
 rejected. Verifying RS256 through workerd's WebCrypto instead of the
-`rsa` crate: one less big-integer dependency, at the price of an async
-FFI verify call inside the signing path's carefully synchronous
-verdict pipeline and a second crypto implementation to test against
-the browsers' matrix; the workspace already carried `rsa` for hosts
-and tests, so the worker uses the same code path; rejected.
+`rsa` crate: drops one big-integer dependency, but ties the verdict
+path to a runtime binding that no host lane can exercise, and trades
+one tested verifier for a second implementation whose behavior the
+platform owns; rejected.

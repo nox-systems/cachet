@@ -1,4 +1,4 @@
-# ADR 0007 — The OpenAPI document is generated from code
+# ADR 0007: The OpenAPI document is generated from code
 
 - **Status:** Accepted
 - **Date:** 2026-08-21

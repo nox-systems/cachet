@@ -1,4 +1,4 @@
-# ADR 0009 — alchemy provisions, stages isolate
+# ADR 0009: alchemy provisions, stages isolate
 
 - **Status:** Accepted
 - **Date:** 2026-08-21
@@ -41,9 +41,9 @@ A deployment is one command with idempotent converge semantics;
 destroying a stage is one command. The deploy path honors the same
 pinning discipline as the code path: exact alchemy version, locked
 install, validation up front. The dependency accepted is the alchemy
-project itself, pinned and lockfiled, with wrangler as the documented
-escape hatch (`wrangler deploy` against the same bundle) if the stack
-ever cannot run.
+project itself, pinned and lockfiled, with wrangler kept in the dev shell
+as the manual fallback (`wrangler deploy` against the same bundle) if
+the stack ever cannot run.
 
 ## Alternatives considered
 

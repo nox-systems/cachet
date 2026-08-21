@@ -14,11 +14,10 @@ Bring these before the first deploy:
    zone that will serve the cache. The account id comes from the
    dashboard's right-hand sidebar.
 2. A zone in that account for the cache's custom domain (for example
-   `cache.example.com`). Production attaches the domain at deploy time;
-   skip the zone only if you will run production on workers.dev, in which
-   case set `CACHET_DEPLOY_DOMAIN` to something public you own anyway:
-   the host name doubles as the signing key's name and appears in every
-   narinfo signature, so choose it once.
+   `cache.example.com`): production attaches its host name as the
+   domain, and every other stage names its own through
+   `CACHET_DEPLOY_DOMAIN`. The host name doubles as the signing key's
+   name and appears in every narinfo signature, so choose it once.
 3. A GitHub org whose Actions runners will write to the cache and whose
    members will read from it.
 4. A GitHub OAuth App in that org: homepage `https://<host>`, callback
@@ -59,7 +58,7 @@ These variables name the deployment:
 | `CACHET_DEPLOY_ADMINS` | yes | Comma-joined GitHub logins allowed on `/api/self/*`. |
 | `CACHET_DEPLOY_AUDIENCE` | no | OIDC audience; default `cachet`. |
 | `CACHET_DEPLOY_DEFAULT_BRANCH_REF` | no | The ref allowed to renew leases; default `refs/heads/main`. |
-| `CACHET_DEPLOY_DOMAIN` | no | Custom domain; production defaults to the host, other stages to none. |
+| `CACHET_DEPLOY_DOMAIN` | every non-production stage | Custom domain; production defaults to the host. |
 | `CACHET_DEPLOY_UI_ORIGIN` | no | Browser login's redirect target; unset answers 204 instead. |
 | `CACHET_DEPLOY_GC_GRACE_MS` | no | Grace override; staging defaults to 0, elsewhere 14 days. |
 | `CACHET_SIGNING_KEY` | yes | The `<host>-1:<base64>` secret from bootstrap. |
@@ -70,10 +69,9 @@ These variables name the deployment:
 `just deploy staging` deploys the same stack as `cachet-staging-*` with
 the GC grace window zeroed, so a seeded object is sweepable on the very
 next collector tick. Set `CACHET_DEPLOY_DOMAIN` to a staging hostname in
-your zone (for example `cache-staging.example.com`): without it staging
-lives on an account-specific workers.dev URL that nothing else can
-predict, and the integration lane that follows staging deploys needs to
-know where to point. Use staging to rehearse changes:
+your zone (for example `cache-staging.example.com`): the deploy refuses
+without it, and the integration lane that follows staging deploys needs
+to know where to point. Use staging to rehearse changes:
 deploy staging, exercise it, then `just deploy production`. Tear a stage
 down with `just destroy <stage>`; alchemy asks before deleting.
 

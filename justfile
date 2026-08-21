@@ -137,8 +137,8 @@ destroy stage:
 
 # the first-run walkthrough: writes infra/.env.production and prints the
 # checklists for the GitHub and Cloudflare sides
-bootstrap:
-    bash scripts/bootstrap.sh
+bootstrap *args:
+    bash scripts/bootstrap.sh {{ args }}
 
 # the integration lane: the live round trip against a deployment
 integration:

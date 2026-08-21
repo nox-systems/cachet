@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The integration lane (docs/testing/integration.md): against a live
 # deployment, proves the served truth, the write path over the runner's
-# real GitHub OIDC, and the full circle back — substitution with the
+# real GitHub OIDC, and the full circle back: substitution with the
 # deployment's signature verified. Required environment:
 #
 #   CACHET_INTEGRATION_URL          the deployment's base URL
@@ -9,8 +9,9 @@
 #   ACTIONS_ID_TOKEN_REQUEST_URL    the runner's OIDC plumbing
 #   ACTIONS_ID_TOKEN_REQUEST_TOKEN
 #
-# The lane CLATTERS the job with named fixes when any of that is absent: a
-# lane that cannot run is a defect, and silent skips lie (CLAUDE.md §0).
+# The lane fails the job loudly with named fixes when any of that is
+# absent: a lane that cannot run is a defect, and silent skips lie
+# (CLAUDE.md §0).
 set -euo pipefail
 
 fail() {

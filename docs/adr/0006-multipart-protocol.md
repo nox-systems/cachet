@@ -1,4 +1,4 @@
-# ADR 0006 — The upload protocol's fixed constants
+# ADR 0006: The upload protocol's fixed constants
 
 - **Status:** Accepted
 - **Date:** 2026-08-21

@@ -105,7 +105,7 @@ outside the list answers 403 forbidden_admin, an anonymous request
 wasm-incompatible crypto crate enters the tree. Defense: cargo deny
 (advisories, licenses, bans, with ring accessible only through the
 rustls wrappers), exact pins where generation behavior matters (utoipa),
-dependabot weekly, and the hybrid-enforced wasm cleanliness.
+dependabot weekly, and the wasm-hygiene scan over the shipped bundle.
 Proven: `just deny`, `just wasm-hygiene`, the workspace `publish =
 false` (no crate ever uploads to crates.io).
 
@@ -115,4 +115,4 @@ No spray-rate limiting beyond platform defaults and the verdict cache:
 authenticated abuse is an operator decision. No content scanning of
 store paths. No protection against a GitHub account takeover of an
 org member: the org's own authentication policies govern that, and
-the TTL bounds how long it buys an attacker.
+the verdict TTLs bound how long a revoked token keeps answering.

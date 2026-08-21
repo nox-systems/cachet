@@ -182,17 +182,36 @@ async fn load_record(
         .get(upload_record_key(upload_id))
         .execute()
         .await
-        .map_err(|_| ClientError::StorageUnavailable)?
+        // why: the bucket's own error text is the only witness when a
+        // get fails intermittently; folding it silently into 503 leaves
+        // the lane blind.
+        .map_err(|failure| {
+            log::event(
+                "error",
+                "write.record_load_failed",
+                &[("error", failure.to_string())],
+            );
+            ClientError::StorageUnavailable
+        })?
     else {
         return Err(ClientError::UploadUnknown);
     };
     let Some(body) = object.body() else {
+        log::event(
+            "error",
+            "write.record_load_failed",
+            &[("error", "object had no body".to_string())],
+        );
         return Err(ClientError::StorageUnavailable);
     };
-    let text = body
-        .text()
-        .await
-        .map_err(|_| ClientError::StorageUnavailable)?;
+    let text = body.text().await.map_err(|failure| {
+        log::event(
+            "error",
+            "write.record_load_failed",
+            &[("error", failure.to_string())],
+        );
+        ClientError::StorageUnavailable
+    })?;
     let record = UploadRecord::parse(&text).map_err(|_| ClientError::UploadUnknown)?;
     // The upload id is a bearer token for one key: a record naming a
     // different key is refused, so a client cannot present one upload's id

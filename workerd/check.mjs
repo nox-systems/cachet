@@ -783,7 +783,7 @@ try {
           const res = await fetch(`${base}/${objectKey}?uploads`, {
             method: "POST",
           });
-          assert.equal(res.status, 401);
+          assert.equal(res.status, 401, await res.text());
         },
       );
 
@@ -794,8 +794,9 @@ try {
             method: "POST",
             headers: auth,
           });
-          assert.equal(res.status, 411);
-          assert.equal((await res.json()).code, "length_required");
+          const text = await res.text();
+          assert.equal(res.status, 411, text);
+          assert.equal(JSON.parse(text).code, "length_required");
         },
       );
 
@@ -807,8 +808,9 @@ try {
             "x-cachet-upload-bytes": String(partBytes.length),
           },
         });
-        assert.equal(res.status, 200);
-        const body = await res.json();
+        const text = await res.text();
+        assert.equal(res.status, 200, text);
+        const body = JSON.parse(text);
         assert.equal(body.expectedParts, 1);
         assert.equal(typeof body.uploadId, "string");
         return body;
@@ -826,8 +828,9 @@ try {
               body: Buffer.concat([partBytes, Buffer.from("!")]),
             },
           );
-          assert.equal(res.status, 400);
-          assert.equal((await res.json()).code, "part_size_mismatch");
+          const text = await res.text();
+          assert.equal(res.status, 400, text);
+          assert.equal(JSON.parse(text).code, "part_size_mismatch");
         },
       );
 
@@ -840,8 +843,9 @@ try {
             body: partBytes,
           },
         );
-        assert.equal(res.status, 400);
-        assert.equal((await res.json()).code, "part_number_invalid");
+        const text = await res.text();
+        assert.equal(res.status, 400, text);
+        assert.equal(JSON.parse(text).code, "part_number_invalid");
       });
 
       await check("an unknown upload id is 404", async () => {
@@ -853,8 +857,9 @@ try {
             body: partBytes,
           },
         );
-        assert.equal(res.status, 404);
-        assert.equal((await res.json()).code, "upload_unknown");
+        const text = await res.text();
+        assert.equal(res.status, 404, text);
+        assert.equal(JSON.parse(text).code, "upload_unknown");
       });
 
       await check(
@@ -865,8 +870,9 @@ try {
             headers: auth,
             body: JSON.stringify([]),
           });
-          assert.equal(res.status, 400);
-          assert.equal((await res.json()).code, "complete_parts_mismatch");
+          const text = await res.text();
+          assert.equal(res.status, 400, text);
+          assert.equal(JSON.parse(text).code, "complete_parts_mismatch");
         },
       );
 
@@ -879,8 +885,9 @@ try {
             body: partBytes,
           },
         );
-        assert.equal(res.status, 200);
-        const body = await res.json();
+        const text = await res.text();
+        assert.equal(res.status, 200, text);
+        const body = JSON.parse(text);
         assert.equal(body.partNumber, 1);
         assert.equal(typeof body.etag, "string");
         return body.etag;
@@ -920,7 +927,7 @@ try {
             headers: auth,
           },
         );
-        assert.equal(res.status, 404);
+        assert.equal(res.status, 404, await res.text());
       });
     },
   );

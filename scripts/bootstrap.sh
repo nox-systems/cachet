@@ -23,7 +23,7 @@ preflight() {
   fi
 }
 
-# prompt <question> [default] — answers on stdout, so assign with $(prompt ...).
+# prompt <question> [default]: answers on stdout, so assign with $(prompt ...).
 prompt() {
   local question="$1" default="${2:-}" suffix=""
   [ -n "${default}" ] && suffix=" [${default}]"

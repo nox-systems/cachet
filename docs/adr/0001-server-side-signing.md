@@ -1,4 +1,4 @@
-# ADR 0001 — Server-side signing, verify-then-sign
+# ADR 0001: Server-side signing, verify-then-sign
 
 - **Status:** Accepted
 - **Date:** 2026-08-21

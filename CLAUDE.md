@@ -14,13 +14,14 @@ one commit.
 ## §1 The stack
 
 The worker runs on workers-rs compiled to wasm32-unknown-unknown, with R2
-as the only cache-data store and KV for auth verdicts and sessions only.
-Deployments are provisioned by an alchemy-run program under `infra/`; the
-`cachet` CLI ships natively through cargo-dist; the GitHub Action lives in
-this repo under `action/`. The three auth flows are GitHub OIDC for
-writes, GitHub device flow for laptop reads, and browser OAuth with KV
-sessions for the future SPA. Signing is server-side only, and a narinfo is
-signed only after its stored NAR verifies byte-for-byte.
+as the only cache-data store and KV for auth verdicts, sessions, and
+OAuth state only. Deployments are provisioned by an alchemy-run program
+under `infra/`; the `cachet` CLI ships natively through cargo-dist; the
+GitHub Action lives in this repo under `action/`. The three auth flows
+are GitHub OIDC for writes and CI reads, GitHub device flow for laptop
+reads, and browser OAuth with KV sessions for the future SPA. Signing is
+server-side only, and a narinfo is signed only after its stored NAR
+verifies byte-for-byte.
 
 ## §2 The prose law
 

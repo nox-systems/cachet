@@ -1,7 +1,7 @@
 # cachet
 
 cachet is a self-hostable nix binary cache that runs on Cloudflare Workers
-and R2. One deployment serves one GitHub org: CI pushes over an
+and R2. One deployment serves the GitHub orgs you configure: CI pushes over an
 OIDC-authenticated write path and the server signs each narinfo after
 verifying its NAR byte-for-byte, laptops authenticate with GitHub device
 flow, and garbage collection runs armed from the first day on a Cloudflare
@@ -11,7 +11,7 @@ Cloudflare account.
 
 The easiest way to run your own: clone this repo, run `just bootstrap`
 inside `nix develop`, and follow the printed checklists (the runbook is
-docs/DEPLOY.md).
+[docs/DEPLOY.md](docs/DEPLOY.md).
 
 ## For laptop users
 
@@ -55,7 +55,7 @@ server-side; the job needs no secrets beyond its OIDC token.
 v1 is in the final stretch: the worker, CLI, action, and deploy program
 are complete and gate-clean; the staging deployment and end-to-end round
 trip land before the first tag. The lanes and gates are enumerated in
-CLAUDE.md and docs/testing/.
+[CLAUDE.md](CLAUDE.md) and [docs/testing/](docs/testing/).
 
 ## Repository layout
 
@@ -73,10 +73,10 @@ CLAUDE.md and docs/testing/.
 
 | Document | Role |
 | --- | --- |
-| `CLAUDE.md` | The constitution: invariants, lanes, and the doc manifest. |
-| `PROSE.md` | The prose law every repo document obeys. |
-| `SECURITY.md` | The vulnerability disclosure policy. |
+| [CLAUDE.md](CLAUDE.md) | The constitution: invariants, lanes, and the doc manifest. |
+| [PROSE.md](PROSE.md) | The prose law every repo document obeys. |
+| [SECURITY.md](SECURITY.md) | The vulnerability disclosure policy. |
 
 ## License
 
-Apache-2.0. See LICENSE.
+Apache-2.0. See [LICENSE](LICENSE).

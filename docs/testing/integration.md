@@ -29,16 +29,16 @@ The assertions, in order:
    with only the deployment's served public key trusted returns the
    path: the round trip, with nix itself verifying the signature.
 
-Two safety properties are load-bearing, not incidental. The lane
-forces `GITHUB_REF` off the default branch so it can never renew a
-lease — the server-side `forbidden_ref` guard is the second wall
-behind that choice. And the only store paths it writes are its own
-run-tagged payloads, swept by the staging GC whose grace is zeroed
-(docs/DEPLOY.md).
+The lane's configuration keeps it from damaging the deployment it
+tests. It forces `GITHUB_REF` off the default branch, so its push can
+never renew a lease; the server-side `forbidden_ref` guard would
+refuse a renewal anyway. The only store paths the lane writes are its
+own run-tagged payloads, which the staging collector sweeps with a
+zeroed grace window (docs/DEPLOY.md).
 
 In CI the lane runs in `.github/workflows/deploy.yml` as the
-`integration` job, `needs: staging`: an ear on every green main's
-staging deploy. run it by hand the same way the job does:
+`integration` job, `needs: staging`, after each green main deploys to
+staging. Run it by hand the same way the job does:
 
 ```
 CACHET_INTEGRATION_URL=https://<host> just integration

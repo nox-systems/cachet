@@ -1,4 +1,4 @@
-# ADR 0002 — OIDC writes, device-flow laptop reads, browser OAuth for the UI
+# ADR 0002: OIDC writes, device-flow laptop reads, browser OAuth for the UI
 
 - **Status:** Accepted
 - **Date:** 2026-08-21
@@ -6,7 +6,7 @@
 
 ## Context
 
-The cache has three caller classes with different powers. CI jobs push: they run inside GitHub-hosted runners that can prove platform identity.
+The cache has three caller classes with different powers. CI jobs push; they prove platform identity by running inside GitHub-hosted runners.
 Laptops read: people on machines they own, whose trust is their GitHub
 membership. Browsers read for a future UI: same people, over the web.
 One credential type for all three was the previous deployment's answer
@@ -48,7 +48,7 @@ defines the revocation window explicitly, in writing.
 
 ## Alternatives considered
 
-A shared pre-shared token (the old design): fails per-person
+A single shared token (the old design): fails per-person
 revocation; rejected. Fine-grained PATs distributed by the operator:
 same distribution problem with extra bookkeeping; rejected. Requiring
 OIDC for reads too, issued through a vending endpoint: adds a moving

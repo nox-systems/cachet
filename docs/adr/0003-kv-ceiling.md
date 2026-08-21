@@ -1,4 +1,4 @@
-# ADR 0003 — KV holds verdicts, sessions, and OAuth state only
+# ADR 0003: KV holds verdicts, sessions, and OAuth state only
 
 - **Status:** Accepted
 - **Date:** 2026-08-21

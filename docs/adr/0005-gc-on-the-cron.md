@@ -1,4 +1,4 @@
-# ADR 0005 — The collector is armed from day one, on the cron
+# ADR 0005: The collector is armed from day one, on the cron
 
 - **Status:** Accepted
 - **Date:** 2026-08-21

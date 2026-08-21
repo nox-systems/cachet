@@ -18,13 +18,13 @@ claim on somebody else's deployment.
 
 1. The repo carries no deployment identity: no hostname, no org slug,
    no key material, no OAuth client id in committed code or metadata
-   defaults. Every such value arrives as configuration — worker vars,
+   defaults. Every such value arrives as configuration: worker vars,
    the `CACHET_DEPLOY_*` env contract, action inputs, CLI flags.
 2. The deployment's host name is the signing-key name's prefix
    (`<host>-1`), so key identity follows deployment identity through
    one value. The public half is fetched from the deployment's own
-   public config document by every consumer that needs it — the laptop
-   `setup`, the action's install step, `doctor` — and never pasted.
+   public config document by every consumer that needs it (the laptop
+   `setup`, the action's install step, `doctor`) and is never pasted.
 3. Test fixtures use non-production identities throughout
    (`cachet.lane.invalid`, `lane-org`), which makes an accidental
    committed identity visible in review instead of invisible by being

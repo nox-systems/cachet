@@ -1,4 +1,4 @@
-# ADR 0008 — cargo-dist releases; the in-repo action wraps the released binary
+# ADR 0008: cargo-dist releases; the in-repo action wraps the released binary
 
 - **Status:** Accepted
 - **Date:** 2026-08-21
