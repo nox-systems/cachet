@@ -1,0 +1,71 @@
+{
+  "cli_version": "0.10.2",
+  "checkpoint_id": "01M0M6NE42E7Z8J4Q6XQYGZ4SF",
+  "session_id": "d50e44b4-93a7-4a75-8ce8-2f52bde07903",
+  "strategy": "manual-commit",
+  "created_at": "2026-08-22T07:41:28.237584Z",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "save_step_count": 1,
+  "files_touched": [],
+  "agent": "Claude Code",
+  "model": "moonshotai/Kimi-K3[1m]",
+  "turn_id": "7a4eea4c99a7",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 537828475,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 535084864,
+    "output_tokens": 1314226,
+    "api_call_count": 1944
+  },
+  "skill_events_version": 1,
+  "skill_events": [
+    {
+      "id": "claude-skill-Skill:1",
+      "event_type": "tool_invocation",
+      "skill": {
+        "name": "cloudflare"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "skill_tool_use",
+        "confidence": "explicit"
+      },
+      "turn_id": "7a4eea4c99a7",
+      "transcript_anchor": {
+        "unit": "line",
+        "start": 16,
+        "end": 17,
+        "entry_ids": [
+          "5a13d610-6dd8-4c4c-92db-3836b46cfcc4"
+        ],
+        "tool_use_id": "Skill:1"
+      },
+      "native": {
+        "tool_name": "Skill",
+        "tool_use_id": "Skill:1"
+      },
+      "collapse": {
+        "target": "tool_pair",
+        "label": "Skill: cloudflare",
+        "default_collapsed": true
+      }
+    }
+  ],
+  "session_metrics": {
+    "turn_count": 105
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 1,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1
+      }
+    }
+  ]
+}
