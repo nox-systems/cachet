@@ -218,4 +218,4 @@ runs:
     # consumer failed with "Can't find 'action.yml'". The ref names the v1
     # major tag, which every release in the 1.x line moves forward, so the
     # composite and its post action always come from the same line.
-    - uses: nox-systems/cachet/action/post@v1
+    - uses: nox-systems/cachet/action/post@v0

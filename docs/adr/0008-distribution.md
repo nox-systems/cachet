@@ -28,7 +28,9 @@ pinning worked and reviewability did not.
    the snapshot and push phases.
 3. The binary version the action runs is the `cachet-version` input
    with a metadata default; bumping the default is part of tagging a
-   release. Consumers pinning `action@v1` ride the v1 line's releases.
+   release. Consumers pin the moving major line tag: `@v0` while the
+   releases are 0.x (the v0 line re-points at each v0 release commit),
+   and a `v1` line opens with the first 1.0 tag.
 4. The wasm bundle of the worker is NOT distributed this way: deploys
    build it from source through `just deploy` (ADR 0009), because a
    deployment's config and code travel together.

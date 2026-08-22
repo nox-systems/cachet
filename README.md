@@ -39,7 +39,7 @@ permissions:
 
 steps:
   - uses: actions/checkout@v7
-  - uses: nox-systems/cachet/action@v0.0.2
+  - uses: nox-systems/cachet/action@v0
     with:
       cache-url: https://<the deployment's host>
       roots: |
