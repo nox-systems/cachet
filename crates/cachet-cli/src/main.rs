@@ -164,14 +164,32 @@ fn privileged_runner(
                 .chain(argv.iter().map(ToString::to_string))
                 .collect()
         };
-        let outcome = std::process::Command::new(&invocation[0])
+        // why: stdin inherits (sudo's password prompt lives on the tty),
+        // but stdout/stderr are captured — the reload dance's probing
+        // attempts fail routinely (no systemctl on macOS) and their
+        // complaints read as cachet's own failure if inherited. The
+        // error string keeps the detail for the surfaces that report it.
+        let output = std::process::Command::new(&invocation[0])
             .args(&invocation[1..])
-            .status()
+            .stdin(std::process::Stdio::inherit())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .output()
             .map_err(|failure| format!("could not run {}: {failure}", invocation[0]))?;
-        outcome
-            .success()
-            .then_some(())
-            .ok_or_else(|| format!("{} exited {outcome}", invocation.join(" ")))
+        let status = output.status;
+        if status.success() {
+            return Ok(());
+        }
+        let detail = String::from_utf8_lossy(&output.stderr);
+        let detail = detail.trim();
+        if detail.is_empty() {
+            Err(format!("{} exited {status}", invocation.join(" ")))
+        } else {
+            Err(format!(
+                "{} exited {status}: {detail}",
+                invocation.join(" ")
+            ))
+        }
     }
 }
 
