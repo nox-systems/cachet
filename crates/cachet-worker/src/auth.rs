@@ -34,18 +34,23 @@ thread_local! {
 /// configuration cannot verify anything, so it answers auth_unavailable
 /// rather than fail open.
 pub(crate) fn oidc_config(env: &Env) -> cachet_core::error::Result<OidcConfig> {
-    let orgs = env
-        .var("CACHET_ORGS")
-        .map_err(|_| ClientError::AuthUnavailable)?
-        .to_string();
-    let audience = env
-        .var("CACHET_AUDIENCE")
-        .map_err(|_| ClientError::AuthUnavailable)?
-        .to_string();
-    let default_branch_ref = env
-        .var("CACHET_DEFAULT_BRANCH_REF")
-        .map_err(|_| ClientError::AuthUnavailable)?
-        .to_string();
+    // why: a missing config value must answer auth_unavailable, but the
+    // ANSWER must never be the only evidence — the event names the var.
+    let read_var = |name: &str| {
+        env.var(name)
+            .map_err(|failure| {
+                log::event(
+                    "error",
+                    "auth.config_missing",
+                    &[("name", name.to_string()), ("error", failure.to_string())],
+                );
+                ClientError::AuthUnavailable
+            })
+            .map(|value| value.to_string())
+    };
+    let orgs = read_var("CACHET_ORGS")?;
+    let audience = read_var("CACHET_AUDIENCE")?;
+    let default_branch_ref = read_var("CACHET_DEFAULT_BRANCH_REF")?;
     let config = OidcConfig {
         orgs: orgs
             .split(',')
@@ -55,7 +60,13 @@ pub(crate) fn oidc_config(env: &Env) -> cachet_core::error::Result<OidcConfig> {
         audience,
         default_branch_ref,
     };
-    config.validate()?;
+    config.validate().inspect_err(|failure| {
+        log::event(
+            "error",
+            "auth.config_invalid",
+            &[("orgs", orgs.clone()), ("error", failure.to_string())],
+        );
+    })?;
     Ok(config)
 }
 
