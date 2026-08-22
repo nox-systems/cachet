@@ -27,7 +27,9 @@ export default Alchemy.Stack(
     // why: resources live in the account's flat namespace, so they carry
     // the cachet- prefix — but the prefix is a guarantee, not a ritual:
     // a name that already starts with it stands alone.
-    const resourceName = stage.startsWith("cachet-") ? stage : `cachet-${stage}`;
+    const resourceName = stage.startsWith("cachet-")
+      ? stage
+      : `cachet-${stage}`;
 
     const bucket = yield* Cloudflare.R2.Bucket("Bucket", {
       name: resourceName,

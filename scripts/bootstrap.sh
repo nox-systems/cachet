@@ -46,7 +46,7 @@ preflight
 
 DEPLOYMENT_NAME="$(prompt "Deployment name (lowercase letters, digits, dashes)" "production")"
 [[ ${DEPLOYMENT_NAME} =~ ^[a-z][a-z0-9-]{1,31}$ ]] ||
-  fail "deployment name must match ^[a-z][a-z0-9-]{1,31}\$"
+  fail 'deployment name must match ^[a-z][a-z0-9-]{1,31}$'
 
 env_file="infra/.env.${DEPLOYMENT_NAME}"
 if [ -e "${env_file}" ] && [ "${1:-}" != "--force" ]; then
