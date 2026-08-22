@@ -75,7 +75,10 @@ async fn fetch_jwks(env: &Env) -> cachet_core::error::Result<Vec<RsaJwk>> {
         log::event(
             "error",
             "auth.jwks_fetch_failed",
-            &[("where", "request_build".to_string()), ("error", failure.to_string())],
+            &[
+                ("where", "request_build".to_string()),
+                ("error", failure.to_string()),
+            ],
         );
         ClientError::AuthUnavailable
     })?;
@@ -83,7 +86,10 @@ async fn fetch_jwks(env: &Env) -> cachet_core::error::Result<Vec<RsaJwk>> {
         log::event(
             "error",
             "auth.jwks_fetch_failed",
-            &[("where", "send".to_string()), ("error", failure.to_string())],
+            &[
+                ("where", "send".to_string()),
+                ("error", failure.to_string()),
+            ],
         );
         ClientError::AuthUnavailable
     })?;
@@ -102,7 +108,10 @@ async fn fetch_jwks(env: &Env) -> cachet_core::error::Result<Vec<RsaJwk>> {
         log::event(
             "error",
             "auth.jwks_fetch_failed",
-            &[("where", "parse".to_string()), ("error", failure.to_string())],
+            &[
+                ("where", "parse".to_string()),
+                ("error", failure.to_string()),
+            ],
         );
         ClientError::AuthUnavailable
     })?;
