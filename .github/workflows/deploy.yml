@@ -33,7 +33,7 @@ permissions:
 jobs:
   staging:
     if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success'
-    environment: cachet-staging
+    environment: staging
     runs-on: ubuntu-latest
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -69,7 +69,7 @@ jobs:
         (github.event_name == 'workflow_run' && needs.staging.result == 'success') ||
         (github.event_name == 'workflow_dispatch' && inputs.stage == 'cachet-staging' && needs.manual.result == 'success')
       )
-    environment: cachet-staging
+    environment: staging
     permissions:
       contents: read
       # The lane mints the org's real OIDC token against this repository.
@@ -85,7 +85,9 @@ jobs:
 
   manual:
     if: github.event_name == 'workflow_dispatch'
-    environment: ${{ inputs.stage }}
+    # why: the environment is named for its slot (staging), not its
+    # deployment (cachet-staging); the rig owns exactly one environment.
+    environment: ${{ inputs.stage == 'cachet-staging' && 'staging' || inputs.stage }}
     runs-on: ubuntu-latest
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
