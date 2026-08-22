@@ -106,10 +106,10 @@ workflow itself so the integration lane can sweep what it seeds.
 Production is manual: Actions > deploy > Run workflow, choosing
 `production`, and the run waits for the `production` environment's
 reviewer approval. Each deployment's GitHub environment carries the same
-values the local file carries: the `CACHET_DEPLOY_*` set as environment
-variables, and `CACHET_SIGNING_KEY`, `CACHET_OAUTH_CLIENT_SECRET`,
-`CLOUDFLARE_API_TOKEN`, and `CLOUDFLARE_ACCOUNT_ID` as environment
-secrets.
+values the local file carries, all of them as environment secrets: the
+`CACHET_DEPLOY_*` set, `CACHET_SIGNING_KEY`,
+`CACHET_OAUTH_CLIENT_SECRET`, `CLOUDFLARE_API_TOKEN`, and
+`CLOUDFLARE_ACCOUNT_ID`.
 
 ## Deploying from your own GitHub Actions
 
@@ -122,11 +122,11 @@ environment per deployment is the whole setup:
 1. Create the deployment first with `just bootstrap` + a manual
    `just deploy <name>` (keys and the OAuth App exist only after it).
    Then create a GitHub environment named exactly the deployment's
-   name, carrying the same values the local file carries: the
-   `CACHET_DEPLOY_*` set as environment variables, `CACHET_SIGNING_KEY`,
+   name, carrying the same values the local file carries, all as
+   environment secrets: the `CACHET_DEPLOY_*` set, `CACHET_SIGNING_KEY`,
    `CACHET_OAUTH_CLIENT_SECRET`, `CLOUDFLARE_API_TOKEN`, and
-   `CLOUDFLARE_ACCOUNT_ID` as environment secrets. Add required
-   reviewers if deploys must wait for approval.
+   `CLOUDFLARE_ACCOUNT_ID`. Add required reviewers if deploys must wait
+   for approval.
 2. Add one caller workflow to a repository you control:
 
 ```yaml
@@ -149,12 +149,20 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       CACHET_SIGNING_KEY: ${{ secrets.CACHET_SIGNING_KEY }}
       CACHET_OAUTH_CLIENT_SECRET: ${{ secrets.CACHET_OAUTH_CLIENT_SECRET }}
+      CACHET_DEPLOY_HOST: ${{ secrets.CACHET_DEPLOY_HOST }}
+      CACHET_DEPLOY_ORGS: ${{ secrets.CACHET_DEPLOY_ORGS }}
+      CACHET_DEPLOY_ADMINS: ${{ secrets.CACHET_DEPLOY_ADMINS }}
+      CACHET_DEPLOY_OAUTH_CLIENT_ID: ${{ secrets.CACHET_DEPLOY_OAUTH_CLIENT_ID }}
 ```
 
 The called workflow downloads the release's deploy package (the alchemy
 program plus the worker bundle built from that tag by the pinned
 toolchain), verifies its checksum, and runs `bun run deploy --stage
-<name>`; the package ships with every release from v0.0.1 on. Upgrading
+<name>`; the package ships with every release from v0.0.1 on. Optional
+overrides (`CACHET_DEPLOY_AUDIENCE`, `CACHET_DEPLOY_DEFAULT_BRANCH_REF`,
+`CACHET_DEPLOY_DOMAIN`, `CACHET_DEPLOY_UI_ORIGIN`,
+`CACHET_DEPLOY_GC_GRACE_MS`) pass as secrets the same way and read as
+defaults when absent. Upgrading
 is a one-line bump of `cachet-tag` and the `uses:` ref, and Dependabot
 and Renovate both propose that bump automatically. Pin the `uses:` ref
 to a full tag or commit SHA, as with any action.

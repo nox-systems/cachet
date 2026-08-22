@@ -4,8 +4,8 @@
 # values. The environment name equals the deployment name, and the
 # environment's protection rules (reviewers, branches) apply here exactly
 # as if the job lived in the operator's repo — the deployment gate is
-# theirs. Secrets arrive explicitly by name; vars resolve inside the
-# environment, never at repository level.
+# theirs. Every value arrives as an explicitly named environment secret,
+# never at repository level.
 name: operator-deploy
 
 on:
@@ -28,6 +28,24 @@ on:
         required: true
       CACHET_OAUTH_CLIENT_SECRET:
         required: true
+      CACHET_DEPLOY_HOST:
+        required: true
+      CACHET_DEPLOY_ORGS:
+        required: true
+      CACHET_DEPLOY_ADMINS:
+        required: true
+      CACHET_DEPLOY_OAUTH_CLIENT_ID:
+        required: true
+      CACHET_DEPLOY_AUDIENCE:
+        required: false
+      CACHET_DEPLOY_DEFAULT_BRANCH_REF:
+        required: false
+      CACHET_DEPLOY_DOMAIN:
+        required: false
+      CACHET_DEPLOY_UI_ORIGIN:
+        required: false
+      CACHET_DEPLOY_GC_GRACE_MS:
+        required: false
 
 permissions:
   contents: read
@@ -46,15 +64,15 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       CACHET_SIGNING_KEY: ${{ secrets.CACHET_SIGNING_KEY }}
       CACHET_OAUTH_CLIENT_SECRET: ${{ secrets.CACHET_OAUTH_CLIENT_SECRET }}
-      CACHET_DEPLOY_HOST: ${{ vars.CACHET_DEPLOY_HOST }}
-      CACHET_DEPLOY_ORGS: ${{ vars.CACHET_DEPLOY_ORGS }}
-      CACHET_DEPLOY_ADMINS: ${{ vars.CACHET_DEPLOY_ADMINS }}
-      CACHET_DEPLOY_OAUTH_CLIENT_ID: ${{ vars.CACHET_DEPLOY_OAUTH_CLIENT_ID }}
-      CACHET_DEPLOY_AUDIENCE: ${{ vars.CACHET_DEPLOY_AUDIENCE }}
-      CACHET_DEPLOY_DEFAULT_BRANCH_REF: ${{ vars.CACHET_DEPLOY_DEFAULT_BRANCH_REF }}
-      CACHET_DEPLOY_DOMAIN: ${{ vars.CACHET_DEPLOY_DOMAIN }}
-      CACHET_DEPLOY_UI_ORIGIN: ${{ vars.CACHET_DEPLOY_UI_ORIGIN }}
-      CACHET_DEPLOY_GC_GRACE_MS: ${{ vars.CACHET_DEPLOY_GC_GRACE_MS }}
+      CACHET_DEPLOY_HOST: ${{ secrets.CACHET_DEPLOY_HOST }}
+      CACHET_DEPLOY_ORGS: ${{ secrets.CACHET_DEPLOY_ORGS }}
+      CACHET_DEPLOY_ADMINS: ${{ secrets.CACHET_DEPLOY_ADMINS }}
+      CACHET_DEPLOY_OAUTH_CLIENT_ID: ${{ secrets.CACHET_DEPLOY_OAUTH_CLIENT_ID }}
+      CACHET_DEPLOY_AUDIENCE: ${{ secrets.CACHET_DEPLOY_AUDIENCE }}
+      CACHET_DEPLOY_DEFAULT_BRANCH_REF: ${{ secrets.CACHET_DEPLOY_DEFAULT_BRANCH_REF }}
+      CACHET_DEPLOY_DOMAIN: ${{ secrets.CACHET_DEPLOY_DOMAIN }}
+      CACHET_DEPLOY_UI_ORIGIN: ${{ secrets.CACHET_DEPLOY_UI_ORIGIN }}
+      CACHET_DEPLOY_GC_GRACE_MS: ${{ secrets.CACHET_DEPLOY_GC_GRACE_MS }}
     steps:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
       - name: Fetch and verify the tagged deploy package

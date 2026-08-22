@@ -1,8 +1,8 @@
 # Deploys. Staging follows every green ci run on main; production is manual
 # behind the GitHub environment's reviewer gate. Both stages read their
-# configuration from environment-scoped vars and secrets (same names as
-# infra/.env.<stage> locally), never from repository-level config, so the
-# two stages can diverge safely.
+# configuration from environment secrets (same names as infra/.env.<stage>
+# locally), never from repository-level config, so the two stages can
+# diverge safely.
 name: deploy
 
 on:
@@ -40,14 +40,14 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       CACHET_SIGNING_KEY: ${{ secrets.CACHET_SIGNING_KEY }}
       CACHET_OAUTH_CLIENT_SECRET: ${{ secrets.CACHET_OAUTH_CLIENT_SECRET }}
-      CACHET_DEPLOY_HOST: ${{ vars.CACHET_DEPLOY_HOST }}
-      CACHET_DEPLOY_ORGS: ${{ vars.CACHET_DEPLOY_ORGS }}
-      CACHET_DEPLOY_ADMINS: ${{ vars.CACHET_DEPLOY_ADMINS }}
-      CACHET_DEPLOY_OAUTH_CLIENT_ID: ${{ vars.CACHET_DEPLOY_OAUTH_CLIENT_ID }}
-      CACHET_DEPLOY_AUDIENCE: ${{ vars.CACHET_DEPLOY_AUDIENCE }}
-      CACHET_DEPLOY_DEFAULT_BRANCH_REF: ${{ vars.CACHET_DEPLOY_DEFAULT_BRANCH_REF }}
-      CACHET_DEPLOY_DOMAIN: ${{ vars.CACHET_DEPLOY_DOMAIN }}
-      CACHET_DEPLOY_UI_ORIGIN: ${{ vars.CACHET_DEPLOY_UI_ORIGIN }}
+      CACHET_DEPLOY_HOST: ${{ secrets.CACHET_DEPLOY_HOST }}
+      CACHET_DEPLOY_ORGS: ${{ secrets.CACHET_DEPLOY_ORGS }}
+      CACHET_DEPLOY_ADMINS: ${{ secrets.CACHET_DEPLOY_ADMINS }}
+      CACHET_DEPLOY_OAUTH_CLIENT_ID: ${{ secrets.CACHET_DEPLOY_OAUTH_CLIENT_ID }}
+      CACHET_DEPLOY_AUDIENCE: ${{ secrets.CACHET_DEPLOY_AUDIENCE }}
+      CACHET_DEPLOY_DEFAULT_BRANCH_REF: ${{ secrets.CACHET_DEPLOY_DEFAULT_BRANCH_REF }}
+      CACHET_DEPLOY_DOMAIN: ${{ secrets.CACHET_DEPLOY_DOMAIN }}
+      CACHET_DEPLOY_UI_ORIGIN: ${{ secrets.CACHET_DEPLOY_UI_ORIGIN }}
       # why: zeroed grace is a test-rig property (the integration lane
       # sweeps what it seeds), so the workflow says it outright instead of
       # riding a stage-name default in config.
@@ -76,8 +76,8 @@ jobs:
       id-token: write
     runs-on: ubuntu-latest
     env:
-      CACHET_INTEGRATION_URL: https://${{ vars.CACHET_DEPLOY_DOMAIN || vars.CACHET_DEPLOY_HOST }}
-      CACHET_INTEGRATION_AUDIENCE: ${{ vars.CACHET_DEPLOY_AUDIENCE }}
+      CACHET_INTEGRATION_URL: https://${{ secrets.CACHET_DEPLOY_DOMAIN || secrets.CACHET_DEPLOY_HOST }}
+      CACHET_INTEGRATION_AUDIENCE: ${{ secrets.CACHET_DEPLOY_AUDIENCE }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
@@ -94,14 +94,14 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       CACHET_SIGNING_KEY: ${{ secrets.CACHET_SIGNING_KEY }}
       CACHET_OAUTH_CLIENT_SECRET: ${{ secrets.CACHET_OAUTH_CLIENT_SECRET }}
-      CACHET_DEPLOY_HOST: ${{ vars.CACHET_DEPLOY_HOST }}
-      CACHET_DEPLOY_ORGS: ${{ vars.CACHET_DEPLOY_ORGS }}
-      CACHET_DEPLOY_ADMINS: ${{ vars.CACHET_DEPLOY_ADMINS }}
-      CACHET_DEPLOY_OAUTH_CLIENT_ID: ${{ vars.CACHET_DEPLOY_OAUTH_CLIENT_ID }}
-      CACHET_DEPLOY_AUDIENCE: ${{ vars.CACHET_DEPLOY_AUDIENCE }}
-      CACHET_DEPLOY_DEFAULT_BRANCH_REF: ${{ vars.CACHET_DEPLOY_DEFAULT_BRANCH_REF }}
-      CACHET_DEPLOY_DOMAIN: ${{ vars.CACHET_DEPLOY_DOMAIN }}
-      CACHET_DEPLOY_UI_ORIGIN: ${{ vars.CACHET_DEPLOY_UI_ORIGIN }}
+      CACHET_DEPLOY_HOST: ${{ secrets.CACHET_DEPLOY_HOST }}
+      CACHET_DEPLOY_ORGS: ${{ secrets.CACHET_DEPLOY_ORGS }}
+      CACHET_DEPLOY_ADMINS: ${{ secrets.CACHET_DEPLOY_ADMINS }}
+      CACHET_DEPLOY_OAUTH_CLIENT_ID: ${{ secrets.CACHET_DEPLOY_OAUTH_CLIENT_ID }}
+      CACHET_DEPLOY_AUDIENCE: ${{ secrets.CACHET_DEPLOY_AUDIENCE }}
+      CACHET_DEPLOY_DEFAULT_BRANCH_REF: ${{ secrets.CACHET_DEPLOY_DEFAULT_BRANCH_REF }}
+      CACHET_DEPLOY_DOMAIN: ${{ secrets.CACHET_DEPLOY_DOMAIN }}
+      CACHET_DEPLOY_UI_ORIGIN: ${{ secrets.CACHET_DEPLOY_UI_ORIGIN }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
