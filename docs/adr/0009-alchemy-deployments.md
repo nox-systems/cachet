@@ -22,9 +22,14 @@ their own, and we run staging and production.
    bindings, the cron trigger, and the custom domain, and
    `just deploy <stage>` runs it.
 2. The worker artifact uploads byte-for-byte (`bundle: false`): the
-   deployable is exactly what worker-build emitted, which is exactly
-   what the lanes tested; no deploy-time bundler rewrites module
-   shape.
+   wasm is exactly what worker-build emitted, which is exactly what the
+   lanes tested; no deploy-time bundler rewrites module shape. One
+   addition: the JS loader file carries a trailing
+   `// cachet-bundle-sha256:` comment stamped at build time, because
+   deploy-time drift detection hashes the entry module and worker-build
+   emits the loader's text identically on every build — without the
+   stamp, wasm-only changes converge as "no changes" and the deployed
+   worker silently runs the first version ever uploaded.
 3. Stages isolate: `cachet-staging-*` and `cachet-production-*` share
    no resources. Configuration that must differ per stage (domain
    attachment, GC grace) derives from the stage in the stack; secrets

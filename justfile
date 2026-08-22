@@ -87,9 +87,13 @@ openapi:
 openapi-check:
     bash scripts/check-openapi-drift.sh
 
-# build the deployable worker bundle with worker-build
+# build the deployable worker bundle with worker-build, then stamp the JS
+# loader with the wasm's hash: deploy-time drift detection hashes the
+# entry, whose text worker-build emits identically on every build — the
+# stamp is how wasm-only changes still read as a change (ADR 0009).
 wasm:
     cd crates/cachet-worker && worker-build --release
+    printf '// cachet-bundle-sha256: %s\n' "$(openssl dgst -sha256 -r crates/cachet-worker/build/index_bg.wasm | cut -d' ' -f1)" >> crates/cachet-worker/build/index.js
 
 # the workerd lane: the built worker under wrangler dev --local, real R2
 # and Cache API semantics, asserted over real HTTP
