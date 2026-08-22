@@ -14,7 +14,6 @@ import crypto from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
-import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
@@ -195,18 +194,85 @@ async function check(name, fn) {
   }
 }
 
-function freePort() {
-  return new Promise((resolve, reject) => {
-    const probe = net.createServer();
-    probe.once("error", reject);
-    probe.listen(0, "127.0.0.1", () => {
-      const { port } = probe.address();
-      probe.close(() => resolve(port));
-    });
-  });
+// Event-log observations: the worker emits an event before it answers,
+// but the log's pipe is asynchronous. Wait FOR the marker, never a fixed
+// nap: one FIFO stream delivers everything the marker chronologically
+// follows, which is what licenses the negative matches after it. A
+// marker that never arrives is the test's own failure, on the clock of
+// the system under test instead of a guessed interval.
+async function untilEvent(events, marker) {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    if (events().includes(marker)) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(
+    `event never appeared: ${marker}\n--- stream tail ---\n${events().slice(-800)}`,
+  );
 }
 
-const settle = () => new Promise((resolve) => setTimeout(resolve, 200));
+// Boot one wrangler dev. The port is never chosen: wrangler binds an
+// OS-assigned port (--port 0) and names it in its ready banner, so the
+// race a probe-and-release dance invites cannot exist. The boot's answer
+// is the banner itself; its absence by the deadline is the test's own
+// signal, never retried.
+async function bootWorkerd(persist, vars) {
+  const proc = spawn(
+    "wrangler",
+    [
+      "dev",
+      "--local",
+      "--port",
+      "0",
+      "--persist-to",
+      persist,
+      "--config",
+      configPath,
+      "--var",
+      `CACHET_JWKS_URL:${jwksUrl}`,
+      "--var",
+      `CACHET_GITHUB_API_URL:${githubApiUrl}`,
+      "--var",
+      `CACHET_GITHUB_WEB_URL:${githubApiUrl}`,
+      ...Object.entries(vars).flatMap(([name, value]) => [
+        "--var",
+        `${name}:${value}`,
+      ]),
+    ],
+    { detached: true, stdio: ["ignore", "pipe", "pipe"] },
+  );
+  let captured = "";
+  proc.stdout.on("data", (chunk) => (captured += chunk));
+  proc.stderr.on("data", (chunk) => (captured += chunk));
+  const deadline = Date.now() + 60_000;
+  let base = "";
+  while (Date.now() < deadline) {
+    const banner = captured.match(/Ready on (http:\/\/[^\s]+)/);
+    if (banner) {
+      base = banner[1];
+      break;
+    }
+    if (captured.includes("ERROR")) break;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  if (!base) {
+    try {
+      process.kill(-proc.pid, "SIGKILL");
+    } catch {
+      proc.kill("SIGKILL");
+    }
+    throw new Error(`workerd never came up:\n${captured.slice(-2000)}`);
+  }
+  // The stream is consumed monotonically: clearing advances an offset
+  // rather than swapping the string, so a late-flushed line from an
+  // earlier assertion can never bleed into the next one's window.
+  let epoch = 0;
+  const events = () => captured.slice(epoch);
+  const clearEvents = () => (epoch = captured.length);
+  return { proc, base, events, clearEvents };
+}
 
 // One scenario per persistence directory: fresh R2, fresh edge cache.
 async function scenario(name, seed, assertions, vars = {}) {
@@ -236,57 +302,9 @@ async function scenario(name, seed, assertions, vars = {}) {
     }
   }
 
-  const port = await freePort();
-  const proc = spawn(
-    "wrangler",
-    [
-      "dev",
-      "--local",
-      "--port",
-      String(port),
-      "--persist-to",
-      persist,
-      "--config",
-      configPath,
-      "--var",
-      `CACHET_JWKS_URL:${jwksUrl}`,
-      "--var",
-      `CACHET_GITHUB_API_URL:${githubApiUrl}`,
-      "--var",
-      `CACHET_GITHUB_WEB_URL:${githubApiUrl}`,
-      ...Object.entries(vars).flatMap(([name, value]) => [
-        "--var",
-        `${name}:${value}`,
-      ]),
-    ],
-    { detached: true, stdio: ["ignore", "pipe", "pipe"] },
-  );
-  let captured = "";
-  proc.stdout.on("data", (chunk) => (captured += chunk));
-  proc.stderr.on("data", (chunk) => (captured += chunk));
-  const base = `http://127.0.0.1:${port}`;
+  const { proc, base, events, clearEvents } = await bootWorkerd(persist, vars);
 
   try {
-    const deadline = Date.now() + 60_000;
-    let up = false;
-    while (Date.now() < deadline) {
-      try {
-        const probe = await fetch(`${base}/nix-cache-info`);
-        if (probe.status === 200) {
-          up = true;
-          break;
-        }
-      } catch {
-        // Not listening yet.
-      }
-      if (captured.includes("ERROR")) break;
-      await new Promise((resolve) => setTimeout(resolve, 250));
-    }
-    if (!up) {
-      throw new Error(`workerd never came up:\n${captured.slice(-2000)}`);
-    }
-    const events = () => captured;
-    const clearEvents = () => (captured = "");
     const failuresBefore = results.filter(([state]) => state === "FAIL").length;
     await assertions({ base, events, clearEvents, persist });
     // why: a wire answer alone (a 503) never says WHICH 503; the worker's
@@ -345,7 +363,9 @@ await scenario(
         Number(res.headers.get("content-length")),
         Buffer.byteLength(seeded),
       );
-      await settle();
+      // The answer implies the emission; closing the check's own window
+      // is what keeps its events out of the next check's stream.
+      await untilEvent(events, '"event":"read.bucket_hit"');
     });
 
     await check("the second get comes from the edge", async () => {
@@ -354,7 +374,7 @@ await scenario(
         headers: READ_AUTH(),
       });
       assert.equal(res.status, 200);
-      await settle();
+      await untilEvent(events, '"event":"read.edge_hit"');
       assert.match(events(), /"event":"read\.edge_hit"/);
       assert.doesNotMatch(events(), /"event":"read\.bucket_hit"/);
     });
@@ -371,7 +391,7 @@ await scenario(
       );
       assert.equal(res.headers.get("cache-control"), "public, max-age=30");
       assert.equal(await res.text(), "not found\n");
-      await settle();
+      await untilEvent(events, '"event":"read.miss"');
     });
 
     await check(
@@ -382,7 +402,7 @@ await scenario(
           headers: READ_AUTH(),
         });
         assert.equal(res.status, 404);
-        await settle();
+        await untilEvent(events, '"event":"read.edge_hit"');
         assert.match(events(), /"event":"read\.edge_hit"/);
         assert.doesNotMatch(events(), /"event":"read\.miss"/);
       },
@@ -474,13 +494,13 @@ await scenario(
         headers: READ_AUTH(),
       });
       assert.equal(first.status, 200);
-      await settle();
       clearEvents();
       const second = await fetch(`${base}/${NARINFO_KEY}`, {
         headers: READ_AUTH(),
       });
       assert.equal(second.status, 200);
-      await settle();
+      await untilEvent(events, '"event":"generation.document_corrupt"');
+      await untilEvent(events, '"event":"read.bucket_hit"');
       assert.match(events(), /"event":"generation\.document_corrupt"/);
       assert.match(events(), /"event":"read\.bucket_hit"/);
       assert.doesNotMatch(events(), /"event":"read\.edge_hit"/);
@@ -497,13 +517,13 @@ await scenario(
         headers: READ_AUTH(),
       });
       assert.equal(first.status, 404);
-      await settle();
+      await untilEvent(events, '"event":"read.miss"');
       clearEvents();
       const second = await fetch(`${base}/${OTHER_NARINFO}`, {
         headers: READ_AUTH(),
       });
       assert.equal(second.status, 404);
-      await settle();
+      await untilEvent(events, '"event":"read.edge_hit"');
       assert.match(events(), /"event":"read\.edge_hit"/);
       assert.doesNotMatch(events(), /"event":"read\.miss"/);
     });
@@ -709,9 +729,10 @@ try {
         });
         assert.equal(res.status, 400);
         assert.equal((await res.json()).code, "file_hash_mismatch");
-        await settle();
         // why: problem bodies stay gossip-free; the forensic answer for a
         // disagreement is the operator event's declared/measured pairs.
+        const declared_pair = `"fileHashDeclared":"${body.match(/FileHash: (\S+)/)[1]}"`;
+        await untilEvent(events, declared_pair);
         const stream = events();
         const declared = body.match(/FileHash: (\S+)/)[1];
         assert.ok(
@@ -738,7 +759,10 @@ try {
         });
         assert.equal(res.status, 400);
         assert.equal((await res.json()).code, "nar_hash_mismatch");
-        await settle();
+        await untilEvent(
+          events,
+          `"narSizeDeclared":"${body.match(/NarSize: (\d+)/)[1]}"`,
+        );
         const stream = events();
         const declared = body.match(/NarSize: (\d+)/)[1];
         const honest = narinfoFixture.match(/NarSize: (\d+)/)[1];
