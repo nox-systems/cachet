@@ -71,18 +71,41 @@ async fn fetch_jwks(env: &Env) -> cachet_core::error::Result<Vec<RsaJwk>> {
         cachet_core::constants::JWKS_URL_DEFAULT,
     )
     .to_string();
-    let request = Request::new(&url, Method::Get).map_err(|_| ClientError::AuthUnavailable)?;
-    let mut response = Fetch::Request(request)
-        .send()
-        .await
-        .map_err(|_| ClientError::AuthUnavailable)?;
+    let request = Request::new(&url, Method::Get).map_err(|failure| {
+        log::event(
+            "error",
+            "auth.jwks_fetch_failed",
+            &[("where", "request_build"), ("error", failure.to_string())],
+        );
+        ClientError::AuthUnavailable
+    })?;
+    let mut response = Fetch::Request(request).send().await.map_err(|failure| {
+        log::event(
+            "error",
+            "auth.jwks_fetch_failed",
+            &[("where", "send"), ("error", failure.to_string())],
+        );
+        ClientError::AuthUnavailable
+    })?;
     if response.status_code() != 200 {
+        log::event(
+            "error",
+            "auth.jwks_fetch_failed",
+            &[
+                ("where", "status"),
+                ("error", response.status_code().to_string()),
+            ],
+        );
         return Err(ClientError::AuthUnavailable);
     }
-    let document: JwksDocument = response
-        .json()
-        .await
-        .map_err(|_| ClientError::AuthUnavailable)?;
+    let document: JwksDocument = response.json().await.map_err(|failure| {
+        log::event(
+            "error",
+            "auth.jwks_fetch_failed",
+            &[("where", "parse"), ("error", failure.to_string())],
+        );
+        ClientError::AuthUnavailable
+    })?;
     Ok(document.keys)
 }
 

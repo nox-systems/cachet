@@ -66,17 +66,32 @@ async fn github_get(env: &Env, token: &str, path: &str) -> Result<(u16, String)>
     let mut request_init = worker::RequestInit::new();
     request_init.with_method(Method::Get);
     request_init.headers.clone_from(&headers);
-    let request = Request::new_with_init(&format!("{base}{path}"), &request_init)
-        .map_err(|_| ClientError::AuthUnavailable)?;
-    let mut response = Fetch::Request(request)
-        .send()
-        .await
-        .map_err(|_| ClientError::AuthUnavailable)?;
+    let request =
+        Request::new_with_init(&format!("{base}{path}"), &request_init).map_err(|failure| {
+            log::event(
+                "error",
+                "verdict.github_fetch_failed",
+                &[("where", "request_build"), ("error", failure.to_string())],
+            );
+            ClientError::AuthUnavailable
+        })?;
+    let mut response = Fetch::Request(request).send().await.map_err(|failure| {
+        log::event(
+            "error",
+            "verdict.github_fetch_failed",
+            &[("where", "send"), ("error", failure.to_string())],
+        );
+        ClientError::AuthUnavailable
+    })?;
     let status = response.status_code();
-    let text = response
-        .text()
-        .await
-        .map_err(|_| ClientError::AuthUnavailable)?;
+    let text = response.text().await.map_err(|failure| {
+        log::event(
+            "error",
+            "verdict.github_fetch_failed",
+            &[("where", "body"), ("error", failure.to_string())],
+        );
+        ClientError::AuthUnavailable
+    })?;
     Ok((status, text))
 }
 
