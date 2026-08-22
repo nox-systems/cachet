@@ -71,7 +71,7 @@ async fn github_get(env: &Env, token: &str, path: &str) -> Result<(u16, String)>
             log::event(
                 "error",
                 "verdict.github_fetch_failed",
-                &[("where", "request_build"), ("error", failure.to_string())],
+                &[("where", "request_build".to_string()), ("error", failure.to_string())],
             );
             ClientError::AuthUnavailable
         })?;
@@ -79,7 +79,7 @@ async fn github_get(env: &Env, token: &str, path: &str) -> Result<(u16, String)>
         log::event(
             "error",
             "verdict.github_fetch_failed",
-            &[("where", "send"), ("error", failure.to_string())],
+            &[("where", "send".to_string()), ("error", failure.to_string())],
         );
         ClientError::AuthUnavailable
     })?;
@@ -88,7 +88,7 @@ async fn github_get(env: &Env, token: &str, path: &str) -> Result<(u16, String)>
         log::event(
             "error",
             "verdict.github_fetch_failed",
-            &[("where", "body"), ("error", failure.to_string())],
+            &[("where", "body".to_string()), ("error", failure.to_string())],
         );
         ClientError::AuthUnavailable
     })?;
