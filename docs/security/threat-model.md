@@ -42,8 +42,9 @@ GitHub's JWKS (per-isolate cache, 10-minute TTL, staleness fallback),
 requires exact `iss`/`aud` strings, checks `repository_owner` against
 the configured orgs, and bounds `iat`/`exp` against the request clock.
 Proven: the OIDC rejection matrix in the workerd lane (alg confusion,
-unknown kid, expired, audience array, wrong org, staleness) and the
-claim policy's property tests.
+expired, wrong audience, wrong org, cold JWKS answering 503) and the
+claim policy's tests for the rows that need no wire (the unknown-kid
+one-refetch rule, the audience array, mistyped claims).
 
 **Ex-member's token.** A person leaves the org; their laptop's cached
 login should die promptly. Defense: verdicts cache in KV for 600s
