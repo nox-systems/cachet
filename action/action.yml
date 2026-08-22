@@ -6,7 +6,10 @@
 name: cachet setup
 description: >-
   Install Determinate Nix wired to a cachet deployment, then push what the
-  job builds. Needs `permissions: { contents: read, id-token: write }`.
+  job builds. Grant `permissions: { contents: read, id-token: write }` for
+  the full path; in a job whose context cannot receive the grant (a forked
+  pull request) the action installs plain nix and the build runs uncached,
+  slower and green.
 author: nox-systems
 inputs:
   cache-url:
