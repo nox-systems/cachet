@@ -61,10 +61,16 @@ pub(crate) fn oidc_config(env: &Env) -> cachet_core::error::Result<OidcConfig> {
 
 /// Fetch the issuer's JWKS document now.
 async fn fetch_jwks(env: &Env) -> cachet_core::error::Result<Vec<RsaJwk>> {
-    let url = env
-        .var("CACHET_JWKS_URL")
-        .map_err(|_| ClientError::AuthUnavailable)?
-        .to_string();
+    // why: the var only ever overrides (lanes, non-github.com issuers);
+    // a production deployment answers the default URL with no config.
+    let url = cachet_core::constants::override_or(
+        env.var("CACHET_JWKS_URL")
+            .ok()
+            .map(|value| value.to_string())
+            .as_deref(),
+        cachet_core::constants::JWKS_URL_DEFAULT,
+    )
+    .to_string();
     let request = Request::new(&url, Method::Get).map_err(|_| ClientError::AuthUnavailable)?;
     let mut response = Fetch::Request(request)
         .send()

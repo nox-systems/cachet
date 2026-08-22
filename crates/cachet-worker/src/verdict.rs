@@ -42,15 +42,22 @@ struct GitHubUser {
     login: String,
 }
 
-fn github_api_url(env: &Env) -> Result<String> {
-    env.var("CACHET_GITHUB_API_URL")
-        .map_err(|_| ClientError::AuthUnavailable)
-        .map(|value| value.to_string())
+fn github_api_url(env: &Env) -> String {
+    // why: overrides exist for the lane's stub; production reads the
+    // default and needs no config.
+    cachet_core::constants::override_or(
+        env.var("CACHET_GITHUB_API_URL")
+            .ok()
+            .map(|value| value.to_string())
+            .as_deref(),
+        cachet_core::constants::GITHUB_API_URL_DEFAULT,
+    )
+    .to_string()
 }
 
 /// One GET to the GitHub API with the lane-wide headers.
 async fn github_get(env: &Env, token: &str, path: &str) -> Result<(u16, String)> {
-    let base = github_api_url(env)?;
+    let base = github_api_url(env);
     let headers = Headers::new();
     let _ = headers.set("authorization", &format!("Bearer {token}"));
     let _ = headers.set("accept", "application/vnd.github+json");

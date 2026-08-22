@@ -29,10 +29,16 @@ struct OAuthConfig {
 }
 
 fn oauth_config(env: &Env) -> cachet_core::error::Result<OAuthConfig> {
-    let web_base = env
-        .var("CACHET_GITHUB_WEB_URL")
-        .map_err(|_| ClientError::AuthUnavailable)?
-        .to_string();
+    // why: the var only ever overrides (lanes, GitHub Enterprise hosts);
+    // github.com is the default and needs no config.
+    let web_base = cachet_core::constants::override_or(
+        env.var("CACHET_GITHUB_WEB_URL")
+            .ok()
+            .map(|value| value.to_string())
+            .as_deref(),
+        cachet_core::constants::GITHUB_WEB_URL_DEFAULT,
+    )
+    .to_string();
     let client_id = env
         .var("CACHET_OAUTH_CLIENT_ID")
         .map_err(|_| ClientError::AuthUnavailable)?

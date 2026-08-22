@@ -286,3 +286,50 @@ pub const CACHE_INFO_CONTENT_TYPE: &str = "text/x-nix-cache-info";
 
 /// The content type of an RFC 9457 problem document.
 pub const PROBLEM_CONTENT_TYPE: &str = "application/problem+json";
+
+/// The OIDC issuer's JWKS document for verification of GitHub Actions
+/// tokens. `CACHET_JWKS_URL` overrides it only in the lanes and for
+/// issuers that are not github.com.
+pub const JWKS_URL_DEFAULT: &str = "https://token.actions.githubusercontent.com/.well-known/jwks";
+
+/// The GitHub REST API root the verdict path and OAuth flows call.
+/// `CACHET_GITHUB_API_URL` overrides it for the stub server in the lanes.
+pub const GITHUB_API_URL_DEFAULT: &str = "https://api.github.com";
+
+/// The GitHub web origin the OAuth exchange posts to. The device flow and
+/// the authorize redirect live on the same origin by construction;
+/// `CACHET_GITHUB_WEB_URL` overrides it for the stub server in the lanes.
+pub const GITHUB_WEB_URL_DEFAULT: &str = "https://github.com";
+
+/// An explicitly set value wins; an absent or blank value reads as the
+/// default. This is the whole override rule the worker's outbound-URL
+/// reads share, kept in one place so no call site invents its own
+/// interpretation of an empty string.
+pub fn override_or<'a>(value: Option<&'a str>, default: &'a str) -> &'a str {
+    value.filter(|v| !v.trim().is_empty()).unwrap_or(default)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn absent_answer_is_the_default() {
+        assert_eq!(override_or(None, JWKS_URL_DEFAULT), JWKS_URL_DEFAULT);
+    }
+
+    #[test]
+    fn blank_answers_read_as_absent() {
+        assert_eq!(override_or(Some(""), JWKS_URL_DEFAULT), JWKS_URL_DEFAULT);
+        assert_eq!(
+            override_or(Some("  "), GITHUB_API_URL_DEFAULT),
+            GITHUB_API_URL_DEFAULT
+        );
+    }
+
+    #[test]
+    fn a_set_value_wins() {
+        let stub = "http://127.0.0.1:9/jwks";
+        assert_eq!(override_or(Some(stub), JWKS_URL_DEFAULT), stub);
+    }
+}
