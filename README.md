@@ -39,7 +39,7 @@ permissions:
 
 steps:
   - uses: actions/checkout@v7
-  - uses: nox-systems/cachet/action@v1
+  - uses: nox-systems/cachet/action@v0.0.2
     with:
       cache-url: https://<the deployment's host>
       roots: |
@@ -52,10 +52,14 @@ server-side; the job needs no secrets beyond its OIDC token.
 
 ## Status
 
-v1 is in the final stretch: the worker, CLI, action, and deploy program
-are complete and gate-clean; the staging deployment and end-to-end round
-trip land before the first tag. The lanes and gates are enumerated in
-[CLAUDE.md](CLAUDE.md) and [docs/testing/](docs/testing/).
+cachet is released: the current tag is
+[v0.0.2](https://github.com/nox-systems/cachet/releases/tag/v0.0.2),
+shipping the CLI for four platforms with the one-line installer above,
+and the action the example pins. This repository's own deployment runs
+in production, redeployed by the workflow on every green main, with the
+integration lane re-proving the round trip after each deploy. The lanes
+and gates are enumerated in [CLAUDE.md](CLAUDE.md) and
+[docs/testing/](docs/testing/).
 
 ## Repository layout
 
