@@ -312,7 +312,10 @@ async fn exchange_code(config: &OAuthConfig, code: &str) -> cachet_core::error::
     let headers = Headers::new();
     let _ = headers.set("accept", "application/json");
     let _ = headers.set("content-type", "application/x-www-form-urlencoded");
-    let _ = headers.set("user-agent", "cachet-worker/0.0.1");
+    let _ = headers.set(
+        "user-agent",
+        concat!("cachet-worker/", env!("CARGO_PKG_VERSION")),
+    );
     let mut init = RequestInit::new();
     init.with_method(Method::Post);
     init.headers.clone_from(&headers);

@@ -61,7 +61,10 @@ async fn github_get(env: &Env, token: &str, path: &str) -> Result<(u16, String)>
     let headers = Headers::new();
     let _ = headers.set("authorization", &format!("Bearer {token}"));
     let _ = headers.set("accept", "application/vnd.github+json");
-    let _ = headers.set("user-agent", "cachet-worker/0.0.1");
+    let _ = headers.set(
+        "user-agent",
+        concat!("cachet-worker/", env!("CARGO_PKG_VERSION")),
+    );
     let _ = headers.set("x-github-api-version", "2022-11-28");
     let mut request_init = worker::RequestInit::new();
     request_init.with_method(Method::Get);
