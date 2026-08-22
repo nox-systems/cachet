@@ -1203,3 +1203,21 @@ WHY IS THAT AF OLLOW UP? IT'S PART OF THE FUCKING PLAN
 ---
 
 remove status section from readme.md I think
+
+---
+
+Post job cleanup.
+  cachet: could not resolve .#devShells.x86_64-linux.default; it will not be a lease root
+  cachet: 1113 not upstream, 2810 already upstream
+  cachet: 1113 new to cachet, 0 already cached
+  cachet: PUT 0d8g8n0a11v6f5m2h416ajyxmnkwc3md.narinfo failed after 3 attempts: PUT 0d8g8n0a11v6f5m2h416ajyxmnkwc3md.narinfo failed after 1 attempts: 400 {"type":"about:blank","status":400,"title":"stored NAR hash disagrees with the narinfo","code":"nar_hash_mismatch"}
+
+https://github.com/nox-systems/cachet/actions/runs/32562641216/job/97006537811?pr=6
+
+ Post job cleanup.
+  cachet: could not resolve .#devShells.x86_64-linux.default; it will not be a lease root
+  cachet: 1114 not upstream, 2810 already upstream
+  cachet: 1114 new to cachet, 0 already cached
+  cachet: PUT 0d8g8n0a11v6f5m2h416ajyxmnkwc3md.narinfo failed after 3 attempts: PUT 0d8g8n0a11v6f5m2h416ajyxmnkwc3md.narinfo failed after 1 attempts: 400 {"type":"about:blank","status":400,"title":"stored NAR hash disagrees with the narinfo","code":"nar_hash_mismatch"}
+
+https://github.com/nox-systems/cachet/actions/runs/32562641216/job/97006537850?pr=6

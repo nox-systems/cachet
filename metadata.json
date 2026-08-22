@@ -4,12 +4,7 @@
   "strategy": "manual-commit",
   "branch": "chore/dogfood-cachet-cache",
   "checkpoints_count": 2,
-  "files_touched": [
-    "README.md",
-    "crates/cachet-core/src/constants.rs",
-    "crates/cachet-core/tests/.golden.rs.pending-snap",
-    "crates/cachet-core/tests/golden.rs"
-  ],
+  "files_touched": null,
   "sessions": [
     {
       "metadata": "/0/metadata.json",
@@ -20,17 +15,10 @@
     }
   ],
   "token_usage": {
-    "input_tokens": 584524458,
+    "input_tokens": 584912641,
     "cache_creation_tokens": 0,
-    "cache_read_tokens": 581682368,
-    "output_tokens": 1418054,
-    "api_call_count": 2104,
-    "subagent_tokens": {
-      "input_tokens": 0,
-      "cache_creation_tokens": 0,
-      "cache_read_tokens": 0,
-      "output_tokens": 0,
-      "api_call_count": 0
-    }
+    "cache_read_tokens": 582070208,
+    "output_tokens": 1418505,
+    "api_call_count": 2105
   }
 }
