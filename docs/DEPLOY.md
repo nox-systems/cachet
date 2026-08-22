@@ -80,6 +80,11 @@ equivalents). These variables define the deployment:
 | `CACHET_SIGNING_KEY` | yes | The `<host>-1:<base64>` secret from bootstrap. |
 | `CACHET_OAUTH_CLIENT_SECRET` | yes | The OAuth App's client secret. |
 
+The deploy also reads `CLOUDFLARE_API_TOKEN` and
+`CLOUDFLARE_ACCOUNT_ID`, unprefixed by choice: they are wrangler and
+alchemy's standard variable names, so every Cloudflare tool in the
+shell reads the same pair rather than a cachet-specific alias.
+
 ## Rehearsing with a second deployment
 
 One account can hold any number of deployments, one per name. To
