@@ -59,7 +59,7 @@ runs:
     # authentication.additionalNetrcSources, and that startup synthesis is
     # the only reliable one on these runners. Writing the credential and its
     # registration here means the daemon's start-up synthesis sees both.
-    - name: Provision the cachet read credential before Determinate starts
+    - name: Prepare the cachet cache before Determinate starts
       shell: bash
       env:
         CACHET_CACHE_URL: ${{ inputs.cache-url }}
@@ -68,13 +68,17 @@ runs:
         set -euo pipefail
 
         # The OIDC token authenticates this job's reads; the runner is
-        # authorized because it is provably the org's CI. Minted here,
-        # without nix, because Determinate is not installed yet. This check
-        # fails the job on purpose: every later step assumes the token.
+        # authorized because it is provably the org's CI. GitHub provisions
+        # no token plumbing for forked pull requests — by design, so that
+        # arbitrary code cannot impersonate the repo. The right answer
+        # there is a plain build: skip every cache-related write so the
+        # job continues uncached instead of dying before nix exists.
         if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
-          echo "cachet: this job cannot mint an OIDC token." >&2
-          echo "  Add 'permissions: { contents: read, id-token: write }' to the job." >&2
-          exit 1
+          echo "cachet: no OIDC token grant in this job (a forked pull request, or missing id-token: write)."
+          echo "  nix installs and builds WITHOUT the ${CACHET_CACHE_URL} cache; everything else runs normally."
+          echo "  Forks that want caching: deploy cachet and point cache-url at it."
+          echo "CACHET_EXTRA_CONF=" >> "${GITHUB_ENV}"
+          exit 0
         fi
         token="$(curl -fsSL \
           -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
@@ -104,16 +108,21 @@ runs:
         # doubles as the connectivity check: a cache that cannot answer its
         # public config fails the job here, before the build starts.
         public_key="$(curl -fsSL "${CACHET_CACHE_URL%/}/api/public/config" | jq -r '.publicKey')"
-        echo "CACHET_TRUSTED_PUBLIC_KEY=${public_key}" >> "${GITHUB_ENV}"
+        {
+          echo "CACHET_EXTRA_CONF<<EOF_CACHET_CONF"
+          echo "extra-substituters = ${CACHET_CACHE_URL%/}"
+          echo "extra-trusted-public-keys = ${public_key}"
+          echo "EOF_CACHET_CONF"
+        } >> "${GITHUB_ENV}"
         echo "cachet: read credential provisioned before Determinate starts"
 
     - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
       with:
         # The substituter and trusted key ride the install because a
         # substituter added after the daemon has started is never consulted.
-        extra-conf: |
-          extra-substituters = ${{ inputs.cache-url }}
-          extra-trusted-public-keys = ${{ env.CACHET_TRUSTED_PUBLIC_KEY }}
+        # In a job with no OIDC grant the provisioning step answered empty,
+        # and this install answers plain upstream-only nix.
+        extra-conf: ${{ env.CACHET_EXTRA_CONF }}
 
     # The Determinate installer logged into FlakeHub on this runner (any job
     # granting id-token: write gets one), which adds cache.flakehub.com as a

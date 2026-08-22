@@ -14,41 +14,64 @@ concurrency:
 
 permissions:
   contents: read
+  # The cachet action mints its read/write credential from the job's OIDC
+  # token; jobs without the grant build uncached, by the action's design.
+  id-token: write
 
 jobs:
   fmt:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
+      - name: nix on the cachet cache
+        uses: nox-systems/cachet/action@v0
+        with:
+          cache-url: https://cachet.nox.so
+          roots: .#devShells.x86_64-linux.default
       - run: nix develop --command just fmt-check
 
   clippy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
+      - name: nix on the cachet cache
+        uses: nox-systems/cachet/action@v0
+        with:
+          cache-url: https://cachet.nox.so
+          roots: .#devShells.x86_64-linux.default
       - run: nix develop --command just clippy
 
   unit:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
+      - name: nix on the cachet cache
+        uses: nox-systems/cachet/action@v0
+        with:
+          cache-url: https://cachet.nox.so
+          roots: .#devShells.x86_64-linux.default
       - run: nix develop --command just unit
 
   property:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
+      - name: nix on the cachet cache
+        uses: nox-systems/cachet/action@v0
+        with:
+          cache-url: https://cachet.nox.so
+          roots: .#devShells.x86_64-linux.default
       - run: nix develop --command just property
 
   golden:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
+      - name: nix on the cachet cache
+        uses: nox-systems/cachet/action@v0
+        with:
+          cache-url: https://cachet.nox.so
+          roots: .#devShells.x86_64-linux.default
       - run: nix develop --command just golden
 
   # Impure like deny: kani setup downloads its own toolchain, so this job is
@@ -57,35 +80,55 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
+      - name: nix on the cachet cache
+        uses: nox-systems/cachet/action@v0
+        with:
+          cache-url: https://cachet.nox.so
+          roots: .#devShells.x86_64-linux.default
       - run: nix develop --command just kani
 
   doc-manifest:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
+      - name: nix on the cachet cache
+        uses: nox-systems/cachet/action@v0
+        with:
+          cache-url: https://cachet.nox.so
+          roots: .#devShells.x86_64-linux.default
       - run: nix develop --command just doc-manifest
 
   lane-manifest:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
+      - name: nix on the cachet cache
+        uses: nox-systems/cachet/action@v0
+        with:
+          cache-url: https://cachet.nox.so
+          roots: .#devShells.x86_64-linux.default
       - run: nix develop --command just lane-manifest
 
   actionlint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
+      - name: nix on the cachet cache
+        uses: nox-systems/cachet/action@v0
+        with:
+          cache-url: https://cachet.nox.so
+          roots: .#devShells.x86_64-linux.default
       - run: nix develop --command just actionlint
 
   scripts:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
+      - name: nix on the cachet cache
+        uses: nox-systems/cachet/action@v0
+        with:
+          cache-url: https://cachet.nox.so
+          roots: .#devShells.x86_64-linux.default
       - run: nix develop --command just scripts
 
   # The impure gate: cargo deny fetches the advisory database. A failure here
@@ -94,7 +137,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
+      - name: nix on the cachet cache
+        uses: nox-systems/cachet/action@v0
+        with:
+          cache-url: https://cachet.nox.so
+          roots: .#devShells.x86_64-linux.default
       - run: nix develop --command just deny
 
   # The wasm build proves the deployable target compiles; the hygiene gate
@@ -103,7 +150,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
+      - name: nix on the cachet cache
+        uses: nox-systems/cachet/action@v0
+        with:
+          cache-url: https://cachet.nox.so
+          roots: .#devShells.x86_64-linux.default
       - run: nix develop --command just wasm
 
   # The hygiene scan needs the bundle, so this job builds before scanning;
@@ -113,7 +164,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
+      - name: nix on the cachet cache
+        uses: nox-systems/cachet/action@v0
+        with:
+          cache-url: https://cachet.nox.so
+          roots: .#devShells.x86_64-linux.default
       - run: nix develop --command just wasm wasm-hygiene
 
   # The OpenAPI bijection: the committed document against the code that
@@ -122,12 +177,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
+      - name: nix on the cachet cache
+        uses: nox-systems/cachet/action@v0
+        with:
+          cache-url: https://cachet.nox.so
+          roots: .#devShells.x86_64-linux.default
       - run: nix develop --command just openapi-check
 
   workerd:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
+      - name: nix on the cachet cache
+        uses: nox-systems/cachet/action@v0
+        with:
+          cache-url: https://cachet.nox.so
+          roots: .#devShells.x86_64-linux.default
       - run: nix develop --command just workerd
