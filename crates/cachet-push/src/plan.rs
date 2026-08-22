@@ -36,6 +36,11 @@ impl StagedObject {
 pub fn read_staging_layout(entries: &[(String, u64)]) -> Result<Vec<StagedObject>, PushError> {
     let mut objects = Vec::with_capacity(entries.len());
     for (name, size_bytes) in entries {
+        // why: `nix copy --to file://` marks its staging root with the
+        // cache-info document; it is transport metadata, never an object.
+        if name == "nix-cache-info" {
+            continue;
+        }
         let key =
             if name.ends_with(cachet_core::constants::NARINFO_KEY_SUFFIX) && !name.contains('/') {
                 name.clone()
@@ -116,6 +121,7 @@ mod tests {
     #[test]
     fn the_layout_reads_the_two_shapes() {
         let entries = vec![
+            ("nix-cache-info".to_string(), 40_u64),
             (
                 "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.narinfo".to_string(),
                 1_000_u64,
@@ -123,6 +129,7 @@ mod tests {
             ("nar/xxxx.nar.zst".to_string(), 2_000_u64),
         ];
         let objects = read_staging_layout(&entries).expect("the layout reads");
+        assert_eq!(objects.len(), 2, "nix-cache-info is metadata, skipped");
         assert_eq!(objects[0].key, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.narinfo");
         assert_eq!(objects[1].key, "nar/xxxx.nar.zst");
         assert_eq!(objects[1].file_name, "xxxx.nar.zst");

@@ -84,7 +84,7 @@ RUNNER_TEMP="${work}" \
   CACHET_CACHE_URL="${URL}" \
   CACHET_AUDIENCE="${AUDIENCE}" \
   CACHET_PROJECT="$(printf '%s' "${GITHUB_REPOSITORY:-lane-org-lane-repo}" | tr '/' '-')" \
-  CACHET_ROOTS="" \
+  CACHET_ROOTS="${store_path}" \
   CACHET_UPSTREAM_URL="${URL}" \
   CACHET_PUSH=true \
   cargo run -q -p cachet-cli --bin cachet -- push |
