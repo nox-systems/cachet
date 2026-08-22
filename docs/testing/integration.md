@@ -22,9 +22,10 @@ The assertions, in order:
 2. An anonymous narinfo read answers 401.
 3. The runner's real OIDC token (audience from the deployment) reads
    the impossible-probe narinfo as 404: authenticated, absent.
-4. A one-line file enters the local store with
-   `nix-store --add-fixed`, the freshly built `cachet push` sends it,
-   and the log counts at least one uploaded object.
+4. The composite's main step snapshots the store, a one-line file
+   enters the local store with `nix-store --add-fixed`, the freshly
+   built `cachet push` sends exactly it, and the log counts at least
+   one uploaded object.
 5. The local copy is deleted, and `nix copy --from` the deployment
    with only the deployment's served public key trusted returns the
    path: the round trip, with nix itself verifying the signature.

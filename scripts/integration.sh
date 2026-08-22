@@ -71,6 +71,11 @@ work="$(mktemp -d)"
 trap 'rm -rf "${work}"' EXIT
 run_id="${GITHUB_RUN_ID:-local}-$$"
 echo "cachet integration lane payload ${run_id}" >"${work}/payload"
+# The composite's first step, exactly as the action runs it: snapshot the
+# store BEFORE the payload lands, so the push's diff is the payload alone
+# (a missing snapshot makes every preexisting path a candidate).
+say "snapshotting the store (the composite's main step)"
+RUNNER_TEMP="${work}" cargo run -q -p cachet-cli --bin cachet -- push --snapshot-only
 say "adding the lane payload to the local store"
 store_path="$(nix-store --add-fixed sha256 "${work}/payload" | tail -1)"
 say "lane path: ${store_path}"
