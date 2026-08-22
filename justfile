@@ -96,8 +96,10 @@ wasm:
     printf '// cachet-bundle-sha256: %s\n' "$(openssl dgst -sha256 -r crates/cachet-worker/build/index_bg.wasm | cut -d' ' -f1)" >> crates/cachet-worker/build/index.js
 
 # the workerd lane: the built worker under wrangler dev --local, real R2
-# and Cache API semantics, asserted over real HTTP
+# and Cache API semantics, asserted over real HTTP; the CLI binary rides
+# the same lane, driven by the end-to-end push scenario
 workerd: wasm
+    cargo build -p cachet-cli
     node workerd/check.mjs fixtures/nix-signed
 
 # the shipped-artifact hygiene gate: no banned runtimes, no secret-shaped strings

@@ -10,12 +10,12 @@ use crate::error::PushError;
 /// One object as the staging directory reports it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StagedObject {
-    /// The bucket key and request path: the staging-relative path.
+    /// The bucket key, the request path, and the staging-relative file
+    /// path: one string names all three, by nix's construction of the
+    /// staging tree.
     pub key: String,
     /// Its size in bytes.
     pub size_bytes: u64,
-    /// The staging filename: the key minus any leading `nar/`.
-    pub file_name: String,
 }
 
 impl StagedObject {
@@ -57,9 +57,6 @@ pub fn read_staging_layout(entries: &[(String, u64)]) -> Result<Vec<StagedObject
                 });
             };
         objects.push(StagedObject {
-            file_name: key
-                .strip_prefix("nar/")
-                .map_or_else(|| key.clone(), str::to_string),
             key,
             size_bytes: *size_bytes,
         });
@@ -132,7 +129,6 @@ mod tests {
         assert_eq!(objects.len(), 2, "nix-cache-info is metadata, skipped");
         assert_eq!(objects[0].key, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.narinfo");
         assert_eq!(objects[1].key, "nar/xxxx.nar.zst");
-        assert_eq!(objects[1].file_name, "xxxx.nar.zst");
         assert!(read_staging_layout(&[("README".to_string(), 1)]).is_err());
         assert!(read_staging_layout(&[("nar/deep/x".to_string(), 1)]).is_err());
     }

@@ -41,7 +41,10 @@ confusion, staleness, expired tokens); guard ordering (411 before 413,
 401 before 411); the verify-then-sign pipeline end to end, from a NAR
 upload through a signed narinfo with both signatures and the file facts;
 the multipart quartet with its record, part-size enforcement, replay, and
-abort; read verdicts cached in KV for both the admit and the deny
+abort; the CLI's own push, driven as the composite action drives it
+(snapshot step, `nix-store --add-fixed` payload, push) with the stub
+minting its OIDC tokens, asserting the staged tree's real layout reaches
+the bucket and serves back signed; read verdicts cached in KV for both the admit and the deny
 direction, with OIDC tokens answering reads as CI expects; lease renewal bound to the token's own claims with
 forbidden_ref and forbidden_project refusals; the project listing; the
 public config document; and the browser login flow, from the login

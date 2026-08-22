@@ -10,7 +10,10 @@ use crate::adapters::{Adapters, Commands, Http, TokenSource, WireAnswer};
 use crate::error::PushError;
 use crate::pipeline::{PushEvent, PushInputs, Sleeper, push};
 
-/// A scripted nix+fs adapter.
+/// A scripted nix+fs adapter. Its files key by their staging-relative
+/// path (`nar/<file>.nar.zst`, `<hash>.narinfo`), exactly as the real
+/// tree lays them out: keying by basename would flatten the `nar/`
+/// level and could never see a wrong join upstream.
 #[derive(Default)]
 struct FakeCommands {
     path_info_all: Mutex<VecDeque<Result<String, PushError>>>,
@@ -18,6 +21,7 @@ struct FakeCommands {
     copy_log: Mutex<Vec<(String, Vec<String>)>>,
     layout: Mutex<Vec<(String, u64)>>,
     files: Mutex<BTreeMap<String, Vec<u8>>>,
+    staging: Mutex<Option<std::path::PathBuf>>,
 }
 
 impl FakeCommands {
@@ -28,6 +32,23 @@ impl FakeCommands {
             .expect("answers queue")
             .push_back(Ok(after.to_string()));
         fake
+    }
+
+    /// The files map's key for a path the pipeline opened: the path
+    /// relative to the staging directory read_dir recorded. A read that
+    /// escapes the staging tree fails the script loudly.
+    fn staged_key(&self, path: &std::path::Path) -> String {
+        let staging = self
+            .staging
+            .lock()
+            .expect("staging")
+            .clone()
+            .expect("read_dir ran before any file read");
+        path.strip_prefix(&staging)
+            .expect("a read inside the staging tree")
+            .to_str()
+            .expect("utf8 paths")
+            .to_string()
     }
 }
 
@@ -56,19 +77,15 @@ impl Commands for FakeCommands {
             .push((destination.to_string(), paths.to_vec()));
         Ok(())
     }
-    async fn read_dir(&self, _dir: &std::path::Path) -> Result<Vec<(String, u64)>, PushError> {
+    async fn read_dir(&self, dir: &std::path::Path) -> Result<Vec<(String, u64)>, PushError> {
+        *self.staging.lock().expect("staging") = Some(dir.to_path_buf());
         Ok(self.layout.lock().expect("layout").clone())
     }
     async fn read_file(&self, path: &std::path::Path) -> Result<Vec<u8>, PushError> {
         self.files
             .lock()
             .expect("files")
-            .get(
-                path.file_name()
-                    .expect("a name")
-                    .to_str()
-                    .expect("utf8 names"),
-            )
+            .get(self.staged_key(path).as_str())
             .cloned()
             .ok_or(PushError::Detail {
                 message: format!("no scripted file for {}", path.display()),
@@ -81,16 +98,10 @@ impl Commands for FakeCommands {
         len: u64,
     ) -> Result<Vec<u8>, PushError> {
         let files = self.files.lock().expect("files");
-        let bytes = files
-            .get(
-                path.file_name()
-                    .expect("a name")
-                    .to_str()
-                    .expect("utf8 names"),
-            )
-            .ok_or(PushError::Detail {
-                message: format!("no scripted file for {}", path.display()),
-            })?;
+        let key = self.staged_key(path);
+        let bytes = files.get(key.as_str()).ok_or(PushError::Detail {
+            message: format!("no scripted file for {}", path.display()),
+        })?;
         let (offset, len) = (
             usize::try_from(offset).expect("fit"),
             usize::try_from(len).expect("fit"),
@@ -302,7 +313,7 @@ fn stage_big_nar(commands: &FakeCommands, size: u64) -> String {
         .expect("layout")
         .extend([(nar_key.clone(), size)]);
     commands.files.lock().expect("files").insert(
-        format!("{}.nar.zst", "n".repeat(52)),
+        nar_key.clone(),
         vec![b'z'; usize::try_from(size).expect("fits memory")],
     );
     nar_key
@@ -361,7 +372,7 @@ async fn the_happy_path_uploads_and_renews_in_order() {
             "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq.narinfo".to_string(),
             vec![b'x'; 400],
         ),
-        (format!("{}.nar.zst", "n".repeat(52)), vec![b'y'; 2_000]),
+        (format!("nar/{}.nar.zst", "n".repeat(52)), vec![b'y'; 2_000]),
     ]);
     // Root kept unprobed; BUILT absent upstream AND absent at cachet.
     let http = FakeHttp::default();

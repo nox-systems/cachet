@@ -11,6 +11,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import crypto from "node:crypto";
+import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
 import net from "node:net";
@@ -58,6 +59,20 @@ const stubServer = http.createServer((req, res) => {
   };
   if (req.url === "/jwks.json") {
     return json(200, { keys: [jwksJwk] });
+  }
+  // The CLI's push mints tokens the Actions way: one GET per audience,
+  // refused without the request token's header, as GitHub's endpoint does.
+  if (req.url.startsWith("/oidc-token")) {
+    if (!req.headers.authorization) {
+      return json(401, { message: "no authorization header" });
+    }
+    const audience = new URL(req.url, "http://stub").searchParams.get(
+      "audience",
+    );
+    return json(200, {
+      count: 1,
+      value: mint({ aud: audience ?? "cachet-lane" }),
+    });
   }
   if (req.url === "/login/oauth/access_token" && req.method === "POST") {
     stubHits.exchange += 1;
@@ -1450,6 +1465,133 @@ await scenario(
     );
   },
 );
+
+// The write path's other half is the CLI itself (crates/cachet-push): its
+// unit fakes answer over a scripted wire, so this scenario runs the real
+// pipeline — real nix-store, real staging tree, real token mints against
+// the stub — over the same HTTP the integration lane rides live. It signs
+// too, so .dev.vars brackets it the same way as the write scenarios.
+await writeFile(
+  devVarsPath,
+  `CACHET_SIGNING_KEY=${laneSigningSecret}\nCACHET_OAUTH_CLIENT_SECRET=${LANE_OAUTH_SECRET}\n`,
+);
+try {
+  await scenario(
+    "the CLI pushes a store path end to end",
+    async () => [],
+    async ({ base }) => {
+      // why: `just workerd` builds this binary before driving; the scenario
+      // fails loudly rather than silencing a stale or missing build.
+      const cli = path.join(repoRoot, "target", "debug", "cachet");
+      const runnerTemp = await mkdtemp(path.join(os.tmpdir(), "cachet-cli-"));
+      const oidcUrl = `http://127.0.0.1:${stubServer.address().port}/oidc-token`;
+      // why: run the CLI asynchronously. The stub server lives in this same
+      // process's event loop, and the CLI talks to it mid-push (the OIDC
+      // mint, the upstream probes); a spawnSync would freeze the stub the
+      // CLI is waiting on, deadlocking both.
+      const runCli = (args, env) =>
+        new Promise((resolve, reject) => {
+          const child = spawn(cli, args, { env });
+          let stdout = "";
+          let stderr = "";
+          child.stdout.on("data", (chunk) => (stdout += chunk));
+          child.stderr.on("data", (chunk) => (stderr += chunk));
+          child.on("error", reject);
+          child.on("close", (status) => resolve({ status, stdout, stderr }));
+        });
+      const pushEnv = {
+        ...process.env,
+        RUNNER_TEMP: runnerTemp,
+        CACHET_CACHE_URL: base,
+        CACHET_AUDIENCE: "cachet-lane",
+        CACHET_PROJECT: "lane-org-lane-repo",
+        CACHET_UPSTREAM_URL: `http://127.0.0.1:${stubServer.address().port}`,
+        CACHET_PUSH: "true",
+        GITHUB_REF: "refs/heads/main",
+        ACTIONS_ID_TOKEN_REQUEST_URL: oidcUrl,
+        ACTIONS_ID_TOKEN_REQUEST_TOKEN: "lane-request-token",
+        NIX_CONFIG: "experimental-features = nix-command flakes",
+      };
+      let storePath = "";
+
+      await check(
+        "the composite's snapshot step records the store",
+        async () => {
+          const snap = await runCli(["push", "--snapshot-only"], pushEnv);
+          assert.equal(snap.status, 0, snap.stderr);
+          assert.ok(
+            snap.stdout.includes("cachet: store snapshot taken"),
+            snap.stdout,
+          );
+          assert.ok(
+            existsSync(path.join(runnerTemp, "cachet-store-before.txt")),
+            "the hand-off file landed",
+          );
+        },
+      );
+
+      await check("the push uploads exactly the payload", async () => {
+        const payload = path.join(runnerTemp, "lane-payload");
+        await writeFile(
+          payload,
+          `cachet workerd lane payload ${process.pid}\n`,
+        );
+        const added = spawnSync(
+          "nix-store",
+          ["--add-fixed", "sha256", payload],
+          {
+            encoding: "utf8",
+          },
+        );
+        assert.equal(added.status, 0, added.stderr);
+        storePath = added.stdout.trim().split("\n").pop();
+        const pushed = await runCli(["push"], {
+          ...pushEnv,
+          CACHET_ROOTS: storePath,
+        });
+        assert.equal(pushed.status, 0, pushed.stderr);
+        assert.ok(
+          pushed.stdout.includes("cachet: 1 new to cachet"),
+          pushed.stdout,
+        );
+        assert.ok(
+          pushed.stdout.includes("cachet: uploaded 2 objects"),
+          pushed.stdout,
+        );
+        assert.ok(
+          pushed.stdout.includes(
+            "cachet: lease renewed for lane-org-lane-repo",
+          ),
+          pushed.stdout,
+        );
+      });
+
+      await check(
+        "the pushed narinfo serves, signed, naming the payload",
+        async () => {
+          assert.ok(storePath, "the push check left a store path");
+          const hash = storePath.match(/\/nix\/store\/([a-z0-9]+)-/)[1];
+          const narinfo = await fetch(`${base}/${hash}.narinfo`, {
+            headers: READ_AUTH(),
+          });
+          assert.equal(narinfo.status, 200);
+          const body = await narinfo.text();
+          assert.ok(
+            body.includes(`StorePath: ${storePath}`),
+            `storePath=${storePath}\n--- body ---\n${body}`,
+          );
+          assert.ok(body.includes("Sig: lane-sign-1:"), body);
+          const nar = await fetch(`${base}/${body.match(/^URL: (.+)$/m)[1]}`, {
+            headers: READ_AUTH(),
+          });
+          assert.equal(nar.status, 200, "the narinfo never dangles");
+        },
+      );
+    },
+  );
+} finally {
+  await rm(devVarsPath, { force: true });
+}
 
 const failed = results.filter(([status]) => status !== "ok").length;
 if (failed > 0) {

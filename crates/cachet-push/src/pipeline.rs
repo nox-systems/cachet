@@ -338,7 +338,9 @@ async fn upload_single<C: Commands, H: Http, T: TokenSource>(
 ) -> Result<(), PushError> {
     let body = a
         .commands
-        .read_file(&staging_dir.join(&object.file_name))
+        // why: the object's key IS its staging-relative path; reading by
+        // anything narrower (a basename) misses nar/'s level of the tree.
+        .read_file(&staging_dir.join(&object.key))
         .await?;
     let url = object_url(&inputs.cache_url, &object.key, "");
     let what = format!("PUT {}", object.key);
@@ -460,7 +462,7 @@ async fn upload_one_part<C: Commands, H: Http, T: TokenSource>(
     };
     let body = a
         .commands
-        .read_range(&staging_dir.join(&object.file_name), offset, length)
+        .read_range(&staging_dir.join(&object.key), offset, length)
         .await?;
     let url = object_url(
         &inputs.cache_url,
