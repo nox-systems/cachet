@@ -50,17 +50,6 @@ The action installs nix trusting the cache, snapshots the store before
 your build, and pushes what the build added on success. Signing happens
 server-side; the job needs no secrets beyond its OIDC token.
 
-## Status
-
-cachet is released: the current tag is
-[v0.0.2](https://github.com/nox-systems/cachet/releases/tag/v0.0.2),
-shipping the CLI for four platforms with the one-line installer above,
-and the action the example pins. This repository's own deployment runs
-in production, redeployed by the workflow on every green main, with the
-integration lane re-proving the round trip after each deploy. The lanes
-and gates are enumerated in [CLAUDE.md](CLAUDE.md) and
-[docs/testing/](docs/testing/).
-
 ## Repository layout
 
 - `crates/`: the workspace. `cachet-core` (pure domain), `cachet-crypto`,

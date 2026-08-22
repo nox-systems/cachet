@@ -520,7 +520,7 @@ try {
   await scenario(
     "writes verify, then sign",
     async () => [],
-    async ({ base }) => {
+    async ({ base, events }) => {
       const narinfoFixture = await readFile(
         path.join(fixturesDir, NARINFO_KEY),
         "utf8",
@@ -709,6 +709,21 @@ try {
         });
         assert.equal(res.status, 400);
         assert.equal((await res.json()).code, "file_hash_mismatch");
+        await settle();
+        // why: problem bodies stay gossip-free; the forensic answer for a
+        // disagreement is the operator event's declared/measured pairs.
+        const stream = events();
+        const declared = body.match(/FileHash: (\S+)/)[1];
+        assert.ok(
+          stream.includes(`"fileHashDeclared":"${declared}"`),
+          stream.slice(-500),
+        );
+        assert.ok(
+          stream.includes(
+            `"fileHashMeasured":"sha256:${NAR_FILE.replace(".nar.zst", "")}"`,
+          ),
+          stream.slice(-500),
+        );
       });
 
       await check("a nar-size lie is refused after measurement", async () => {
@@ -723,6 +738,18 @@ try {
         });
         assert.equal(res.status, 400);
         assert.equal((await res.json()).code, "nar_hash_mismatch");
+        await settle();
+        const stream = events();
+        const declared = body.match(/NarSize: (\d+)/)[1];
+        const honest = narinfoFixture.match(/NarSize: (\d+)/)[1];
+        assert.ok(
+          stream.includes(`"narSizeDeclared":"${declared}"`),
+          stream.slice(-500),
+        );
+        assert.ok(
+          stream.includes(`"narSizeMeasured":"${honest}"`),
+          stream.slice(-500),
+        );
       });
 
       await check(

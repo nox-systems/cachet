@@ -26,3 +26,6 @@ junit.xml
 /.entire/logs
 /.entire/tmp
 /.entire/metadata
+
+# insta write-behind on gated (INSTA_UPDATE=no) runs
+*.pending-snap
