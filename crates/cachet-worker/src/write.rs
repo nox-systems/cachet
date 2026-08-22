@@ -574,8 +574,26 @@ async fn measure_nar(
         let chunk = chunk.map_err(|_| ClientError::StorageUnavailable)?;
         compressed.update(&chunk);
         if is_zst {
+            // why: a failed decode can never exonerate the document, so the
+            // typed refusal stays NarHashMismatch. The multipart incident
+            // proved a bare 400 leaves the operator wordless (a decoder bug
+            // rode for weeks as a hash-mismatch report), so the decoder's
+            // own reason and byte offsets stay in the event.
             let decoded = zstd
                 .push(&chunk)
+                .inspect_err(|failure| {
+                    log::event(
+                        "warn",
+                        "write.nar_measure_failed",
+                        &[
+                            ("phase", "push".to_string()),
+                            ("error", format!("{failure:?}")),
+                            ("compressedBytesRead", compressed.byte_count().to_string()),
+                            ("decodedBytes", zstd.decompressed_bytes().to_string()),
+                            ("narSizeDeclared", nar_size_limit.to_string()),
+                        ],
+                    );
+                })
                 .map_err(|_| ClientError::NarHashMismatch)?;
             nar.update(&decoded);
         } else {
@@ -583,7 +601,22 @@ async fn measure_nar(
         }
     }
     if is_zst {
-        let tail = zstd.finish().map_err(|_| ClientError::NarHashMismatch)?;
+        let tail = zstd
+            .finish()
+            .inspect_err(|failure| {
+                log::event(
+                    "warn",
+                    "write.nar_measure_failed",
+                    &[
+                        ("phase", "finish".to_string()),
+                        ("error", format!("{failure:?}")),
+                        ("compressedBytesRead", compressed.byte_count().to_string()),
+                        ("decodedBytes", zstd.decompressed_bytes().to_string()),
+                        ("narSizeDeclared", nar_size_limit.to_string()),
+                    ],
+                );
+            })
+            .map_err(|_| ClientError::NarHashMismatch)?;
         nar.update(&tail);
     }
     Ok((

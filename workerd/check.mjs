@@ -271,7 +271,8 @@ async function bootWorkerd(persist, vars) {
   let epoch = 0;
   const events = () => captured.slice(epoch);
   const clearEvents = () => (epoch = captured.length);
-  return { proc, base, events, clearEvents };
+  const fullEvents = () => captured;
+  return { proc, base, events, clearEvents, fullEvents };
 }
 
 // One scenario per persistence directory: fresh R2, fresh edge cache.
@@ -302,18 +303,29 @@ async function scenario(name, seed, assertions, vars = {}) {
     }
   }
 
-  const { proc, base, events, clearEvents } = await bootWorkerd(persist, vars);
+  const { proc, base, events, clearEvents, fullEvents } = await bootWorkerd(
+    persist,
+    vars,
+  );
 
   try {
     const failuresBefore = results.filter(([state]) => state === "FAIL").length;
     await assertions({ base, events, clearEvents, persist });
     // why: a wire answer alone (a 503) never says WHICH 503; the worker's
     // event stream does. Spill it attached to the scenario that failed,
-    // or the CI log reads as noise.
+    // or the CI log reads as noise. Diagnostics read the whole stream;
+    // the epoch windows belong to assertions, not to failure evidence.
     const failuresAfter = results.filter(([state]) => state === "FAIL").length;
     if (failuresAfter > failuresBefore) {
+      const traffic = fullEvents()
+        .split("\n")
+        .filter(
+          (line) => line.includes('"event"') || line.includes("wrangler:info]"),
+        )
+        .slice(-60)
+        .join("\n");
       process.stdout.write(
-        `--- worker log tail for "${name}" ---\n${captured.slice(-3000)}\n--- end worker log ---\n`,
+        `--- worker log tail for "${name}" ---\n${traffic}\n--- end worker log ---\n`,
       );
     }
   } finally {
@@ -1636,6 +1648,48 @@ try {
             headers: READ_AUTH(),
           });
           assert.equal(nar.status, 200, "the narinfo never dangles");
+        },
+      );
+
+      await check(
+        "a multipart-sized payload uploads and verifies",
+        async () => {
+          // why: a nar past the single-PUT cap rides the real multipart
+          // quartet against the real worker, whose composed byte faith is
+          // what verify-then-sign then judges — small payloads never find
+          // a slicing bug. 100 MiB of incompressible bytes forces parts.
+          const payload = path.join(runnerTemp, "lane-payload-big");
+          const fill = spawnSync(
+            "dd",
+            ["if=/dev/urandom", `of=${payload}`, "bs=1048576", "count=100"],
+            { encoding: "utf8" },
+          );
+          assert.equal(fill.status, 0, fill.stderr);
+          const added = spawnSync(
+            "nix-store",
+            ["--add-fixed", "sha256", payload],
+            { encoding: "utf8" },
+          );
+          assert.equal(added.status, 0, added.stderr);
+          const bigPath = added.stdout.trim().split("\n").pop();
+          const pushed = await runCli(["push"], {
+            ...pushEnv,
+            CACHET_ROOTS: bigPath,
+          });
+          assert.equal(pushed.status, 0, pushed.stderr);
+          assert.ok(
+            pushed.stdout.includes("cachet: uploaded 2 objects"),
+            pushed.stdout,
+          );
+          const hash = bigPath.match(/\/nix\/store\/([a-z0-9]+)-/)[1];
+          const narinfo = await fetch(`${base}/${hash}.narinfo`, {
+            headers: READ_AUTH(),
+          });
+          assert.equal(
+            narinfo.status,
+            200,
+            "the multipart nar verified and signed",
+          );
         },
       );
     },
