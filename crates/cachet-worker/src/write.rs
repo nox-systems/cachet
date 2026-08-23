@@ -555,6 +555,10 @@ async fn sign_and_store(
     }
 }
 
+/// One decoder feed's upper size: with the pipe draining its consumed
+/// prefix, every in-flight allocation stays a few MiB at any object size.
+const FEED_MAX: usize = 4 * 1024 * 1024;
+
 /// Stream the stored NAR through two hashers — the compressed bytes
 /// themselves and, for zstd, their decoding — returning
 /// (decompressed size, decompressed `sha256:<nix32>` text, bare compressed
@@ -574,28 +578,37 @@ async fn measure_nar(
         let chunk = chunk.map_err(|_| ClientError::StorageUnavailable)?;
         compressed.update(&chunk);
         if is_zst {
-            // why: a failed decode can never exonerate the document, so the
-            // typed refusal stays NarHashMismatch. The multipart incident
-            // proved a bare 400 leaves the operator wordless (a decoder bug
-            // rode for weeks as a hash-mismatch report), so the decoder's
-            // own reason and byte offsets stay in the event.
-            let decoded = zstd
-                .push(&chunk)
-                .inspect_err(|failure| {
-                    log::event(
-                        "warn",
-                        "write.nar_measure_failed",
-                        &[
-                            ("phase", "push".to_string()),
-                            ("error", format!("{failure:?}")),
-                            ("compressedBytesRead", compressed.byte_count().to_string()),
-                            ("decodedBytes", zstd.decompressed_bytes().to_string()),
-                            ("narSizeDeclared", nar_size_limit.to_string()),
-                        ],
-                    );
-                })
-                .map_err(|_| ClientError::NarHashMismatch)?;
-            nar.update(&decoded);
+            // why: verification must stay flat in the isolate's 128 MiB
+            // linear memory. The upstream body chunks itself however it
+            // likes, so feeds into the decoder are sliced here: a push
+            // never sees more than FEED_MAX of new input, the pipe drains
+            // its consumed prefix, and the decoded out per slice stays a
+            // few MiB no matter how large the object is.
+            for piece in chunk.chunks(FEED_MAX) {
+                // why: a failed decode can never exonerate the document, so
+                // the typed refusal stays NarHashMismatch. The multipart
+                // incident proved a bare 400 leaves the operator wordless
+                // (a decoder bug rode for weeks as a hash-mismatch report),
+                // so the decoder's own reason and byte offsets stay in the
+                // event.
+                let decoded = zstd
+                    .push(piece)
+                    .inspect_err(|failure| {
+                        log::event(
+                            "warn",
+                            "write.nar_measure_failed",
+                            &[
+                                ("phase", "push".to_string()),
+                                ("error", format!("{failure:?}")),
+                                ("compressedBytesRead", compressed.byte_count().to_string()),
+                                ("decodedBytes", zstd.decompressed_bytes().to_string()),
+                                ("narSizeDeclared", nar_size_limit.to_string()),
+                            ],
+                        );
+                    })
+                    .map_err(|_| ClientError::NarHashMismatch)?;
+                nar.update(&decoded);
+            }
         } else {
             nar.update(&chunk);
         }

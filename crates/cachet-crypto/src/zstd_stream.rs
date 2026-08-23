@@ -26,6 +26,15 @@ const ZSTD_BLOCK_WIRE_MAX: usize = 132_096;
 /// header prefix a real producer emits.
 const HEADER_PROBE_MAX: usize = 64;
 
+/// Consumed input is dropped once the drained prefix reaches this. The
+/// pipe must never hold the whole object: the worker isolate caps linear
+/// memory at 128 MiB and honest NARs compress to several hundred MiB
+/// (wrangler 4.94 is 167 MiB on the wire), so an append-only buffer dies
+/// with alloc::handle_alloc_error mid-verify. Bounded input, bounded
+/// decode window, bounded feed slices: verification memory stays flat at
+/// any object size.
+const PIPE_COMPACT_AT: usize = 4 * 1024 * 1024;
+
 /// Why a decode failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ZstdError {
@@ -84,6 +93,20 @@ impl Pipe {
         let cursor = self.inner.borrow();
         cursor.get_ref().len() - usize::try_from(cursor.position()).expect("cursor ≤ len")
     }
+
+    /// Drop the consumed prefix. Legal only while a decoder is running:
+    /// the header-probe rewind (`set_position` in `push`) is the sole
+    /// consumer of absolute positions, it resolves inside the `push` call
+    /// that opened the probe, and a live decoder holds its own scratch, so
+    /// nothing outside this type can ever observe the shift.
+    fn compact(&self) {
+        let mut cursor = self.inner.borrow_mut();
+        let position = usize::try_from(cursor.position()).expect("cursor ≤ len");
+        if position >= PIPE_COMPACT_AT {
+            cursor.get_mut().drain(..position);
+            cursor.set_position(0);
+        }
+    }
 }
 
 impl Read for Pipe {
@@ -130,6 +153,11 @@ impl ZstdStream {
     /// [`ZstdError`] on corrupt frames, over-limit output, or (after
     /// [`ZstdStream::finish`]) on a stream that ends mid-frame.
     pub fn push(&mut self, bytes: &[u8]) -> Result<Vec<u8>, ZstdError> {
+        // Drain before growing: once the decoder exists, no probe rewind
+        // is outstanding, so the consumed prefix is dead weight.
+        if self.decoder.is_some() {
+            self.pipe.compact();
+        }
         self.pipe.append(bytes);
         let mut produced = Vec::new();
 
@@ -181,6 +209,7 @@ impl ZstdStream {
             match result {
                 Ok(_) => {
                     self.collect(&mut produced)?;
+                    self.pipe.compact();
                 }
                 Err(error) => {
                     return Err(self.map_frame_error(&error));
@@ -317,16 +346,17 @@ mod tests {
     }
 
     /// A syntactically honest multi-block frame, built byte by byte:
-    /// single segment off, checksum flag on, three raw blocks at the
-    /// 128 KiB wire cap, any four bytes as the checksum (ruzstd reads it
-    /// without validating). The composed NAR incident showed the decoder
-    /// dying the first time `push` saw more than one block's worth of a
-    /// multi-block frame, and the fixture is too small to reach the
-    /// watermark: this frame is big enough to hold that shape in test.
-    fn multi_block_frame() -> (Vec<u8>, Vec<u8>) {
+    /// single segment off, checksum flag on, raw blocks at the 128 KiB
+    /// wire cap, any four bytes as the checksum (ruzstd reads it without
+    /// validating). The composed NAR incident showed the decoder dying the
+    /// first time `push` saw more than one block's worth of a multi-block
+    /// frame, and the fixture is too small to reach the watermark: these
+    /// frames are big enough to hold that shape in test.
+    fn multi_block_frame(blocks: u32) -> (Vec<u8>, Vec<u8>) {
         let block_bytes = 131_072usize;
-        let mut plain = Vec::with_capacity(block_bytes * 3);
-        for block in 0..3u32 {
+        let count = usize::try_from(blocks).expect("fits");
+        let mut plain = Vec::with_capacity(block_bytes * count);
+        for block in 0..blocks {
             plain.extend((0..block_bytes).map(|i| {
                 u8::try_from((block * 251 + u32::try_from(i).expect("fits")) % 233)
                     .expect("mod fits")
@@ -335,7 +365,7 @@ mod tests {
         let mut frame = vec![0x28, 0xb5, 0x2f, 0xfd, 0xc4, 0x58];
         frame.extend_from_slice(&u64::try_from(plain.len()).expect("fits").to_le_bytes());
         for (block, body) in plain.chunks(block_bytes).enumerate() {
-            let last = u32::from(block == 2);
+            let last = u32::from(block == count - 1);
             let header = (u32::try_from(body.len()).expect("block fits") << 3) | last;
             frame.extend_from_slice(&header.to_le_bytes()[..3]);
             frame.extend_from_slice(body);
@@ -346,7 +376,7 @@ mod tests {
 
     #[test]
     fn a_multi_block_frame_decodes_over_every_chunking() {
-        let (frame, plain) = multi_block_frame();
+        let (frame, plain) = multi_block_frame(3);
         // The incident shape: feeds large enough to hold one or more
         // whole blocks with a partial block trailing. Before the fix,
         // the first such feed died with CorruptFrame at decode_blocks
@@ -381,7 +411,7 @@ mod tests {
 
     #[test]
     fn a_multi_block_frame_may_lag_input_by_a_block() {
-        let (frame, plain) = multi_block_frame();
+        let (frame, plain) = multi_block_frame(3);
         let mut stream = ZstdStream::new(u64::try_from(plain.len()).expect("fits"));
         // One block short of the watermark: nothing provisional decodes,
         // and no error pretends the partial tail is corruption.
@@ -395,6 +425,28 @@ mod tests {
         let mut out = stream
             .push(&frame[131_075..])
             .expect("the remainder decodes");
+        out.extend(stream.finish().expect("the frame completes"));
+        assert_eq!(out, plain);
+    }
+
+    #[test]
+    fn the_pipe_drains_instead_of_holding_the_object() {
+        // 96 blocks ≈ 12.6 MiB on the wire: three compactions' worth. An
+        // append-only pipe ends such a run holding every compressed byte,
+        // which is what killed verification for 100+ MiB objects inside
+        // the isolate's 128 MiB. With drainage the held bytes stay within
+        // the threshold, the watermark, and one feed.
+        let (frame, plain) = multi_block_frame(96);
+        let mut stream = ZstdStream::new(u64::try_from(plain.len()).expect("fits"));
+        let mut out = Vec::new();
+        for piece in frame.chunks(1_048_576) {
+            out.extend(stream.push(piece).expect("feeds decode"));
+            let held = stream.pipe.inner.borrow().get_ref().len();
+            assert!(
+                held <= PIPE_COMPACT_AT + ZSTD_BLOCK_WIRE_MAX + 1_048_576,
+                "the pipe holds {held} bytes mid-stream"
+            );
+        }
         out.extend(stream.finish().expect("the frame completes"));
         assert_eq!(out, plain);
     }
