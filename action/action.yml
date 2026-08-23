@@ -9,7 +9,8 @@ description: >-
   job builds. Grant `permissions: { contents: read, id-token: write }` for
   the full path; in a job whose context cannot receive the grant (a forked
   pull request) the action installs plain nix and the build runs uncached,
-  slower and green.
+  slower and green. Network failures inside the action degrade the same
+  way: never a red job over a blip.
 author: nox-systems
 inputs:
   cache-url:
@@ -83,9 +84,18 @@ runs:
           echo "CACHET_EXTRA_CONF=" >> "${GITHUB_ENV}"
           exit 0
         fi
-        token="$(curl -fsSL \
+        # A token fetch that dies on the network is the same class as a
+        # fork: setup could not complete, the build continues uncached.
+        # --retry covers the blips (connection resets, DNS, 5xx), and what
+        # outlives them degrades as loud log lines with the job green.
+        if ! token="$(curl -fsSL --retry 4 --retry-all-errors --retry-delay 2 \
           -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
-          "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${CACHET_AUDIENCE}" | jq -r '.value')"
+          "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${CACHET_AUDIENCE}" | jq -r '.value')"; then
+          echo "cachet: the OIDC token fetch failed on the network after retries."
+          echo "  nix installs and builds WITHOUT the ${CACHET_CACHE_URL} cache; everything else runs normally."
+          echo "CACHET_EXTRA_CONF=" >> "${GITHUB_ENV}"
+          exit 0
+        fi
         host="$(printf '%s' "${CACHET_CACHE_URL}" | sed -e 's#^https\?://##' -e 's#/.*$##')"
 
         # The credential file: real, outside the nix store, 0600.
@@ -109,8 +119,9 @@ runs:
         # The deployment names its own signing key: fetch the public half
         # from the worker rather than asking consumers to paste it. This
         # doubles as the connectivity check: a cache that cannot answer its
-        # public config fails the job here, before the build starts.
-        public_key="$(curl -fsSL "${CACHET_CACHE_URL%/}/api/public/config" | jq -r '.publicKey')"
+        # public config fails the job here, before the build starts. The
+        # retry only asks that "cannot answer" outlive a blip.
+        public_key="$(curl -fsSL --retry 4 --retry-all-errors --retry-delay 2 "${CACHET_CACHE_URL%/}/api/public/config" | jq -r '.publicKey')"
         {
           echo "CACHET_EXTRA_CONF<<EOF_CACHET_CONF"
           echo "extra-substituters = ${CACHET_CACHE_URL%/}"
@@ -161,17 +172,30 @@ runs:
         # cargo-dist names archives after the package, not the binary.
         artifact="cachet-cli-${triple}.tar.xz"
         work="$(mktemp -d)"
-        # The checksum verifies before the archive opens: a tampered or
-        # truncated download fails the job, it does not limp onward.
-        curl -fsSL -o "${work}/${artifact}" "${base}/${artifact}"
-        curl -fsSL -o "${work}/${artifact}.sha256" "${base}/${artifact}.sha256"
-        (cd "${work}" && shasum -a 256 -c "${artifact}.sha256")
-        install_dir="${RUNNER_TEMP}/cachet-bin"
-        mkdir -p "${install_dir}"
-        tar -xJf "${work}/${artifact}" -C "${install_dir}" --strip-components=1
-        rm -rf "${work}"
-        echo "CACHET_BIN=${install_dir}/cachet" >> "${GITHUB_ENV}"
-        "${install_dir}/cachet" --version
+        # A download that dies on the network must not red the job:
+        # --retry sweeps up the blips (the releases CDN resets
+        # connections), and a persistent outage downgrades this job to
+        # read-only, because push is an optimization the build owes
+        # nobody. The nested action prints its own degrade line when
+        # CACHET_BIN stays unset.
+        if curl -fsSL --retry 4 --retry-all-errors --retry-delay 2 \
+             -o "${work}/${artifact}" "${base}/${artifact}" \
+          && curl -fsSL --retry 4 --retry-all-errors --retry-delay 2 \
+            -o "${work}/${artifact}.sha256" "${base}/${artifact}.sha256"; then
+          # The checksum verifies before the archive opens: a tampered or
+          # truncated download fails the job, it does not limp onward.
+          (cd "${work}" && shasum -a 256 -c "${artifact}.sha256")
+          install_dir="${RUNNER_TEMP}/cachet-bin"
+          mkdir -p "${install_dir}"
+          tar -xJf "${work}/${artifact}" -C "${install_dir}" --strip-components=1
+          rm -rf "${work}"
+          echo "CACHET_BIN=${install_dir}/cachet" >> "${GITHUB_ENV}"
+          "${install_dir}/cachet" --version
+        else
+          rm -rf "${work}"
+          echo "cachet: the release download failed on the network after retries."
+          echo "  nix and the build continue; this job will not push."
+        fi
 
     - name: Configure cachet
       shell: bash
