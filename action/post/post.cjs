@@ -7,7 +7,7 @@ const { spawnSync } = require("node:child_process");
 const bin = process.env["CACHET_BIN"];
 if (bin === undefined || bin.length === 0) {
   process.stderr.write(
-    "cachet: CACHET_BIN is unset; the download step did not run, so nothing will be pushed\n",
+    "cachet: CACHET_BIN is unset; the download step ran dry on the network, so nothing will be pushed\n",
   );
 } else {
   const answer = spawnSync(bin, ["push"], { stdio: "inherit" });

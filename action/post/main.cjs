@@ -8,7 +8,7 @@ const { spawnSync } = require("node:child_process");
 const bin = process.env["CACHET_BIN"];
 if (bin === undefined || bin.length === 0) {
   process.stderr.write(
-    "cachet: CACHET_BIN is unset; the download step did not run, so no snapshot was taken\n",
+    "cachet: CACHET_BIN is unset; the download step ran dry on the network, so no snapshot was taken\n",
   );
 } else {
   const answer = spawnSync(bin, ["push", "--snapshot-only"], {
