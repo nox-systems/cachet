@@ -158,9 +158,14 @@ impl ZstdStream {
             }
         }
 
-        // Decode every block the watermark guarantees completable, then
-        // collect. A finished frame is never re-fed: an empty read at that
-        // point is stream end, not a new block.
+        // Decode one block per pass, each started only behind the watermark
+        // (or at close), then collect. UptoBlocks(1) is the only safe
+        // strategy here: BlockDecodingStrategy::All keeps decoding until
+        // the frame finishes, and a pipelined source runs dry mid-frame on
+        // any partial feed. ruzstd answers that as a read error, which the
+        // map below would mislabel corruption. A block started behind the
+        // watermark is guaranteed complete on the wire, so the next pass
+        // either has a full block pending or waits for the producer.
         while !self
             .decoder
             .as_ref()
@@ -172,7 +177,7 @@ impl ZstdStream {
                 .decoder
                 .as_mut()
                 .expect("decoder built above")
-                .decode_blocks(&mut self.pipe, ruzstd::BlockDecodingStrategy::All);
+                .decode_blocks(&mut self.pipe, ruzstd::BlockDecodingStrategy::UptoBlocks(1));
             match result {
                 Ok(_) => {
                     self.collect(&mut produced)?;
@@ -309,5 +314,88 @@ mod tests {
             decode_all(NAR_ZST, 10).unwrap_err(),
             ZstdError::LimitExceeded
         );
+    }
+
+    /// A syntactically honest multi-block frame, built byte by byte:
+    /// single segment off, checksum flag on, three raw blocks at the
+    /// 128 KiB wire cap, any four bytes as the checksum (ruzstd reads it
+    /// without validating). The composed NAR incident showed the decoder
+    /// dying the first time `push` saw more than one block's worth of a
+    /// multi-block frame, and the fixture is too small to reach the
+    /// watermark: this frame is big enough to hold that shape in test.
+    fn multi_block_frame() -> (Vec<u8>, Vec<u8>) {
+        let block_bytes = 131_072usize;
+        let mut plain = Vec::with_capacity(block_bytes * 3);
+        for block in 0..3u32 {
+            plain.extend((0..block_bytes).map(|i| {
+                u8::try_from((block * 251 + u32::try_from(i).expect("fits")) % 233)
+                    .expect("mod fits")
+            }));
+        }
+        let mut frame = vec![0x28, 0xb5, 0x2f, 0xfd, 0xc4, 0x58];
+        frame.extend_from_slice(&u64::try_from(plain.len()).expect("fits").to_le_bytes());
+        for (block, body) in plain.chunks(block_bytes).enumerate() {
+            let last = u32::from(block == 2);
+            let header = (u32::try_from(body.len()).expect("block fits") << 3) | last;
+            frame.extend_from_slice(&header.to_le_bytes()[..3]);
+            frame.extend_from_slice(body);
+        }
+        frame.extend_from_slice(&[0xef, 0xbe, 0xad, 0xde]);
+        (frame, plain)
+    }
+
+    #[test]
+    fn a_multi_block_frame_decodes_over_every_chunking() {
+        let (frame, plain) = multi_block_frame();
+        // The incident shape: feeds large enough to hold one or more
+        // whole blocks with a partial block trailing. Before the fix,
+        // the first such feed died with CorruptFrame at decode_blocks
+        // running dry mid-frame.
+        for chunk in [
+            1usize,
+            7,
+            61,
+            4096,
+            65_536,
+            131_072,
+            ZSTD_BLOCK_WIRE_MAX - 1,
+            ZSTD_BLOCK_WIRE_MAX,
+            ZSTD_BLOCK_WIRE_MAX + 1,
+            327_690,
+            1_048_576,
+            frame.len(),
+        ] {
+            let mut stream = ZstdStream::new(u64::try_from(plain.len()).expect("fits"));
+            let mut out = Vec::new();
+            for piece in frame.chunks(chunk) {
+                out.extend(stream.push(piece).expect("a partial feed decodes"));
+            }
+            out.extend(stream.finish().expect("the frame completes"));
+            assert_eq!(out, plain, "chunking {chunk} decodes identically");
+            assert_eq!(
+                stream.decompressed_bytes(),
+                u64::try_from(plain.len()).expect("fits")
+            );
+        }
+    }
+
+    #[test]
+    fn a_multi_block_frame_may_lag_input_by_a_block() {
+        let (frame, plain) = multi_block_frame();
+        let mut stream = ZstdStream::new(u64::try_from(plain.len()).expect("fits"));
+        // One block short of the watermark: nothing provisional decodes,
+        // and no error pretends the partial tail is corruption.
+        let first: &[u8] = &frame[..131_075];
+        let produced = stream.push(first).expect("a block-sized first feed");
+        assert_eq!(
+            produced.len(),
+            0,
+            "under the watermark, nothing decodes yet"
+        );
+        let mut out = stream
+            .push(&frame[131_075..])
+            .expect("the remainder decodes");
+        out.extend(stream.finish().expect("the frame completes"));
+        assert_eq!(out, plain);
     }
 }

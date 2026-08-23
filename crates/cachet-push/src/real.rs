@@ -166,12 +166,31 @@ impl Commands for TokioCommands {
     }
 
     async fn path_info(&self, installable: &str) -> Result<String, PushError> {
-        invoke(vec![
+        match invoke(vec![
             "nix".to_string(),
             "path-info".to_string(),
             installable.to_string(),
         ])
         .await
+        {
+            Ok(answer) => Ok(answer),
+            Err(path_info_failure) => {
+                // why: nix path-info insists the path exists right now; a
+                // root that was never built in this store (a devShell) has
+                // no answer for it. nix derivation show evaluates without
+                // building, and its outputs name the paths either way.
+                let shown = invoke(vec![
+                    "nix".to_string(),
+                    "derivation".to_string(),
+                    "show".to_string(),
+                    installable.to_string(),
+                ])
+                .await
+                .map_err(|_| path_info_failure.clone())?;
+                let paths = derivation_out_paths(&shown).map_err(|_| path_info_failure)?;
+                Ok(paths.join("\n"))
+            }
+        }
     }
 
     async fn copy_to(&self, destination: &str, paths: &[String]) -> Result<(), PushError> {
@@ -275,5 +294,107 @@ impl Commands for TokioCommands {
                 message: format!("{}: {failure}", path.display()),
             })?;
         Ok(body)
+    }
+}
+
+/// The out paths of one `nix derivation show` answer: pure evaluation
+/// already names them, built or not. Newer nix wraps the document in a
+/// `derivations` object keyed by the derivation's store name and answers
+/// store-relative paths; older answers are flat and absolute. Both read
+/// as one set of absolute store paths.
+///
+/// # Errors
+///
+/// [`PushError::Detail`] when the answer is missing or no object at all:
+/// the caller reports the original path-info failure instead.
+fn derivation_out_paths(shown: &str) -> Result<Vec<String>, PushError> {
+    let parsed: serde_json::Value =
+        serde_json::from_str(shown).map_err(|failure| PushError::Detail {
+            message: format!("derivation show did not parse: {failure}"),
+        })?;
+    let document = parsed.as_object().ok_or_else(|| PushError::Detail {
+        message: "derivation show answered a non-object".to_string(),
+    })?;
+    let derivations = document
+        .get("derivations")
+        .and_then(serde_json::Value::as_object)
+        .unwrap_or(document);
+    let derivation = derivations
+        .values()
+        .next()
+        .ok_or_else(|| PushError::Detail {
+            message: "derivation show answered no derivation".to_string(),
+        })?;
+    let outputs = derivation
+        .get("outputs")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| PushError::Detail {
+            message: "derivation show answered no outputs".to_string(),
+        })?;
+    let mut paths: Vec<String> = outputs
+        .values()
+        .filter_map(|output| output.get("path").and_then(serde_json::Value::as_str))
+        .map(|path| {
+            if path.starts_with("/nix/store/") {
+                path.to_string()
+            } else {
+                format!("/nix/store/{path}")
+            }
+        })
+        .collect();
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_wrapped_relative_shape_absolutizes() {
+        // Determinate Nix 2.34's answer: a `derivations` wrapper, keyed
+        // by store name, paths store-relative.
+        let shown = r#"{
+            "derivations": {
+                "aaaa-nix-shell.drv": {
+                    "outputs": {
+                        "out": {"path": "bbbb-nix-shell"}
+                    }
+                }
+            }
+        }"#;
+        assert_eq!(
+            derivation_out_paths(shown).expect("the answer reads"),
+            vec!["/nix/store/bbbb-nix-shell".to_string()],
+        );
+    }
+
+    #[test]
+    fn the_flat_absolute_shape_reads_every_output() {
+        let shown = r#"{
+            "/nix/store/aaaa-zstd.drv": {
+                "outputs": {
+                    "dev": {"path": "/nix/store/cccc-zstd-dev"},
+                    "bin": {"path": "/nix/store/bbbb-zstd-bin"},
+                    "out": {"path": "/nix/store/dddd-zstd"}
+                }
+            }
+        }"#;
+        assert_eq!(
+            derivation_out_paths(shown).expect("the answer reads"),
+            vec![
+                "/nix/store/bbbb-zstd-bin".to_string(),
+                "/nix/store/cccc-zstd-dev".to_string(),
+                "/nix/store/dddd-zstd".to_string(),
+            ],
+        );
+    }
+
+    #[test]
+    fn a_shapeless_answer_is_a_typed_refusal() {
+        assert!(derivation_out_paths("").is_err());
+        assert!(derivation_out_paths("{}").is_err());
+        assert!(derivation_out_paths(r#"{"/nix/store/a.drv": {}}"#).is_err());
     }
 }

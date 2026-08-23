@@ -143,8 +143,12 @@ pub const UPLOAD_PART_BYTES: u64 = 67_108_864;
 pub const MULTIPART_PARTS_MAX: u64 = 1_000;
 
 /// The push pipeline refuses closures adding more than this many store
-/// paths, matching the previous implementation's guard.
-pub const PUSH_PATHS_MAX: u64 = 4_096;
+/// paths. The guard's target is the missing-snapshot disaster (a before-set
+/// that died, making the whole store one diff), not honest cold closures:
+/// a fresh runner's devshell plus build closure legitimately lands in the
+/// thousands, so the cap sits well above any first push and far below the
+/// upload-everything shape.
+pub const PUSH_PATHS_MAX: u64 = 16_384;
 
 /// An in-flight upload older than this is aborted: a week is far past any
 /// honest client's retry window.

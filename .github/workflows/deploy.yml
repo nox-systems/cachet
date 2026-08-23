@@ -34,6 +34,9 @@ jobs:
   staging:
     if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success'
     environment: staging
+    permissions:
+      contents: read
+      id-token: write
     runs-on: ubuntu-latest
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -54,7 +57,11 @@ jobs:
       CACHET_DEPLOY_GC_GRACE_MS: "0"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
+      - name: nix on the cachet cache
+        uses: nox-systems/cachet/action@v0
+        with:
+          cache-url: https://cachet.nox.so
+          roots: .#devShells.x86_64-linux.default
       - run: nix develop --command just deploy cachet-staging
 
   # The integration lane answers whether the deploy just made actually
@@ -80,11 +87,18 @@ jobs:
       CACHET_INTEGRATION_AUDIENCE: ${{ secrets.CACHET_DEPLOY_AUDIENCE }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
+      - name: nix on the cachet cache
+        uses: nox-systems/cachet/action@v0
+        with:
+          cache-url: https://cachet.nox.so
+          roots: .#devShells.x86_64-linux.default
       - run: nix develop --command just integration
 
   manual:
     if: github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: read
+      id-token: write
     # why: the environment is named for its slot (staging), not its
     # deployment (cachet-staging); the rig owns exactly one environment.
     environment: ${{ inputs.stage == 'cachet-staging' && 'staging' || inputs.stage }}
@@ -104,5 +118,9 @@ jobs:
       CACHET_DEPLOY_UI_ORIGIN: ${{ secrets.CACHET_DEPLOY_UI_ORIGIN }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
+      - name: nix on the cachet cache
+        uses: nox-systems/cachet/action@v0
+        with:
+          cache-url: https://cachet.nox.so
+          roots: .#devShells.x86_64-linux.default
       - run: nix develop --command just deploy ${{ inputs.stage }}

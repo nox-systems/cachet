@@ -25,7 +25,7 @@ fn bound_constants_are_the_contract() {
     let snap = format!(
         "{NARINFO_BYTES_MAX} {UPLOAD_SINGLE_MAX_BYTES} {UPLOAD_PART_BYTES} {MULTIPART_PARTS_MAX} {PUSH_PATHS_MAX}"
     );
-    insta::assert_snapshot!(snap, @"65536 94371800 67108864 1000 4096");
+    insta::assert_snapshot!(snap, @"65536 94371800 67108864 1000 16384");
 }
 
 #[test]
