@@ -71,6 +71,34 @@ pub fn upload_order(objects: &mut [StagedObject]) {
     objects.sort_by_key(StagedObject::is_narinfo);
 }
 
+/// The keys one survivor set owns: each survivor's own narinfo key plus
+/// the NAR key its staged narinfo names. `nix copy` answers closures, so
+/// the staging tree holds far more than the survivors; this is where the
+/// filter verdicts bind the wire set again. The NAR key is read out of
+/// the staged narinfo, never recomputed: two runs of nix's zstd can
+/// encode one NAR to different names, and only the pair staged together
+/// names itself consistently.
+///
+/// # Errors
+///
+/// [`PushError::Detail`] naming the hash when a staged narinfo does not
+/// parse: an unreadable pair never gets a guessed name.
+pub fn owned_object_keys(
+    survivors: &std::collections::BTreeMap<String, String>,
+) -> Result<std::collections::BTreeSet<String>, PushError> {
+    let mut owned = std::collections::BTreeSet::new();
+    for (hash, body) in survivors {
+        let document = cachet_core::narinfo::Narinfo::parse(body).map_err(|_| {
+            PushError::Detail {
+                message: format!("the staged narinfo for {hash} does not parse"),
+            }
+        })?;
+        owned.insert(format!("{hash}{}", cachet_core::constants::NARINFO_KEY_SUFFIX));
+        owned.insert(document.url.as_str().to_string());
+    }
+    Ok(owned)
+}
+
 /// One object's ride: the whole body in one PUT, or the multipart
 /// quartet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,6 +142,69 @@ pub fn object_url(cache_url: &str, key: &str, query: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::plan::owned_object_keys;
+
+    const SURVIVOR_HASH: &str = "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq";
+    const NAR_KEY: &str =
+        "nar/nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn.nar.zst";
+
+    fn survivor_body(store_path: &str, nar_key: &str) -> String {
+        format!(
+            "StorePath: {store_path}\nURL: {nar_key}\nCompression: zstd\nNarHash: sha256:0iqi00iqi00iqi00iqi00iqi00iqi00iqi00iqi00iqi00iqi00j\nNarSize: 42\n"
+        )
+    }
+
+    #[test]
+    fn owned_keys_is_exactly_the_survivor_pairs() {
+        let survivors = std::collections::BTreeMap::from([(
+            SURVIVOR_HASH.to_string(),
+            survivor_body(
+                &format!("/nix/store/{SURVIVOR_HASH}-built-1"),
+                NAR_KEY,
+            ),
+        )]);
+        let owned = owned_object_keys(&survivors).expect("parses");
+        assert_eq!(
+            owned,
+            std::collections::BTreeSet::from([
+                format!("{SURVIVOR_HASH}.narinfo"),
+                NAR_KEY.to_string(),
+            ]),
+        );
+    }
+
+    #[test]
+    fn a_shared_nar_is_owned_once() {
+        let other_hash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let survivors = std::collections::BTreeMap::from([
+            (
+                SURVIVOR_HASH.to_string(),
+                survivor_body(
+                    &format!("/nix/store/{SURVIVOR_HASH}-built-1"),
+                    NAR_KEY,
+                ),
+            ),
+            (
+                other_hash.to_string(),
+                survivor_body(&format!("/nix/store/{other_hash}-built-2"), NAR_KEY),
+            ),
+        ]);
+        let owned = owned_object_keys(&survivors).expect("parses");
+        assert_eq!(owned.len(), 3, "two narinfos naming one NAR key share it");
+    }
+
+    #[test]
+    fn an_unparseable_survivor_narinfo_names_its_hash() {
+        let survivors = std::collections::BTreeMap::from([(
+            SURVIVOR_HASH.to_string(),
+            "not a narinfo".to_string(),
+        )]);
+        let failure = owned_object_keys(&survivors).expect_err("refuses");
+        assert!(
+            failure.to_string().contains(SURVIVOR_HASH),
+            "the error names the hash: {failure}"
+        );
+    }
 
     #[test]
     fn the_layout_reads_the_two_shapes() {

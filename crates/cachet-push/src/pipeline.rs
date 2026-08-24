@@ -9,7 +9,8 @@ use crate::adapters::{Adapters, Commands, Http, TokenSource, WireAnswer};
 use crate::error::PushError;
 use crate::filter::{drop_already_cached, filter_against_upstream};
 use crate::plan::{
-    StagedObject, UploadMechanics, object_url, plan_mechanics, read_staging_layout, upload_order,
+    StagedObject, UploadMechanics, object_url, owned_object_keys, plan_mechanics,
+    read_staging_layout, upload_order,
 };
 use crate::retry::{RETRY_MAX, delay_after};
 use crate::snapshot::{bound_candidates, parse_snapshot, store_diff};
@@ -215,6 +216,34 @@ pub async fn push<C: Commands, H: Http, T: TokenSource>(
     a.commands.copy_to(&destination, &cached.to_upload).await?;
     let entries = a.commands.read_dir(staging_dir).await?;
     let mut objects = read_staging_layout(&entries)?;
+    // why: `nix copy` stages the survivors' closures, but the probe passes
+    // already priced every path. The wire set is the survivors' own pairs:
+    // their narinfos plus exactly the NARs those narinfos name. Closure
+    // members are upstream-covered or already signed here by construction,
+    // so re-uploading them is the thousands-of-objects-for-a-handful-of-
+    // paths class this filter exists to stop. GC reads are safe by the
+    // same construction: roots are survivors or probed hits, and a deep
+    // reference without a pushed narinfo marks without descent.
+    let mut survivor_bodies = std::collections::BTreeMap::new();
+    for path in &cached.to_upload {
+        let hash = cachet_core::keys::parse_store_path(path)
+            .map_err(|_| PushError::Detail {
+                message: format!("a survivor outside the store-path grammar: {path}"),
+            })?
+            .hash
+            .as_str()
+            .to_string();
+        let key = format!("{hash}{}", cachet_core::constants::NARINFO_KEY_SUFFIX);
+        let body = a.commands.read_file(&staging_dir.join(&key)).await?;
+        survivor_bodies.insert(
+            hash,
+            String::from_utf8(body).map_err(|_| PushError::Detail {
+                message: format!("the staged narinfo for {path} is not text"),
+            })?,
+        );
+    }
+    let owned = owned_object_keys(&survivor_bodies)?;
+    objects.retain(|object| owned.contains(&object.key));
     upload_order(&mut objects);
     let uploaded = upload_objects(a, inputs, staging_dir, &objects).await?;
     outcome.uploaded_objects = uploaded;
