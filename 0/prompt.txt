@@ -2411,3 +2411,50 @@ okay. Fix pr 10. Push. And then let's see if CI still says the trust shit
 <event>pr10: queued</event>
 If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
 </task-notification>
+
+---
+
+what does cachet do in its action? @../../ac
+
+---
+
+what does cachet do in its action? @../../cachet
+
+---
+
+<task-notification>
+<task-id>bnm233s24</task-id>
+<summary>Monitor event: "PR #10 CI on the dist fix: plan gate + signature warnings"</summary>
+<event>pr10: in_progress</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bnm233s24</task-id>
+<summary>Monitor event: "PR #10 CI on the dist fix: plan gate + signature warnings"</summary>
+<event>pr10: completed failure
+---SIG---</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+Okay hold on. I went ahead and killed the entire cachet production deployment and recreated it. Fully wiped the bucket.
+
+---
+
+Fix the plan red, and then when you push, that will kick off the first fresh push
+
+---
+
+it sounds like you've made several stuctural issues
+
+---
+
+stop making a fucking mistake
+
+---
+
+stop being retarded
