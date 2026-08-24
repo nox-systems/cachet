@@ -24,6 +24,11 @@ pub struct SetupInput {
     pub public_key: String,
     /// The read token `cachet login` stored.
     pub token: String,
+    /// The invoking account's login. The daemon's `trusted-users` must
+    /// name it: nix treats `extra-trusted-public-keys` as a restricted
+    /// setting, so an untrusted caller's key line is parsed and silently
+    /// dropped, and no cachet-signed path ever substitutes for them.
+    pub login: String,
 }
 
 /// The files this command owns, absolute. The paths are fields rather
@@ -117,12 +122,13 @@ pub fn netrc_replace_block(existing: &str, host: &str, token: &str) -> String {
     rewritten
 }
 
-/// The three keys setup owns in the included config: every line naming
-/// one is rewritten from scratch, everything else survives verbatim.
-const MANAGED_KEYS: [&str; 3] = [
+/// The keys setup owns in the included config: every line naming one is
+/// rewritten from scratch, everything else survives verbatim.
+const MANAGED_KEYS: [&str; 4] = [
     "netrc-file",
     "extra-substituters",
     "extra-trusted-public-keys",
+    "trusted-users",
 ];
 
 /// Merge the managed keys into the included config. The surviving words
@@ -136,10 +142,12 @@ pub fn merge_custom_conf(
     netrc_path: Option<&str>,
     substituter: &str,
     key: &str,
+    login: &str,
 ) -> String {
     let mut kept: Vec<&str> = Vec::new();
     let mut existing_substituters: Vec<String> = Vec::new();
     let mut existing_keys: Vec<String> = Vec::new();
+    let mut existing_users: Vec<String> = Vec::new();
     for line in existing.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() {
@@ -158,8 +166,11 @@ pub fn merge_custom_conf(
             Some(("extra-trusted-public-keys", value)) => {
                 existing_keys = value.split_whitespace().map(str::to_string).collect();
             }
+            Some(("trusted-users", value)) => {
+                existing_users = value.split_whitespace().map(str::to_string).collect();
+            }
             Some(("netrc-file", _)) => {}
-            Some(_) => unreachable!("MANAGED_KEYS has three entries"),
+            Some(_) => unreachable!("MANAGED_KEYS has four entries"),
             None => kept.push(line),
         }
     }
@@ -171,6 +182,15 @@ pub fn merge_custom_conf(
     let mut keys = existing_keys;
     if !key.is_empty() && !keys.iter().any(|word| word == key) {
         keys.push(key.to_string());
+    }
+    // why: root first because daemons already name it, the invoking login
+    // because restricted key settings only reach the evaluator for users
+    // this list trusts; without the login every key line above is inert.
+    let mut users = existing_users;
+    for wanted in ["root", login] {
+        if !users.iter().any(|word| word == wanted) {
+            users.push(wanted.to_string());
+        }
     }
 
     let mut out = String::new();
@@ -184,6 +204,7 @@ pub fn merge_custom_conf(
     if !keys.is_empty() {
         let _ = writeln!(out, "extra-trusted-public-keys = {}", keys.join(" "));
     }
+    let _ = writeln!(out, "trusted-users = {}", users.join(" "));
     out
 }
 
@@ -349,6 +370,7 @@ pub fn run_setup(
         netrc_line.as_deref(),
         &input.cache_url,
         &input.public_key,
+        &input.login,
     );
     install(&paths.nix_custom_conf, &conf, 0o644).map_err(|failure| {
         CliError(format!(
@@ -417,6 +439,7 @@ mod tests {
             Some("/etc/nix/netrc"),
             "https://cache.example.com",
             "cache.example.com-1:bbbb",
+            "tester",
         );
         assert_eq!(
             merged,
@@ -425,6 +448,7 @@ mod tests {
                 "netrc-file = /etc/nix/netrc\n",
                 "extra-substituters = https://cache.nixos.org https://old.invalid https://cache.example.com\n",
                 "extra-trusted-public-keys = cache.nixos.org-1:aaaa cache.example.com-1:bbbb\n",
+                "trusted-users = root tester\n",
             ),
             "last line wins, words merge once, one line per key in fixed order"
         );
@@ -433,16 +457,41 @@ mod tests {
             Some("/etc/nix/netrc"),
             "https://cache.example.com",
             "cache.example.com-1:bbbb",
+            "tester",
         );
         assert_eq!(merged, again, "a rerun changes nothing");
     }
 
     #[test]
     fn custom_conf_under_determinate_omits_netrc_file() {
-        let merged = merge_custom_conf("", None, "https://cache.example.com", "k-1:v");
+        let merged = merge_custom_conf("", None, "https://cache.example.com", "k-1:v", "tester");
         assert!(!merged.contains("netrc-file"));
         assert!(merged.contains("extra-substituters = https://cache.example.com\n"));
         assert!(merged.contains("extra-trusted-public-keys = k-1:v\n"));
+        assert!(
+            merged.contains("trusted-users = root tester\n"),
+            "an untrusted caller's restricted key settings drop silently"
+        );
+    }
+
+    #[test]
+    fn existing_trusted_users_survive_and_root_stays_first_class() {
+        let merged = merge_custom_conf(
+            "trusted-users = @admin existing\n",
+            None,
+            "https://cache.example.com",
+            "k-1:v",
+            "tester",
+        );
+        assert_eq!(
+            merged,
+            concat!(
+                "extra-substituters = https://cache.example.com\n",
+                "extra-trusted-public-keys = k-1:v\n",
+                "trusted-users = @admin existing root tester\n",
+            ),
+            "operator-listed users keep their order; root and the login join once"
+        );
     }
 
     #[test]
