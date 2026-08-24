@@ -1058,6 +1058,66 @@ try {
     },
   );
 
+  // The memo's proof deletes the KV verdict between reads: a repeat the
+  // API never sees can only come from the isolate's own entry, which is
+  // the memo's whole claim.
+  const forgetVerdict = (token, persist) => {
+    const digest = crypto.createHash("sha256").update(token).digest("hex");
+    const forget = spawnSync(
+      "wrangler",
+      [
+        "kv",
+        "key",
+        "delete",
+        `ghverdict/${digest}`,
+        "--binding",
+        "CACHET_KV",
+        "--local",
+        "--persist-to",
+        persist,
+        "--config",
+        configPath,
+      ],
+      { encoding: "utf8" },
+    );
+    if (forget.status !== 0) {
+      throw new Error(
+        `verdict delete failed: ${forget.stderr}${forget.stdout}`,
+      );
+    }
+  };
+
+  await scenario(
+    "the isolate memo answers after the verdict is gone",
+    async () => [[NAR_KEY, await readFile(path.join(fixturesDir, NAR_FILE))]],
+    async ({ base, events, persist }) => {
+      const laptop = { authorization: `Bearer ${GOOD_LAPTOP_TOKEN}` };
+
+      await check("an admit repeats without the API", async () => {
+        const first = await fetch(`${base}/${NAR_KEY}`, { headers: laptop });
+        assert.equal(first.status, 200);
+        const apiHits = stubHits.user;
+        forgetVerdict(GOOD_LAPTOP_TOKEN, persist);
+        const second = await fetch(`${base}/${NAR_KEY}`, { headers: laptop });
+        assert.equal(second.status, 200);
+        assert.equal(stubHits.user, apiHits, "the memo served the repeat");
+        await untilEvent(events, '"event":"auth.memo_hit","kind":"allow"');
+      });
+
+      await check("a denial repeats without the API", async () => {
+        const denied = { authorization: "Bearer memo-denied-token" };
+        const first = await fetch(`${base}/${NAR_KEY}`, { headers: denied });
+        assert.equal(first.status, 401);
+        const apiHits = stubHits.user;
+        forgetVerdict("memo-denied-token", persist);
+        const second = await fetch(`${base}/${NAR_KEY}`, { headers: denied });
+        assert.equal(second.status, 401);
+        assert.equal(stubHits.user, apiHits, "the memo denied the repeat");
+        await untilEvent(events, '"event":"auth.memo_hit","kind":"deny"');
+      });
+    },
+  );
+
   await scenario(
     "leases renew against the token's own claims",
     async () => [],
