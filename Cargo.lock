@@ -122,7 +122,7 @@ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
 name = "cachet-api"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "serde",
  "serde_json",
@@ -131,7 +131,7 @@ dependencies = [
 
 [[package]]
 name = "cachet-cli"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "cachet-api",
  "cachet-core",
@@ -148,7 +148,7 @@ dependencies = [
 
 [[package]]
 name = "cachet-core"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "base64ct",
  "hegeltest",
@@ -159,7 +159,7 @@ dependencies = [
 
 [[package]]
 name = "cachet-crypto"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "base64",
  "base64ct",
@@ -178,7 +178,7 @@ dependencies = [
 
 [[package]]
 name = "cachet-push"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "cachet-api",
  "cachet-core",
@@ -193,7 +193,7 @@ dependencies = [
 
 [[package]]
 name = "cachet-worker"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "base64ct",
  "cachet-api",
