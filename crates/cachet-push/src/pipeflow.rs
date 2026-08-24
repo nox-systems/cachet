@@ -572,8 +572,7 @@ async fn a_401_remints_for_the_next_attempt() {
     let calls = http.calls();
     let narinfo_put = calls
         .iter()
-        .filter(|call| call.method == "PUT" && call.url.ends_with(".narinfo"))
-        .last()
+        .rfind(|call| call.method == "PUT" && call.url.ends_with(".narinfo"))
         .expect("the retried narinfo PUT");
     assert_eq!(narinfo_put.bearer.as_deref(), Some("token-2"));
 }
@@ -788,6 +787,130 @@ async fn the_multipart_quartet_carries_the_contract() {
 }
 
 #[tokio::test]
+async fn nars_finish_before_any_narinfo_under_fanout() {
+    let commands = FakeCommands::with_store(&format!("{BUILT}\n{OTHER}\n"));
+    let nar_key = format!("nar/{}.nar.zst", "n".repeat(52));
+    let other_nar_key = format!("nar/{}.nar.zst", "m".repeat(52));
+    seed_pair(
+        &commands,
+        NARINFO_KEY,
+        survivor_body(BUILT, &nar_key),
+        &nar_key,
+        vec![b'a'; 1_000],
+    );
+    seed_pair(
+        &commands,
+        OTHER_KEY,
+        survivor_body(OTHER, &other_nar_key),
+        &other_nar_key,
+        vec![b'b'; 1_000],
+    );
+    let http = FakeHttp::default();
+    stub_probes_miss(&http);
+    http.head(&format!("https://cachet.test/{OTHER_KEY}"), 404);
+    http.head(&format!("https://upstream.test/{OTHER_KEY}"), 404);
+    http.put(&format!("https://cachet.test/{nar_key}"), 204, "");
+    http.put(&format!("https://cachet.test/{other_nar_key}"), 204, "");
+    http.put(&format!("https://cachet.test/{NARINFO_KEY}"), 204, "");
+    http.put(&format!("https://cachet.test/{OTHER_KEY}"), 204, "");
+    http.post("https://cachet.test/roots/lane-org-lane-repo", 204, "");
+    let tokens = FakeTokens::default();
+    let sleep = no_sleep();
+    let a = Adapters {
+        commands: &commands,
+        http: &http,
+        tokens: &tokens,
+        sleep: &sleep,
+    };
+    let (_events, mut sink) = collect_events();
+    let outcome = push(
+        &a,
+        &inputs(true),
+        "",
+        std::path::Path::new("/staging"),
+        &mut sink,
+    )
+    .await
+    .expect("answers");
+    assert_eq!(outcome.uploaded_objects, 4);
+    let calls = http.calls();
+    let puts: Vec<&Call> = calls.iter().filter(|call| call.method == "PUT").collect();
+    let last_nar = puts
+        .iter()
+        .rposition(|call| call.url.contains("/nar/"))
+        .expect("a NAR PUT");
+    let first_narinfo = puts
+        .iter()
+        .position(|call| call.url.ends_with(".narinfo"))
+        .expect("a narinfo PUT");
+    assert!(
+        last_nar < first_narinfo,
+        "the phase barrier holds under waves: {puts:?}",
+    );
+}
+
+#[tokio::test]
+async fn a_failed_nar_wave_blocks_the_next_wave() {
+    // Eighteen survivors (= two NAR waves): one NAR from wave one dies,
+    // so wave two's NARs and every narinfo must never see the wire.
+    const N: usize = 18;
+    let paths: Vec<String> = (0..N)
+        .map(|i| format!("/nix/store/{i:0>31}p-built-{i}"))
+        .collect();
+    let commands = FakeCommands::with_store(&format!("{}\n", paths.join("\n")));
+    let http = FakeHttp::default();
+    for (i, path) in paths.iter().enumerate() {
+        let narinfo_key = format!("{i:0>31}p.narinfo");
+        let nar_key = format!("nar/{i:0>51}n.nar.zst");
+        seed_pair(
+            &commands,
+            &narinfo_key,
+            survivor_body(path, &nar_key),
+            &nar_key,
+            vec![b'x'; 100],
+        );
+        http.head(&format!("https://cachet.test/{narinfo_key}"), 404);
+        http.head(&format!("https://upstream.test/{narinfo_key}"), 404);
+        if i == 2 {
+            for _ in 0..3 {
+                http.fail_put(&format!("https://cachet.test/{nar_key}"), "boom");
+            }
+        } else if i < 16 {
+            http.put(&format!("https://cachet.test/{nar_key}"), 204, "");
+        }
+    }
+    let tokens = FakeTokens::default();
+    let sleep = no_sleep();
+    let a = Adapters {
+        commands: &commands,
+        http: &http,
+        tokens: &tokens,
+        sleep: &sleep,
+    };
+    let (_events, mut sink) = collect_events();
+    let failure = push(
+        &a,
+        &inputs(false),
+        "",
+        std::path::Path::new("/staging"),
+        &mut sink,
+    )
+    .await
+    .expect_err("the dying NAR ends the run");
+    assert!(
+        failure.to_string().contains("failed after 3 attempts"),
+        "{failure}",
+    );
+    let calls = http.calls();
+    assert!(
+        !calls
+            .iter()
+            .any(|call| call.method == "PUT" && call.url.ends_with(".narinfo")),
+        "no narinfo rode out of a failed NAR wave",
+    );
+}
+
+#[tokio::test]
 async fn a_dying_part_aborts_best_effort() {
     let big = cachet_core::constants::UPLOAD_SINGLE_MAX_BYTES + 13;
     let commands = FakeCommands::with_store(&format!("{BUILT}\n"));
@@ -821,6 +944,13 @@ async fn a_dying_part_aborts_best_effort() {
     http.fail_put(
         &format!("https://cachet.test/{nar_key}?uploadId=up-1&partNumber=1"),
         "connection reset",
+    );
+    // Part 2 rides the same wave as the dying part: it answers, and the
+    // wave still fails with the plan-order-first error.
+    http.put(
+        &format!("https://cachet.test/{nar_key}?uploadId=up-1&partNumber=2"),
+        200,
+        r#"{"partNumber":2,"etag":"etag-2"}"#,
     );
     let tokens = FakeTokens::default();
     let sleep = no_sleep();
