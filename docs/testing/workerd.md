@@ -45,7 +45,10 @@ abort; the CLI's own push, driven as the composite action drives it
 (snapshot step, `nix-store --add-fixed` payload, push) with the stub
 minting its OIDC tokens, asserting the staged tree's real layout reaches
 the bucket and serves back signed; read verdicts cached in KV for both the admit and the deny
-direction, with OIDC tokens answering reads as CI expects; lease renewal bound to the token's own claims with
+direction, with OIDC tokens answering reads as CI expects; the isolate's
+decision memo, proven by deleting the KV verdict between reads and
+watching the repeat in both directions answer with no GitHub API hit and
+an `auth.memo_hit` event; lease renewal bound to the token's own claims with
 forbidden_ref and forbidden_project refusals; the project listing; the
 public config document; and the browser login flow, from the login
 redirect's exact parameters through state consumption (a replayed state
