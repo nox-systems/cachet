@@ -184,7 +184,11 @@ runs:
             -o "${work}/${artifact}.sha256" "${base}/${artifact}.sha256"; then
           # The checksum verifies before the archive opens: a tampered or
           # truncated download fails the job, it does not limp onward.
-          (cd "${work}" && shasum -a 256 -c "${artifact}.sha256")
+          # Blank lines dropped first: cargo-dist's checksum files end in
+          # an empty line, which shasum warns on as unformatted while the
+          # real line checks fine. The warning is noise the job log does
+          # not need.
+          (cd "${work}" && grep -v '^[[:space:]]*$' "${artifact}.sha256" | shasum -a 256 -c -)
           install_dir="${RUNNER_TEMP}/cachet-bin"
           mkdir -p "${install_dir}"
           tar -xJf "${work}/${artifact}" -C "${install_dir}" --strip-components=1
