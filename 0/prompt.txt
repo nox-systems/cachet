@@ -2467,3 +2467,12 @@ stop being retarded
 <event>pr10: in_progress</event>
 If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
 </task-notification>
+
+---
+
+<task-notification>
+<task-id>buk4ltjfc</task-id>
+<summary>Monitor event: "PR #10 fresh run: plan verdict"</summary>
+<event>pr10: completed failure</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
