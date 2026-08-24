@@ -239,7 +239,7 @@ fn a_scrambled_narinfo_emits_the_canonical_form() {
     let parsed = Narinfo::parse(scrambled).expect("the fixture parses");
     // References sort, the unknown line keeps its place at the end, and the
     // trailing line breaks are exact.
-    insta::assert_snapshot!(parsed.fingerprint(), @"1;/nix/store/0123456789abcdfghijklmnpqrsvwxyz-bash-5.2;sha256:0iqi00iqi00iqi00iqi00iqi00iqi00iqi00iqi00iqi00iqi00j;42;aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bash-5.2,cccccccccccccccccccccccccccccccc-dep-3");
+    insta::assert_snapshot!(parsed.fingerprint(), @"1;/nix/store/0123456789abcdfghijklmnpqrsvwxyz-bash-5.2;sha256:0iqi00iqi00iqi00iqi00iqi00iqi00iqi00iqi00iqi00iqi00j;42;/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bash-5.2,/nix/store/cccccccccccccccccccccccccccccccc-dep-3");
     insta::assert_snapshot!(parsed.serialize(), @"
     StorePath: /nix/store/0123456789abcdfghijklmnpqrsvwxyz-bash-5.2
     URL: nar/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.nar.zst

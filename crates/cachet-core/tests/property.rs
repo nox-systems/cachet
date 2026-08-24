@@ -148,20 +148,27 @@ fn narinfo_canonicalization_is_a_fixed_point(tc: TestCase) {
 }
 
 // why: the fingerprint is the signature input nix reproduces; drift in it
-// fails `nix store verify` for every artifact cachet signs.
+// fails `nix store verify` for every artifact cachet signs. The reference
+// set it prints carries full store paths, never the document's basenames
+// (protocols/store-path.md; the basename-only recipe was the bug whose
+// signatures nix could never verify).
 #[hegel::test(test_cases = 128)]
 fn fingerprint_matches_its_recipe(tc: TestCase) {
     let store_hash = draw_nix32(&tc, 32);
     let name = draw_name(&tc, 12);
     let nar_hash = draw_nix32(&tc, 52);
+    let ref_hash = draw_nix32(&tc, 32);
+    let ref_name = draw_name(&tc, 8);
     let body = format!(
-        "StorePath: /nix/store/{store_hash}-{name}\nURL: nar/{}.nar\nNarHash: sha256:{nar_hash}\nNarSize: 1\n",
+        "StorePath: /nix/store/{store_hash}-{name}\nURL: nar/{}.nar\nNarHash: sha256:{nar_hash}\nNarSize: 1\nReferences: {ref_hash}-{ref_name}\n",
         draw_nix32(&tc, 52)
     );
     let document = Narinfo::parse(&body).expect("generated documents parse");
     assert_eq!(
         document.fingerprint(),
-        format!("1;/nix/store/{store_hash}-{name};sha256:{nar_hash};1;")
+        format!(
+            "1;/nix/store/{store_hash}-{name};sha256:{nar_hash};1;/nix/store/{ref_hash}-{ref_name}"
+        )
     );
 }
 
