@@ -177,6 +177,57 @@ const laneSigningSecret = (
   await readFile(path.join(laneFixturesDir, "signing-key.secret"), "utf8")
 ).trimEnd();
 
+// The lane's public half, parsed from its committed fixture so the name
+// the worker stamps with is the name the checks verify against. A lane
+// asserting only the Sig line's name armors the text while the bytes are
+// free to rot: the signature must verify, the way a nix client verifies.
+const [laneSigningName, laneSigningPublicB64] = (
+  await readFile(path.join(laneFixturesDir, "signing-key.public"), "utf8")
+)
+  .trimEnd()
+  .split(":", 2);
+const lanePublicKey = crypto.createPublicKey({
+  format: "jwk",
+  key: {
+    kty: "OKP",
+    crv: "Ed25519",
+    x: Buffer.from(laneSigningPublicB64, "base64").toString("base64url"),
+  },
+});
+
+// nix's client-side contract, re-derived inside the lane: the fingerprint
+// is `1;<storePath>;<narHash>;<narSize>;` followed by the references
+// sorted, deduplicated, and joined with commas; the signature covers
+// those bytes directly. Any Sig line naming the lane's key must verify
+// against it, exactly as a real nix client's check would require.
+function laneSignatureVerifies(body) {
+  const fields = new Map();
+  const sigs = [];
+  for (const line of body.split("\n")) {
+    const splitAt = line.indexOf(": ");
+    if (splitAt === -1) continue;
+    const value = line.slice(splitAt + 2);
+    if (line.slice(0, splitAt) === "Sig") sigs.push(value);
+    else fields.set(line.slice(0, splitAt), value);
+  }
+  const references = (fields.get("References") ?? "").trim();
+  const canon = references
+    ? [...new Set(references.split(/\s+/))].sort().join(",")
+    : "";
+  const fingerprint = `1;${fields.get("StorePath")};${fields.get("NarHash")};${fields.get("NarSize")};${canon}`;
+  for (const sig of sigs) {
+    const [name, b64] = sig.split(":", 2);
+    if (name !== laneSigningName) continue;
+    return crypto.verify(
+      null,
+      Buffer.from(fingerprint, "ascii"),
+      lanePublicKey,
+      Buffer.from(b64, "base64"),
+    );
+  }
+  return false;
+}
+
 const results = [];
 async function check(name, fn) {
   try {
@@ -820,6 +871,11 @@ try {
           assert.match(body, /^FileSize: \d+$/m);
           assert.match(body, /^Sig: cachet-fixture-1:/m);
           assert.match(body, /^Sig: lane-sign-1:/m);
+          assert.equal(
+            laneSignatureVerifies(body),
+            true,
+            "a client with the public key must verify this document",
+          );
         },
       );
     },
@@ -1711,6 +1767,11 @@ try {
             `storePath=${storePath}\n--- body ---\n${body}`,
           );
           assert.ok(body.includes("Sig: lane-sign-1:"), body);
+          assert.equal(
+            laneSignatureVerifies(body),
+            true,
+            "a client with the public key must verify this document",
+          );
           const nar = await fetch(`${base}/${body.match(/^URL: (.+)$/m)[1]}`, {
             headers: READ_AUTH(),
           });
