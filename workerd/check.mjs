@@ -211,8 +211,13 @@ function laneSignatureVerifies(body) {
     else fields.set(line.slice(0, splitAt), value);
   }
   const references = (fields.get("References") ?? "").trim();
+  // Fingerprint references are full store paths, never the document's
+  // basenames (ValidPathInfo::fingerprint prints through printStorePath).
   const canon = references
-    ? [...new Set(references.split(/\s+/))].sort().join(",")
+    ? [...new Set(references.split(/\s+/))]
+        .sort()
+        .map((ref) => `/nix/store/${ref}`)
+        .join(",")
     : "";
   const fingerprint = `1;${fields.get("StorePath")};${fields.get("NarHash")};${fields.get("NarSize")};${canon}`;
   for (const sig of sigs) {

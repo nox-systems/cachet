@@ -143,6 +143,19 @@ impl Narinfo {
         refs
     }
 
+    /// The fingerprint's reference set: every basename with the store
+    /// directory restored. The narinfo document prints basenames, but the
+    /// fingerprint nix computes (ValidPathInfo::fingerprint, path-info.cc)
+    /// passes the set through `StoreDirConfig::printStorePathSet`, which
+    /// prepends the store directory to each one: signing basenames is the
+    /// reason nix refused every cachet signature until this fix.
+    fn fingerprint_references(&self) -> Vec<String> {
+        self.canonical_references()
+            .iter()
+            .map(|reference| format!("/nix/store/{reference}"))
+            .collect()
+    }
+
     /// The store-path hashes this narinfo depends on, for the closure walk.
     /// Parsing already validated every reference, so re-parsing cannot fail.
     pub fn reference_hashes(&self) -> Vec<StorePathHash> {
@@ -165,7 +178,7 @@ impl Narinfo {
             self.store_path,
             self.nar_hash,
             self.nar_size_bytes,
-            self.canonical_references().join(",")
+            self.fingerprint_references().join(",")
         )
     }
 
