@@ -165,39 +165,19 @@ pub async fn push<C: Commands, H: Http, T: TokenSource>(
         .filter(|path| root_set.contains(*path))
         .count();
 
-    // Pass one: upstream. Probes fan out sixteen wide, answers ordered.
+    // Pass one: cachet itself. A rerun's candidates mostly revisit here,
+    // so the pass that can end the run asks first; the upstream pass then
+    // prices only what cachet does not hold. A both-present path now lands
+    // in cache_hits rather than upstream_hits. The upload set is the same
+    // either way.
     let probe_token = a.tokens.mint(&inputs.audience).await?;
-    let upstream_answers = probe_pool(a.http, &inputs.upstream_url, None, &candidates).await;
-    let upstream = filter_against_upstream(&candidates, &root_set, &|path| {
-        upstream_answers
-            .iter()
-            .find(|(candidate, _)| candidate == path)
-            .and_then(|(_, answer)| *answer)
-    });
-    outcome.upstream_hits = upstream.upstream_hits;
-    outcome.probe_failures += upstream.probe_failures;
-    events(PushEvent::UpstreamTally {
-        to_push: upstream.kept.len(),
-        upstream_hits: upstream.upstream_hits,
-        probe_failures: upstream.probe_failures,
-    });
-    if upstream.kept.is_empty() {
-        return finish_with_lease(a, inputs, events, outcome, &resolved_root_paths).await;
-    }
-
-    // Pass two: cachet itself.
-    let cache_answers = probe_pool(
-        a.http,
-        &inputs.cache_url,
-        Some(&probe_token),
-        &upstream.kept,
-    )
-    .await;
-    let cached = drop_already_cached(&upstream.kept, &|path| {
-        cache_answers
-            .iter()
-            .find(|(candidate, _)| candidate == path)
-            .and_then(|(_, answer)| *answer)
+    let cache_answers: std::collections::BTreeMap<String, Option<bool>> =
+        probe_pool(a.http, &inputs.cache_url, Some(&probe_token), &candidates)
+            .await
+            .into_iter()
+            .collect();
+    let cached = drop_already_cached(&candidates, &|path| {
+        cache_answers.get(path).copied().flatten()
     });
     outcome.cache_hits = cached.cache_hits;
     outcome.probe_failures += cached.probe_failures;
@@ -210,10 +190,30 @@ pub async fn push<C: Commands, H: Http, T: TokenSource>(
         return finish_with_lease(a, inputs, events, outcome, &resolved_root_paths).await;
     }
 
+    // Pass two: upstream, only for the misses.
+    let upstream_answers: std::collections::BTreeMap<String, Option<bool>> =
+        probe_pool(a.http, &inputs.upstream_url, None, &cached.to_upload)
+            .await
+            .into_iter()
+            .collect();
+    let upstream = filter_against_upstream(&cached.to_upload, &root_set, &|path| {
+        upstream_answers.get(path).copied().flatten()
+    });
+    outcome.upstream_hits = upstream.upstream_hits;
+    outcome.probe_failures += upstream.probe_failures;
+    events(PushEvent::UpstreamTally {
+        to_push: upstream.kept.len(),
+        upstream_hits: upstream.upstream_hits,
+        probe_failures: upstream.probe_failures,
+    });
+    if upstream.kept.is_empty() {
+        return finish_with_lease(a, inputs, events, outcome, &resolved_root_paths).await;
+    }
+
     // Stage through nix: the store's own serialization and compression,
     // unsigned — the cache's pipeline verifies, then signs.
     let destination = format!("file://{}?compression=zstd", staging_dir.display());
-    a.commands.copy_to(&destination, &cached.to_upload).await?;
+    a.commands.copy_to(&destination, &upstream.kept).await?;
     let entries = a.commands.read_dir(staging_dir).await?;
     let mut objects = read_staging_layout(&entries)?;
     // why: `nix copy` stages the survivors' closures, but the probe passes
@@ -225,7 +225,7 @@ pub async fn push<C: Commands, H: Http, T: TokenSource>(
     // same construction: roots are survivors or probed hits, and a deep
     // reference without a pushed narinfo marks without descent.
     let mut survivor_bodies = std::collections::BTreeMap::new();
-    for path in &cached.to_upload {
+    for path in &upstream.kept {
         let hash = cachet_core::keys::parse_store_path(path)
             .map_err(|_| PushError::Detail {
                 message: format!("a survivor outside the store-path grammar: {path}"),

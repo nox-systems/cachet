@@ -571,10 +571,6 @@ async fn a_fully_cached_rebuild_renews_without_uploading() {
     let commands = FakeCommands::with_store(&format!("{BUILT}\n"));
     let http = FakeHttp::default();
     http.head(
-        "https://upstream.test/qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq.narinfo",
-        404,
-    );
-    http.head(
         "https://cachet.test/qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq.narinfo",
         200,
     );
@@ -599,6 +595,10 @@ async fn a_fully_cached_rebuild_renews_without_uploading() {
     .expect("answers");
     assert_eq!(outcome.uploaded_objects, 0);
     assert!(outcome.lease_renewed, "a fully-cached rebuild still renews");
+    assert!(
+        !http.calls().iter().any(|call| call.url.contains("upstream.test")),
+        "a fully-cached rerun never probes upstream",
+    );
 }
 
 #[tokio::test]
@@ -746,10 +746,6 @@ async fn off_the_default_branch_the_lease_sleeps() {
     let commands = FakeCommands::with_store(&format!("{BUILT}\n"));
     let http = FakeHttp::default();
     http.head(
-        "https://upstream.test/qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq.narinfo",
-        404,
-    );
-    http.head(
         "https://cachet.test/qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq.narinfo",
         200,
     );
@@ -775,5 +771,81 @@ async fn off_the_default_branch_the_lease_sleeps() {
     assert!(
         !http.calls().iter().any(|call| call.url.contains("/roots/")),
         "no renewal attempted",
+    );
+    assert!(
+        !http.calls().iter().any(|call| call.url.contains("upstream.test")),
+        "a fully-cached rerun never probes upstream",
+    );
+}
+
+const OTHER: &str = "/nix/store/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-built-2";
+const OTHER_KEY: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.narinfo";
+
+#[tokio::test]
+async fn upstream_probes_cover_only_cachet_misses() {
+    // BUILT is held by the cachet pass (nothing upstream is asked about
+    // it); OTHER misses at cachet and is priced upstream, where it turns
+    // out covered and drops out of the push set.
+    let commands = FakeCommands::with_store(&format!("{BUILT}\n{OTHER}\n"));
+    let http = FakeHttp::default();
+    http.head(
+        "https://cachet.test/qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq.narinfo",
+        200,
+    );
+    http.head(&format!("https://cachet.test/{OTHER_KEY}"), 404);
+    http.head(&format!("https://upstream.test/{OTHER_KEY}"), 200);
+    http.post("https://cachet.test/roots/lane-org-lane-repo", 204, "");
+    let tokens = FakeTokens::default();
+    let sleep = no_sleep();
+    let a = Adapters {
+        commands: &commands,
+        http: &http,
+        tokens: &tokens,
+        sleep: &sleep,
+    };
+    let (_events, mut sink) = collect_events();
+    let mut no_installables = inputs(true);
+    no_installables.installables.clear();
+    let outcome = push(
+        &a,
+        &no_installables,
+        "",
+        std::path::Path::new("/staging"),
+        &mut sink,
+    )
+    .await
+    .expect("answers");
+
+    assert_eq!(outcome.uploaded_objects, 0);
+    assert_eq!(outcome.cache_hits, 1);
+    assert_eq!(outcome.upstream_hits, 1);
+    let calls = http.calls();
+    let heads: Vec<&str> = calls
+        .iter()
+        .filter(|call| call.method == "HEAD")
+        .map(|call| call.url.as_str())
+        .collect();
+    assert!(
+        heads
+            .iter()
+            .any(|url| url.starts_with("https://cachet.test/") && url.ends_with(&NARINFO_KEY.to_string())),
+        "BUILT probes at cachet: {heads:?}",
+    );
+    assert!(
+        !heads
+            .iter()
+            .any(|url| url.starts_with("https://upstream.test/")
+                && url.ends_with(&NARINFO_KEY.to_string())),
+        "BUILT never reaches upstream: {heads:?}",
+    );
+    assert!(
+        heads
+            .iter()
+            .any(|url| url == &format!("https://upstream.test/{OTHER_KEY}")),
+        "OTHER answers upstream: {heads:?}",
+    );
+    assert!(
+        !calls.iter().any(|call| call.method == "PUT"),
+        "nothing uploads: {calls:?}",
     );
 }
