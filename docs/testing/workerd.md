@@ -39,7 +39,10 @@ shape and by exact bytes; the corrupt-generation bypass; generation-zero
 behavior on an empty bucket; the OIDC rejection matrix (wrong org, alg
 confusion, staleness, expired tokens); guard ordering (411 before 413,
 401 before 411); the verify-then-sign pipeline end to end, from a NAR
-upload through a signed narinfo with both signatures and the file facts;
+upload through a signed narinfo whose signatures both verify against the
+lane's own public key (nix's fingerprint recipe re-derived in the driver:
+a lane asserting the Sig line's name alone armors the text while the
+bytes are free to rot) and the file facts;
 the multipart quartet with its record, part-size enforcement, replay, and
 abort; the CLI's own push, driven as the composite action drives it
 (snapshot step, `nix-store --add-fixed` payload, push) with the stub
