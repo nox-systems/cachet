@@ -1,6 +1,7 @@
-//! The OIDC mint: GitHub answers one request with one JsonWebToken. The
-//! pipeline refreshes by minting again inside every attempt, so a 401 is
-//! retried with a seconds-old credential rather than a refresh dance.
+//! The OIDC mint: GitHub answers one request with one JsonWebToken. One
+//! run rides one mint through `RunTokens`, and the retry envelope's 401
+//! hook is what keeps the old "fresh credential on every retry"
+//! guarantee exactly where it is needed.
 
 use crate::adapters::{Http, TokenSource};
 use crate::error::PushError;
@@ -108,6 +109,42 @@ impl<H: Http> TokenSource for OidcTokens<'_, H> {
             .value
             .filter(|token| !token.is_empty())
             .ok_or(PushError::OidcEmpty)
+    }
+}
+
+/// A run-scoped mint: the first call reaches the real source, later
+/// calls reuse the run's token, and a 401 anywhere clears the slot so
+/// the next attempt remints fresh. why: freshness is detected by the
+/// authoritative refusal, never by a client clock, so no `exp` decode
+/// and no skew class enter the design. The guard is a std Mutex whose
+/// borrow never crosses an await.
+pub struct RunTokens<'a, T: TokenSource> {
+    inner: &'a T,
+    slot: std::sync::Mutex<Option<String>>,
+}
+
+impl<'a, T: TokenSource> RunTokens<'a, T> {
+    /// Wrap a source for one run's worth of sharing.
+    pub fn over(inner: &'a T) -> Self {
+        Self {
+            inner,
+            slot: std::sync::Mutex::new(None),
+        }
+    }
+}
+
+impl<T: TokenSource> TokenSource for RunTokens<'_, T> {
+    async fn mint(&self, audience: &str) -> Result<String, PushError> {
+        if let Some(token) = self.slot.lock().expect("the memo").clone() {
+            return Ok(token);
+        }
+        let token = self.inner.mint(audience).await?;
+        *self.slot.lock().expect("the memo") = Some(token.clone());
+        Ok(token)
+    }
+
+    async fn invalidate(&self, _audience: &str) {
+        *self.slot.lock().expect("the memo") = None;
     }
 }
 

@@ -45,7 +45,7 @@ const GOOD_LAPTOP_TOKEN = "lane-laptop-token";
 // The lane's plain read credential for object GET/HEADs: every object
 // read answers 401 without one.
 const READ_AUTH = () => ({ authorization: `Bearer ${GOOD_LAPTOP_TOKEN}` });
-const stubHits = { user: 0, memberships: 0, exchange: 0 };
+const stubHits = { user: 0, memberships: 0, exchange: 0, oidcMint: 0 };
 const LANE_OAUTH_CODE = "lane-code";
 const LANE_OUTSIDER_CODE = "lane-code-outsider";
 const OUTSIDER_TOKEN = "lane-outsider-token";
@@ -68,6 +68,7 @@ const stubServer = http.createServer((req, res) => {
     const audience = new URL(req.url, "http://stub").searchParams.get(
       "audience",
     );
+    stubHits.oidcMint += 1;
     return json(200, {
       count: 1,
       value: mint({ aud: audience ?? "cachet-lane" }),
@@ -1608,11 +1609,17 @@ try {
         );
         assert.equal(added.status, 0, added.stderr);
         storePath = added.stdout.trim().split("\n").pop();
+        const mintsBefore = stubHits.oidcMint;
         const pushed = await runCli(["push"], {
           ...pushEnv,
           CACHET_ROOTS: storePath,
         });
         assert.equal(pushed.status, 0, pushed.stderr);
+        assert.equal(
+          stubHits.oidcMint - mintsBefore,
+          1,
+          "one mint carries the whole push run",
+        );
         assert.ok(
           pushed.stdout.includes("cachet: 1 new to cachet"),
           pushed.stdout,
@@ -1672,11 +1679,17 @@ try {
           );
           assert.equal(added.status, 0, added.stderr);
           const bigPath = added.stdout.trim().split("\n").pop();
+          const mintsBefore = stubHits.oidcMint;
           const pushed = await runCli(["push"], {
             ...pushEnv,
             CACHET_ROOTS: bigPath,
           });
           assert.equal(pushed.status, 0, pushed.stderr);
+          assert.equal(
+            stubHits.oidcMint - mintsBefore,
+            1,
+            "one mint carries the multipart run, parts included",
+          );
           assert.ok(
             pushed.stdout.includes("cachet: uploaded 2 objects"),
             pushed.stdout,

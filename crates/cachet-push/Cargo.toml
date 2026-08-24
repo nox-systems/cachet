@@ -23,8 +23,8 @@ tokio = { version = "1", features = ["fs", "io-util", "macros", "process", "rt-m
 # lottery off laptops and runners alike, and the stream feature is what
 # the multipart plan's ranged reads ride.
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
-# why: the probe pools bound concurrency with buffer_unordered; the
-# alternative is a handwritten worker pool around JoinSet for no gain.
+# why: probes fan out with `buffered` and uploads wave with `join_all`;
+# the alternative is a handwritten worker pool around JoinSet for no gain.
 futures-util = "0.3"
 
 [dev-dependencies]

@@ -219,7 +219,10 @@ async fn run_pipeline_inner(
     let http =
         cachet_push::real::ReqwestHttp::new().map_err(|failure| CliError(failure.to_string()))?;
     let commands = cachet_push::real::TokioCommands;
-    let tokens = cachet_push::oidc::OidcTokens::new(&oidc_env, &http);
+    // why: one mint rides the whole run; the pipeline's 401 hook
+    // invalidates it when the API says it aged.
+    let oidc = cachet_push::oidc::OidcTokens::new(&oidc_env, &http);
+    let tokens = cachet_push::oidc::RunTokens::over(&oidc);
     let sleep = |ms: u64| -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
         Box::pin(tokio::time::sleep(std::time::Duration::from_millis(ms)))
     };
