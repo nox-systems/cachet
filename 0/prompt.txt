@@ -2398,3 +2398,7 @@ Can you get a latest wrangler bro
 ---
 
 wait hold the fuck on, why is wrangler not being added via nix
+
+---
+
+okay. Fix pr 10. Push. And then let's see if CI still says the trust shit
