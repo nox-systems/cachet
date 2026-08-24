@@ -268,6 +268,12 @@ struct FakeTokens {
     counter: Mutex<u64>,
 }
 
+impl FakeTokens {
+    fn mints(&self) -> u64 {
+        *self.counter.lock().expect("counter")
+    }
+}
+
 impl TokenSource for FakeTokens {
     async fn mint(&self, audience: &str) -> Result<String, PushError> {
         assert_eq!(audience, "cachet-test");
@@ -482,6 +488,94 @@ async fn the_happy_path_uploads_and_renews_in_order() {
         events.iter().any(|e| e.starts_with("LeaseRenewed")),
         "{events:?}"
     );
+}
+
+#[tokio::test]
+async fn mints_once_across_a_happy_run() {
+    let commands = FakeCommands::with_store(&format!("{BUILT}\n"));
+    let nar_key = format!("nar/{}.nar.zst", "n".repeat(52));
+    seed_pair(
+        &commands,
+        NARINFO_KEY,
+        survivor_body(BUILT, &nar_key),
+        &nar_key,
+        vec![b'y'; 2_000],
+    );
+    let http = FakeHttp::default();
+    stub_probes_miss(&http);
+    http.put(&format!("https://cachet.test/{nar_key}"), 204, "");
+    http.put(&format!("https://cachet.test/{NARINFO_KEY}"), 204, "");
+    http.post("https://cachet.test/roots/lane-org-lane-repo", 204, "");
+    let inner = FakeTokens::default();
+    let tokens = crate::oidc::RunTokens::over(&inner);
+    let sleep = no_sleep();
+    let a = Adapters {
+        commands: &commands,
+        http: &http,
+        tokens: &tokens,
+        sleep: &sleep,
+    };
+    let (_events, mut sink) = collect_events();
+    push(
+        &a,
+        &inputs(true),
+        "",
+        std::path::Path::new("/staging"),
+        &mut sink,
+    )
+    .await
+    .expect("the run answers");
+    assert_eq!(
+        inner.mints(),
+        1,
+        "one mint rides the probe pass, the uploads, and the lease"
+    );
+}
+
+#[tokio::test]
+async fn a_401_remints_for_the_next_attempt() {
+    let commands = FakeCommands::with_store(&format!("{BUILT}\n"));
+    let nar_key = format!("nar/{}.nar.zst", "n".repeat(52));
+    seed_pair(
+        &commands,
+        NARINFO_KEY,
+        survivor_body(BUILT, &nar_key),
+        &nar_key,
+        vec![b'y'; 2_000],
+    );
+    let http = FakeHttp::default();
+    stub_probes_miss(&http);
+    http.put(&format!("https://cachet.test/{nar_key}"), 204, "");
+    http.put(&format!("https://cachet.test/{NARINFO_KEY}"), 401, "");
+    http.put(&format!("https://cachet.test/{NARINFO_KEY}"), 204, "");
+    http.post("https://cachet.test/roots/lane-org-lane-repo", 204, "");
+    let inner = FakeTokens::default();
+    let tokens = crate::oidc::RunTokens::over(&inner);
+    let sleep = no_sleep();
+    let a = Adapters {
+        commands: &commands,
+        http: &http,
+        tokens: &tokens,
+        sleep: &sleep,
+    };
+    let (_events, mut sink) = collect_events();
+    push(
+        &a,
+        &inputs(true),
+        "",
+        std::path::Path::new("/staging"),
+        &mut sink,
+    )
+    .await
+    .expect("the retry answers");
+    assert_eq!(inner.mints(), 2, "the 401 invalidated, the retry reminted");
+    let calls = http.calls();
+    let narinfo_put = calls
+        .iter()
+        .filter(|call| call.method == "PUT" && call.url.ends_with(".narinfo"))
+        .last()
+        .expect("the retried narinfo PUT");
+    assert_eq!(narinfo_put.bearer.as_deref(), Some("token-2"));
 }
 
 #[tokio::test]

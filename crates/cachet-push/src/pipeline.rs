@@ -288,6 +288,9 @@ async fn finish_with_lease<C: Commands, H: Http, T: TokenSource>(
                     &[("content-type".to_string(), "application/json".to_string())],
                 )
                 .await?;
+            if answer.status == 401 {
+                a.tokens.invalidate(&inputs.audience).await;
+            }
             require_2xx(&label, answer)
         }
     })
@@ -380,6 +383,12 @@ async fn upload_single<C: Commands, H: Http, T: TokenSource>(
         async move {
             let token = a.tokens.mint(&inputs.audience).await?;
             let answer = a.http.put(&url, &token, body, &[]).await?;
+            // why: a 401 is the only truthful signal a run-scoped token
+            // has aged out; telling the source to refill it is cheaper
+            // than minting for every attempt.
+            if answer.status == 401 {
+                a.tokens.invalidate(&inputs.audience).await;
+            }
             require_2xx(&label, answer)
         }
     })
@@ -415,6 +424,9 @@ async fn upload_multipart<C: Commands, H: Http, T: TokenSource>(
                     )],
                 )
                 .await?;
+            if answer.status == 401 {
+                a.tokens.invalidate(&inputs.audience).await;
+            }
             let answer = require_2xx(&label, answer)?;
             serde_json::from_slice(&answer.body).map_err(|failure| PushError::Detail {
                 message: format!("the begin answer did not parse: {failure}"),
@@ -466,6 +478,9 @@ async fn upload_multipart<C: Commands, H: Http, T: TokenSource>(
                     &[("content-type".to_string(), "application/json".to_string())],
                 )
                 .await?;
+            if answer.status == 401 {
+                a.tokens.invalidate(&inputs.audience).await;
+            }
             require_2xx(&label, answer)
         }
     })
@@ -506,6 +521,9 @@ async fn upload_one_part<C: Commands, H: Http, T: TokenSource>(
         async move {
             let token = a.tokens.mint(&inputs.audience).await?;
             let answer = a.http.put(&url, &token, body, &[]).await?;
+            if answer.status == 401 {
+                a.tokens.invalidate(&inputs.audience).await;
+            }
             let answer = require_2xx(&label, answer)?;
             serde_json::from_slice(&answer.body).map_err(|failure| PushError::Detail {
                 message: format!("the part answer did not parse: {failure}"),

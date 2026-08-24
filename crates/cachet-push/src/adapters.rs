@@ -93,6 +93,12 @@ pub trait Http: Send + Sync {
 pub trait TokenSource: Send + Sync {
     /// Mint a fresh OIDC token for the audience.
     fn mint(&self, audience: &str) -> impl Future<Output = Result<String, PushError>> + Send;
+    /// Drop any run-scoped credential the caller holds: a 401 from the
+    /// API means the token it refused must not be issued again this run.
+    /// Sources without a memo keep the no-op default.
+    fn invalidate(&self, _audience: &str) -> impl Future<Output = ()> + Send {
+        async {}
+    }
 }
 
 /// Where the snapshot file lives between a run's steps.
