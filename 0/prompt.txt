@@ -2817,3 +2817,7 @@ did you try it locally?
 ---
 
 Okay, looks like CI is working again. Why are the todos still open?
+
+---
+
+well you broke the dependabot changes lmao, you moved the checkout action back to v6 you fucking retard
