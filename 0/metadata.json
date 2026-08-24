@@ -1,0 +1,78 @@
+{
+  "cli_version": "0.10.2",
+  "checkpoint_id": "01M0SBR7A5GE5TP0AZ531KDTGV",
+  "session_id": "d50e44b4-93a7-4a75-8ce8-2f52bde07903",
+  "strategy": "manual-commit",
+  "created_at": "2026-08-24T07:46:33.324288Z",
+  "branch": "chore/perf-wire-set",
+  "checkpoints_count": 11,
+  "save_step_count": 1,
+  "files_touched": [],
+  "agent": "Claude Code",
+  "model": "moonshotai/Kimi-K3[1m]",
+  "turn_id": "1ff6533a107a",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 690095976,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 686481024,
+    "output_tokens": 1648129,
+    "api_call_count": 2509
+  },
+  "skill_events_version": 1,
+  "skill_events": [
+    {
+      "id": "claude-skill-Skill:1",
+      "event_type": "tool_invocation",
+      "skill": {
+        "name": "cloudflare"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "skill_tool_use",
+        "confidence": "explicit"
+      },
+      "turn_id": "1ff6533a107a",
+      "transcript_anchor": {
+        "unit": "line",
+        "start": 16,
+        "end": 17,
+        "entry_ids": [
+          "5a13d610-6dd8-4c4c-92db-3836b46cfcc4"
+        ],
+        "tool_use_id": "Skill:1"
+      },
+      "native": {
+        "tool_name": "Skill",
+        "tool_use_id": "Skill:1"
+      },
+      "collapse": {
+        "target": "tool_pair",
+        "label": "Skill: cloudflare",
+        "default_collapsed": true
+      }
+    }
+  ],
+  "session_metrics": {
+    "turn_count": 151
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 338,
+      "user_lines_removed": 54,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1,
+        "crates/cachet-push/src/pipeflow.rs": 183,
+        "crates/cachet-push/src/pipeline.rs": 63,
+        "crates/cachet-push/src/plan.rs": 91
+      },
+      "user_removed_per_file": {
+        "crates/cachet-push/src/pipeflow.rs": 20,
+        "crates/cachet-push/src/pipeline.rs": 34
+      }
+    }
+  ]
+}
