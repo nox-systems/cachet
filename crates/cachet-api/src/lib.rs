@@ -144,7 +144,7 @@ pub struct ProblemBody {
     info(
         title = "cachet",
         version = env!("CARGO_PKG_VERSION"),
-        description = "A self-hostable nix binary cache on Cloudflare Workers. Writes carry GitHub OIDC credentials; reads carry a GitHub token or the browser session cookie; the narinfo grammar and the public handshake are unauthenticated. Every route that reads a credential can additionally answer 400 with code=malformed_auth when the Authorization header itself is undecodable.",
+        description = "A self-hostable nix binary cache on Cloudflare Workers. Writes carry GitHub OIDC credentials; reads carry a GitHub token or the browser session cookie; the public handshake route is unauthenticated. Every route that reads a credential can additionally answer 400 with code=malformed_auth when the Authorization header itself is undecodable.",
     ),
     paths(
         routes::cache_info_get,
