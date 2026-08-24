@@ -1,0 +1,34 @@
+{
+  "cli_version": "0.10.2",
+  "checkpoint_id": "01M0TNWPNQA6J1NR6Z58WAJYZF",
+  "strategy": "manual-commit",
+  "branch": "chore/clients-trust",
+  "checkpoints_count": 9,
+  "files_touched": [
+    "docs/testing/workerd.md",
+    "workerd/check.mjs"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 780258465,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 775287232,
+    "output_tokens": 1820162,
+    "api_call_count": 2862,
+    "subagent_tokens": {
+      "input_tokens": 2862027,
+      "cache_creation_tokens": 0,
+      "cache_read_tokens": 2704384,
+      "output_tokens": 63997,
+      "api_call_count": 52
+    }
+  }
+}
