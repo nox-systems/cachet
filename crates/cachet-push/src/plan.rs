@@ -88,12 +88,14 @@ pub fn owned_object_keys(
 ) -> Result<std::collections::BTreeSet<String>, PushError> {
     let mut owned = std::collections::BTreeSet::new();
     for (hash, body) in survivors {
-        let document = cachet_core::narinfo::Narinfo::parse(body).map_err(|_| {
-            PushError::Detail {
+        let document =
+            cachet_core::narinfo::Narinfo::parse(body).map_err(|_| PushError::Detail {
                 message: format!("the staged narinfo for {hash} does not parse"),
-            }
-        })?;
-        owned.insert(format!("{hash}{}", cachet_core::constants::NARINFO_KEY_SUFFIX));
+            })?;
+        owned.insert(format!(
+            "{hash}{}",
+            cachet_core::constants::NARINFO_KEY_SUFFIX
+        ));
         owned.insert(document.url.as_str().to_string());
     }
     Ok(owned)
@@ -145,8 +147,7 @@ mod tests {
     use crate::plan::owned_object_keys;
 
     const SURVIVOR_HASH: &str = "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq";
-    const NAR_KEY: &str =
-        "nar/nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn.nar.zst";
+    const NAR_KEY: &str = "nar/nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn.nar.zst";
 
     fn survivor_body(store_path: &str, nar_key: &str) -> String {
         format!(
@@ -158,10 +159,7 @@ mod tests {
     fn owned_keys_is_exactly_the_survivor_pairs() {
         let survivors = std::collections::BTreeMap::from([(
             SURVIVOR_HASH.to_string(),
-            survivor_body(
-                &format!("/nix/store/{SURVIVOR_HASH}-built-1"),
-                NAR_KEY,
-            ),
+            survivor_body(&format!("/nix/store/{SURVIVOR_HASH}-built-1"), NAR_KEY),
         )]);
         let owned = owned_object_keys(&survivors).expect("parses");
         assert_eq!(
@@ -179,10 +177,7 @@ mod tests {
         let survivors = std::collections::BTreeMap::from([
             (
                 SURVIVOR_HASH.to_string(),
-                survivor_body(
-                    &format!("/nix/store/{SURVIVOR_HASH}-built-1"),
-                    NAR_KEY,
-                ),
+                survivor_body(&format!("/nix/store/{SURVIVOR_HASH}-built-1"), NAR_KEY),
             ),
             (
                 other_hash.to_string(),

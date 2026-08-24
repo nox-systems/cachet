@@ -312,6 +312,26 @@ fn survivor_body(store_path: &str, nar_key: &str) -> String {
     )
 }
 
+/// Seed the survivor pair into the fake staging tree: layout rows and
+/// file bodies for the narinfo and the NAR it names.
+fn seed_pair(
+    commands: &FakeCommands,
+    narinfo_key: &str,
+    narinfo_body: String,
+    nar_key: &str,
+    nar_bytes: Vec<u8>,
+) {
+    let nar_size = nar_bytes.len() as u64;
+    commands.layout.lock().expect("layout").extend([
+        (narinfo_key.to_string(), narinfo_body.len() as u64),
+        (nar_key.to_string(), nar_size),
+    ]);
+    commands.files.lock().expect("files").extend([
+        (narinfo_key.to_string(), narinfo_body.into_bytes()),
+        (nar_key.to_string(), nar_bytes),
+    ]);
+}
+
 /// Stage a NAR of `size` bytes under the fixture content hash and answer
 /// with its object key.
 fn stage_big_nar(commands: &FakeCommands, size: u64) -> String {
@@ -370,21 +390,13 @@ async fn the_happy_path_uploads_and_renews_in_order() {
         .expect("map")
         .insert(".#leafroot".to_string(), Ok(format!("{ROOTED}\n")));
     let nar_key = format!("nar/{}.nar.zst", "n".repeat(52));
-    let narinfo_body = survivor_body(BUILT, &nar_key);
-    commands.layout.lock().expect("layout").extend([
-        (
-            "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq.narinfo".to_string(),
-            narinfo_body.len() as u64,
-        ),
-        (nar_key.clone(), 2_000_u64),
-    ]);
-    commands.files.lock().expect("files").extend([
-        (
-            "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq.narinfo".to_string(),
-            narinfo_body.into_bytes(),
-        ),
-        (nar_key, vec![b'y'; 2_000]),
-    ]);
+    seed_pair(
+        &commands,
+        "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq.narinfo",
+        survivor_body(BUILT, &nar_key),
+        &nar_key,
+        vec![b'y'; 2_000],
+    );
     // Root kept unprobed upstream and cached at cachet; BUILT absent
     // upstream AND absent at cachet.
     let http = FakeHttp::default();
@@ -596,7 +608,10 @@ async fn a_fully_cached_rebuild_renews_without_uploading() {
     assert_eq!(outcome.uploaded_objects, 0);
     assert!(outcome.lease_renewed, "a fully-cached rebuild still renews");
     assert!(
-        !http.calls().iter().any(|call| call.url.contains("upstream.test")),
+        !http
+            .calls()
+            .iter()
+            .any(|call| call.url.contains("upstream.test")),
         "a fully-cached rerun never probes upstream",
     );
 }
@@ -607,10 +622,11 @@ async fn the_multipart_quartet_carries_the_contract() {
     let commands = FakeCommands::with_store(&format!("{BUILT}\n"));
     let nar_key = stage_big_nar(&commands, big);
     let narinfo_body = survivor_body(BUILT, &nar_key);
-    commands.layout.lock().expect("layout").extend([(
-        NARINFO_KEY.to_string(),
-        narinfo_body.len() as u64,
-    )]);
+    commands
+        .layout
+        .lock()
+        .expect("layout")
+        .extend([(NARINFO_KEY.to_string(), narinfo_body.len() as u64)]);
     commands
         .files
         .lock()
@@ -683,10 +699,11 @@ async fn a_dying_part_aborts_best_effort() {
     let commands = FakeCommands::with_store(&format!("{BUILT}\n"));
     let nar_key = stage_big_nar(&commands, big);
     let narinfo_body = survivor_body(BUILT, &nar_key);
-    commands.layout.lock().expect("layout").extend([(
-        NARINFO_KEY.to_string(),
-        narinfo_body.len() as u64,
-    )]);
+    commands
+        .layout
+        .lock()
+        .expect("layout")
+        .extend([(NARINFO_KEY.to_string(), narinfo_body.len() as u64)]);
     commands
         .files
         .lock()
@@ -773,7 +790,10 @@ async fn off_the_default_branch_the_lease_sleeps() {
         "no renewal attempted",
     );
     assert!(
-        !http.calls().iter().any(|call| call.url.contains("upstream.test")),
+        !http
+            .calls()
+            .iter()
+            .any(|call| call.url.contains("upstream.test")),
         "a fully-cached rerun never probes upstream",
     );
 }
@@ -828,7 +848,8 @@ async fn upstream_probes_cover_only_cachet_misses() {
     assert!(
         heads
             .iter()
-            .any(|url| url.starts_with("https://cachet.test/") && url.ends_with(&NARINFO_KEY.to_string())),
+            .any(|url| url.starts_with("https://cachet.test/")
+                && url.ends_with(&NARINFO_KEY.to_string())),
         "BUILT probes at cachet: {heads:?}",
     );
     assert!(
