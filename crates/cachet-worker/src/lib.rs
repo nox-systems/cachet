@@ -60,34 +60,8 @@ async fn fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
             }
             return roots::read_lease(&env, &project).await;
         }
-        if path.starts_with("/nar/") {
-            let key = match parse_nar_request_path(&path) {
-                Ok(key) => key,
-                Err(code) => return error::problem_response(code),
-            };
-            let authorized = verdict::authorize_read(&env, now, &req).await;
-            if let Err(code) = authorized {
-                return error::problem_response(code);
-            }
-            return match method {
-                Method::Head => read::head_object(&env, key.as_str(), ObjectKind::Nar).await,
-                _ => read::serve_object(&env, &ctx, &path, key.as_str(), ObjectKind::Nar).await,
-            };
-        }
-        if path.ends_with(NARINFO_KEY_SUFFIX) {
-            let hash = match parse_narinfo_request_path(&path) {
-                Ok(hash) => hash,
-                Err(code) => return error::problem_response(code),
-            };
-            let authorized = verdict::authorize_read(&env, now, &req).await;
-            if let Err(code) = authorized {
-                return error::problem_response(code);
-            }
-            let bucket_key = format!("{hash}{NARINFO_KEY_SUFFIX}");
-            return match method {
-                Method::Head => read::head_object(&env, &bucket_key, ObjectKind::Narinfo).await,
-                _ => read::serve_object(&env, &ctx, &path, &bucket_key, ObjectKind::Narinfo).await,
-            };
+        if let Some(response) = read_routes(&env, &ctx, now, &req, &method, &path).await {
+            return response;
         }
         return error::problem_response(ClientError::NotFound);
     }
@@ -241,6 +215,59 @@ fn query_value(req: &Request, name: &str) -> Option<String> {
         .query_pairs()
         .find(|(key, _)| key == name)
         .map(|(_, value)| value.into_owned())
+}
+
+/// The cache-object GET branches: NAR and narinfo keys in one shape. The
+/// credential and the generation join here (independent fetches, so a miss
+/// pays one colo hop instead of two), and the HEAD arm stays free of
+/// generation work the edge cache never serves.
+async fn read_routes(
+    env: &Env,
+    ctx: &Context,
+    now: UnixMillis,
+    req: &Request,
+    method: &Method,
+    path: &str,
+) -> Option<Result<Response>> {
+    let (bucket_key, kind) = if path.starts_with("/nar/") {
+        match parse_nar_request_path(path) {
+            Ok(key) => (key.as_str().to_string(), ObjectKind::Nar),
+            Err(code) => return Some(error::problem_response(code)),
+        }
+    } else if path.ends_with(NARINFO_KEY_SUFFIX) {
+        match parse_narinfo_request_path(path) {
+            Ok(hash) => (format!("{hash}{NARINFO_KEY_SUFFIX}"), ObjectKind::Narinfo),
+            Err(code) => return Some(error::problem_response(code)),
+        }
+    } else {
+        return None;
+    };
+    let (authorized, generation) = match method {
+        // why: a HEAD never resolves the generation (the edge cache
+        // answers GETs, never HEADs), so nothing joins.
+        Method::Head => (verdict::authorize_read(env, now, req).await, Ok(None)),
+        // why: the generation fetch is independent of the credential;
+        // joining pays one colo hop instead of two on a miss chain, and a
+        // denied request racing a generation lookup leaks nothing.
+        _ => {
+            futures_util::future::join(
+                verdict::authorize_read(env, now, req),
+                read::resolve_generation(env, ctx, now),
+            )
+            .await
+        }
+    };
+    if let Err(code) = authorized {
+        return Some(error::problem_response(code));
+    }
+    let generation = match generation {
+        Ok(generation) => generation,
+        Err(failure) => return Some(Err(failure)),
+    };
+    Some(match method {
+        Method::Head => read::head_object(env, &bucket_key, kind).await,
+        _ => read::serve_object(env, ctx, path, &bucket_key, kind, generation).await,
+    })
 }
 
 /// The write-path credential against the request's Authorization header.

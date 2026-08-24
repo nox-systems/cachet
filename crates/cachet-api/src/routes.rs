@@ -32,7 +32,8 @@ pub fn cache_info_get() {}
 pub fn cache_info_head() {}
 
 /// `GET /{hash}.narinfo`: one narinfo document, edge-cached for 30 days
-/// and byte-immutable. Unauthenticated: the signature is the check.
+/// and byte-immutable. Reads authenticate like every cache read; the
+/// narinfo's signatures are the content-integrity check, not the gate.
 #[utoipa::path(
     get,
     path = "/{hash}.narinfo",

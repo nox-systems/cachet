@@ -52,7 +52,7 @@ inputs:
   cachet-version:
     description: The cachet release to download and run.
     required: false
-    default: 0.0.3
+    default: 0.0.5
 
 runs:
   using: composite
@@ -122,10 +122,14 @@ runs:
         # public config fails the job here, before the build starts. The
         # retry only asks that "cannot answer" outlive a blip.
         public_key="$(curl -fsSL --retry 4 --retry-all-errors --retry-delay 2 "${CACHET_CACHE_URL%/}/api/public/config" | jq -r '.publicKey')"
+        # why: nix treats the key settings as restricted, so an untrusted
+        # caller's extra-trusted-public-keys line is parsed and dropped;
+        # the invoking user must itself be trusted for the key to count.
         {
           echo "CACHET_EXTRA_CONF<<EOF_CACHET_CONF"
           echo "extra-substituters = ${CACHET_CACHE_URL%/}"
           echo "extra-trusted-public-keys = ${public_key}"
+          echo "trusted-users = root $(whoami)"
           echo "EOF_CACHET_CONF"
         } >> "${GITHUB_ENV}"
         echo "cachet: read credential provisioned before Determinate starts"

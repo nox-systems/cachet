@@ -71,6 +71,36 @@ pub fn upload_order(objects: &mut [StagedObject]) {
     objects.sort_by_key(StagedObject::is_narinfo);
 }
 
+/// The keys one survivor set owns: each survivor's own narinfo key plus
+/// the NAR key its staged narinfo names. `nix copy` answers closures, so
+/// the staging tree holds far more than the survivors; this is where the
+/// filter verdicts bind the wire set again. The NAR key is read out of
+/// the staged narinfo, never recomputed: two runs of nix's zstd can
+/// encode one NAR to different names, and only the pair staged together
+/// names itself consistently.
+///
+/// # Errors
+///
+/// [`PushError::Detail`] naming the hash when a staged narinfo does not
+/// parse: an unreadable pair never gets a guessed name.
+pub fn owned_object_keys(
+    survivors: &std::collections::BTreeMap<String, String>,
+) -> Result<std::collections::BTreeSet<String>, PushError> {
+    let mut owned = std::collections::BTreeSet::new();
+    for (hash, body) in survivors {
+        let document =
+            cachet_core::narinfo::Narinfo::parse(body).map_err(|_| PushError::Detail {
+                message: format!("the staged narinfo for {hash} does not parse"),
+            })?;
+        owned.insert(format!(
+            "{hash}{}",
+            cachet_core::constants::NARINFO_KEY_SUFFIX
+        ));
+        owned.insert(document.url.as_str().to_string());
+    }
+    Ok(owned)
+}
+
 /// One object's ride: the whole body in one PUT, or the multipart
 /// quartet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,9 +141,89 @@ pub fn object_url(cache_url: &str, key: &str, query: &str) -> String {
     format!("{}/{key}{query}", cache_url.trim_end_matches('/'))
 }
 
+/// The wave plan for one fan-out: greedy index ranges starting from the
+/// plan order. A wave closes when it holds `max_count` items or when the
+/// next item would carry the wave's byte total over the budget; an
+/// oversized single item rides alone. Pure data, so the partition is
+/// testable without the runner.
+pub fn wave_plan(item_sizes: &[u64], max_count: usize, byte_budget: u64) -> Vec<(usize, usize)> {
+    let mut waves = Vec::new();
+    let mut start = 0_usize;
+    let mut bytes = 0_u64;
+    for (index, size) in item_sizes.iter().enumerate() {
+        let count = index - start;
+        if count == max_count || (count > 0 && bytes + size > byte_budget) {
+            waves.push((start, index));
+            start = index;
+            bytes = 0;
+        }
+        bytes += size;
+    }
+    if start < item_sizes.len() {
+        waves.push((start, item_sizes.len()));
+    }
+    waves
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::plan::owned_object_keys;
+
+    const SURVIVOR_HASH: &str = "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq";
+    const NAR_KEY: &str = "nar/nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn.nar.zst";
+
+    fn survivor_body(store_path: &str, nar_key: &str) -> String {
+        format!(
+            "StorePath: {store_path}\nURL: {nar_key}\nCompression: zstd\nNarHash: sha256:0iqi00iqi00iqi00iqi00iqi00iqi00iqi00iqi00iqi00iqi00j\nNarSize: 42\n"
+        )
+    }
+
+    #[test]
+    fn owned_keys_is_exactly_the_survivor_pairs() {
+        let survivors = std::collections::BTreeMap::from([(
+            SURVIVOR_HASH.to_string(),
+            survivor_body(&format!("/nix/store/{SURVIVOR_HASH}-built-1"), NAR_KEY),
+        )]);
+        let owned = owned_object_keys(&survivors).expect("parses");
+        assert_eq!(
+            owned,
+            std::collections::BTreeSet::from([
+                format!("{SURVIVOR_HASH}.narinfo"),
+                NAR_KEY.to_string(),
+            ]),
+        );
+    }
+
+    #[test]
+    fn a_shared_nar_is_owned_once() {
+        let other_hash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let survivors = std::collections::BTreeMap::from([
+            (
+                SURVIVOR_HASH.to_string(),
+                survivor_body(&format!("/nix/store/{SURVIVOR_HASH}-built-1"), NAR_KEY),
+            ),
+            (
+                other_hash.to_string(),
+                survivor_body(&format!("/nix/store/{other_hash}-built-2"), NAR_KEY),
+            ),
+        ]);
+        let owned = owned_object_keys(&survivors).expect("parses");
+        assert_eq!(owned.len(), 3, "two narinfos naming one NAR key share it");
+    }
+
+    #[test]
+    fn an_unparseable_survivor_narinfo_names_its_hash() {
+        let survivors = std::collections::BTreeMap::from([(
+            SURVIVOR_HASH.to_string(),
+            "not a narinfo".to_string(),
+        )]);
+        let failure = owned_object_keys(&survivors).expect_err("refuses");
+        assert!(
+            failure.to_string().contains(SURVIVOR_HASH),
+            "the error names the hash: {failure}"
+        );
+    }
 
     #[test]
     fn the_layout_reads_the_two_shapes() {
@@ -167,6 +277,28 @@ mod tests {
             }
             UploadMechanics::Single => panic!("past the cap must not ride single"),
         }
+    }
+
+    #[test]
+    fn waves_close_on_the_count_line() {
+        let sizes = [1_u64; 34];
+        assert_eq!(
+            wave_plan(&sizes, 16, u64::MAX),
+            vec![(0, 16), (16, 32), (32, 34)],
+        );
+    }
+
+    #[test]
+    fn waves_close_on_the_byte_line() {
+        assert_eq!(wave_plan(&[3, 3, 3, 3], 16, 6), vec![(0, 2), (2, 4)]);
+        assert_eq!(wave_plan(&[2, 2, 2], 16, 4), vec![(0, 2), (2, 3)]);
+    }
+
+    #[test]
+    fn an_oversized_item_rides_alone() {
+        assert_eq!(wave_plan(&[5, 4, 1], 16, 4), vec![(0, 1), (1, 2), (2, 3)],);
+        assert_eq!(wave_plan(&[1, 5, 1], 16, 4), vec![(0, 1), (1, 2), (2, 3)]);
+        assert!(wave_plan(&[], 16, 4).is_empty());
     }
 
     #[test]

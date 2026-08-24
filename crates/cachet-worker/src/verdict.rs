@@ -20,6 +20,66 @@ use crate::log;
 /// The KV binding for verdicts, sessions, and OAuth state.
 pub(crate) const KV_BINDING: &str = "CACHET_KV";
 
+thread_local! {
+    static READ_DECISION_MEMO: std::cell::RefCell<std::collections::BTreeMap<String, MemoEntry>> =
+        const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
+}
+
+struct MemoEntry {
+    expires_at_ms: u64,
+    decision: MemoDecision,
+}
+
+#[derive(Clone)]
+enum MemoDecision {
+    Member { login: String },
+    Deny,
+}
+
+/// The memo's admit TTL: strictly inside the KV verdict's 600s window, so
+/// the isolate can abbreviate verification cost but never the revocation
+/// bound the threat model documents.
+const MEMO_ALLOW_TTL_MS: u64 = 120_000;
+
+/// The denial TTL: strictly inside the KV verdict's 60s window, for the
+/// same reason the allow side is bounded.
+const MEMO_DENY_TTL_MS: u64 = 45_000;
+
+/// Resident entries before eviction sweeps run: a memo is a bounded
+/// convenience, never state.
+const MEMO_ENTRY_CAP: usize = 1_024;
+
+/// Read a live memo decision, recording the hit for the event stream.
+fn memo_read(key: &str, now: UnixMillis) -> Option<MemoDecision> {
+    READ_DECISION_MEMO.with(|memo| {
+        let borrowed = memo.borrow();
+        match borrowed.get(key) {
+            Some(entry) if now.as_u64() < entry.expires_at_ms => Some(entry.decision.clone()),
+            _ => None,
+        }
+    })
+}
+
+/// Record a decision. Evict expired entries at the cap, then skip caching
+/// if the map stays full: degradation keeps the unmemoized path.
+fn memo_write(key: &str, decision: MemoDecision, expires_at_ms: u64, now: UnixMillis) {
+    READ_DECISION_MEMO.with(|memo| {
+        let mut borrowed = memo.borrow_mut();
+        if borrowed.len() >= MEMO_ENTRY_CAP {
+            borrowed.retain(|_, entry| entry.expires_at_ms > now.as_u64());
+        }
+        if borrowed.len() < MEMO_ENTRY_CAP {
+            borrowed.insert(
+                key.to_string(),
+                MemoEntry {
+                    expires_at_ms,
+                    decision,
+                },
+            );
+        }
+    });
+}
+
 /// The read-time identity: who the request authenticates as, and how.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReadIdentity {
@@ -176,21 +236,60 @@ async fn cache_verdict(kv: &worker::kv::KvStore, digest_hex: &str, verdict: &Ver
     }
 }
 
-/// Resolve a device-flow token: sha256 → KV verdict → GitHub on a miss.
-/// An OIDC-shaped token takes the write path's own verification instead:
-/// CI runners substitute with the same credential they push with, and the
-/// claim check is the org gate either way.
+/// Resolve a device-flow token: the isolate memo first, then sha256 → KV
+/// verdict → GitHub on a miss. An OIDC-shaped token takes the write
+/// path's own verification instead: CI runners substitute with the same
+/// credential they push with, and the claim check is the org gate either
+/// way. Sessions never ride the memo: logout revokes by KV deletion, and
+/// an isolate entry would outlive that promise.
 async fn resolve_token(env: &Env, now: UnixMillis, token: &str) -> Result<ReadIdentity> {
+    let digest_hex = hex_digest(&sha256(token.as_bytes()));
+    if let Some(decision) = memo_read(&digest_hex, now) {
+        let kind = match &decision {
+            MemoDecision::Member { .. } => "allow",
+            MemoDecision::Deny => "deny",
+        };
+        log::event("info", "auth.memo_hit", &[("kind", kind.to_string())]);
+        return match decision {
+            MemoDecision::Member { login } => Ok(ReadIdentity::Token { login }),
+            MemoDecision::Deny => Err(ClientError::Unauthorized),
+        };
+    }
     if cachet_core::auth::looks_like_oidc_token(token) {
         let identity =
             crate::auth::authorize_write(env, now, Some(&format!("Bearer {token}"))).await?;
         // why: an OIDC token is never an admin — the admins list names
         // human logins, and this field is what admin gating compares.
+        // And the memo may abbreviate verification cost, never the
+        // token's own lifetime: the entry dies at min(TTL, exp minus the
+        // clock tolerance), so a replayed token never outlives what the
+        // claim check already refused.
+        let memo_expiry = cachet_crypto::rs256::decode_jwt(token)
+            .ok()
+            .and_then(|decoded| {
+                decoded
+                    .claims
+                    .get("exp")
+                    .and_then(serde_json::Value::as_u64)
+            })
+            .map_or(now.as_u64() + MEMO_ALLOW_TTL_MS, |exp_seconds| {
+                exp_seconds
+                    .saturating_mul(1_000)
+                    .saturating_sub(cachet_core::constants::OIDC_CLOCK_TOLERANCE_MS)
+                    .min(now.as_u64() + MEMO_ALLOW_TTL_MS)
+            });
+        memo_write(
+            &digest_hex,
+            MemoDecision::Member {
+                login: identity.repository_owner.clone(),
+            },
+            memo_expiry,
+            now,
+        );
         return Ok(ReadIdentity::Token {
             login: identity.repository_owner,
         });
     }
-    let digest_hex = hex_digest(&sha256(token.as_bytes()));
     let kv = env
         .kv(KV_BINDING)
         .map_err(|_| ClientError::AuthUnavailable)?;
@@ -201,10 +300,24 @@ async fn resolve_token(env: &Env, now: UnixMillis, token: &str) -> Result<ReadId
     {
         if verdict_fresh(&verdict, now) {
             return if verdict.org_member {
+                memo_write(
+                    &digest_hex,
+                    MemoDecision::Member {
+                        login: verdict.login.clone(),
+                    },
+                    now.as_u64() + MEMO_ALLOW_TTL_MS,
+                    now,
+                );
                 Ok(ReadIdentity::Token {
                     login: verdict.login,
                 })
             } else {
+                memo_write(
+                    &digest_hex,
+                    MemoDecision::Deny,
+                    now.as_u64() + MEMO_DENY_TTL_MS,
+                    now,
+                );
                 Err(ClientError::Unauthorized)
             };
         }
@@ -212,10 +325,24 @@ async fn resolve_token(env: &Env, now: UnixMillis, token: &str) -> Result<ReadId
     let verdict = check_github_token(env, now, token).await?;
     cache_verdict(&kv, &digest_hex, &verdict).await;
     if verdict.org_member {
+        memo_write(
+            &digest_hex,
+            MemoDecision::Member {
+                login: verdict.login.clone(),
+            },
+            now.as_u64() + MEMO_ALLOW_TTL_MS,
+            now,
+        );
         Ok(ReadIdentity::Token {
             login: verdict.login,
         })
     } else {
+        memo_write(
+            &digest_hex,
+            MemoDecision::Deny,
+            now.as_u64() + MEMO_DENY_TTL_MS,
+            now,
+        );
         Err(ClientError::Unauthorized)
     }
 }

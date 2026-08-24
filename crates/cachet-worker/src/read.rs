@@ -59,15 +59,39 @@ pub async fn head_object(env: &Env, bucket_key: &str, kind: ObjectKind) -> Resul
     }
 }
 
-/// Resolve the current edge-caching epoch: matched through the edge cache
-/// (the common case costs a near-free lookup), falling back to the bucket,
-/// its own short TTL bounding stale belief.
+// The isolate's own generation belief: the memo reads where legality
+// lives, and the value (gen, expiry) is Copy so no borrow crosses an
+// await.
+thread_local! {
+    static GENERATION_MEMO: std::cell::RefCell<Option<(u64, u64)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// why: strictly inside the generation entry's own 60-second edge TTL,
+/// so a stale isolate belief can resurrect old-generation edge keys for
+/// at most ~90 seconds after a sweep bump. Read-time staleness only,
+/// inside the sweep's documented convergence window, never a write-path
+/// decision.
+const GENERATION_MEMO_TTL_MS: u64 = 30_000;
+
+/// Resolve the current edge-caching epoch: isolate memo first, then the
+/// edge cache (the common case costs a near-free lookup), falling back to
+/// the bucket, its own short TTL bounding stale belief.
 ///
 /// Returns `None` when the generation cannot be established, and the
 /// caller then bypasses the edge cache rather than assuming zero. Reusing
 /// zero would resurrect entries written before the first sweep: the exact
 /// staleness the generation exists to prevent.
-async fn resolve_generation(env: &Env, ctx: &Context) -> Result<Option<u64>> {
+pub(crate) async fn resolve_generation(
+    env: &Env,
+    ctx: &Context,
+    now: cachet_core::types::UnixMillis,
+) -> Result<Option<u64>> {
+    if let Some((generation, expires_at_ms)) = GENERATION_MEMO.with(|memo| *memo.borrow()) {
+        if now.as_u64() < expires_at_ms {
+            return Ok(Some(generation));
+        }
+    }
     let cache_key = generation_cache_key();
     if let Some(mut cached) = Cache::default().get(&cache_key, true).await? {
         let text = cached.text().await?;
@@ -75,6 +99,9 @@ async fn resolve_generation(env: &Env, ctx: &Context) -> Result<Option<u64>> {
             log::alert("generation.cached_document_corrupt");
             return Ok(None);
         };
+        GENERATION_MEMO.with(|memo| {
+            *memo.borrow_mut() = Some((document.generation, now.as_u64() + GENERATION_MEMO_TTL_MS));
+        });
         return Ok(Some(document.generation));
     }
 
@@ -96,6 +123,9 @@ async fn resolve_generation(env: &Env, ctx: &Context) -> Result<Option<u64>> {
         log::alert("generation.document_corrupt");
         return Ok(None);
     };
+    GENERATION_MEMO.with(|memo| {
+        *memo.borrow_mut() = Some((document.generation, now.as_u64() + GENERATION_MEMO_TTL_MS));
+    });
     let cached = apply(
         Response::ok(document.serialize())?,
         &generation_response_headers(),
@@ -109,15 +139,17 @@ async fn resolve_generation(env: &Env, ctx: &Context) -> Result<Option<u64>> {
 /// Serve one object: edge cache, then bucket, then a cacheable miss. The
 /// body is never buffered: the bucket hands its stream to the runtime, and
 /// the response streams without wasm CPU, because worker memory is small
-/// and NARs are large.
+/// and NARs are large. The generation arrives resolved: the caller joins
+/// it against the credential check so a miss pays one colo hop instead of
+/// two.
 pub async fn serve_object(
     env: &Env,
     ctx: &Context,
     request_path: &str,
     bucket_key: &str,
     kind: ObjectKind,
+    generation: Option<u64>,
 ) -> Result<Response> {
-    let generation = resolve_generation(env, ctx).await?;
     let cache_key = generation.map(|generation| object_cache_key(generation, request_path));
 
     if let Some(cache_key) = &cache_key {

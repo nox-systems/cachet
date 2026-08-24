@@ -45,7 +45,7 @@ const GOOD_LAPTOP_TOKEN = "lane-laptop-token";
 // The lane's plain read credential for object GET/HEADs: every object
 // read answers 401 without one.
 const READ_AUTH = () => ({ authorization: `Bearer ${GOOD_LAPTOP_TOKEN}` });
-const stubHits = { user: 0, memberships: 0, exchange: 0 };
+const stubHits = { user: 0, memberships: 0, exchange: 0, oidcMint: 0 };
 const LANE_OAUTH_CODE = "lane-code";
 const LANE_OUTSIDER_CODE = "lane-code-outsider";
 const OUTSIDER_TOKEN = "lane-outsider-token";
@@ -68,6 +68,7 @@ const stubServer = http.createServer((req, res) => {
     const audience = new URL(req.url, "http://stub").searchParams.get(
       "audience",
     );
+    stubHits.oidcMint += 1;
     return json(200, {
       count: 1,
       value: mint({ aud: audience ?? "cachet-lane" }),
@@ -175,6 +176,57 @@ const devVarsPath = path.join(repoRoot, "workerd", ".dev.vars");
 const laneSigningSecret = (
   await readFile(path.join(laneFixturesDir, "signing-key.secret"), "utf8")
 ).trimEnd();
+
+// The lane's public half, parsed from its committed fixture so the name
+// the worker stamps with is the name the checks verify against. A lane
+// asserting only the Sig line's name armors the text while the bytes are
+// free to rot: the signature must verify, the way a nix client verifies.
+const [laneSigningName, laneSigningPublicB64] = (
+  await readFile(path.join(laneFixturesDir, "signing-key.public"), "utf8")
+)
+  .trimEnd()
+  .split(":", 2);
+const lanePublicKey = crypto.createPublicKey({
+  format: "jwk",
+  key: {
+    kty: "OKP",
+    crv: "Ed25519",
+    x: Buffer.from(laneSigningPublicB64, "base64").toString("base64url"),
+  },
+});
+
+// nix's client-side contract, re-derived inside the lane: the fingerprint
+// is `1;<storePath>;<narHash>;<narSize>;` followed by the references
+// sorted, deduplicated, and joined with commas; the signature covers
+// those bytes directly. Any Sig line naming the lane's key must verify
+// against it, exactly as a real nix client's check would require.
+function laneSignatureVerifies(body) {
+  const fields = new Map();
+  const sigs = [];
+  for (const line of body.split("\n")) {
+    const splitAt = line.indexOf(": ");
+    if (splitAt === -1) continue;
+    const value = line.slice(splitAt + 2);
+    if (line.slice(0, splitAt) === "Sig") sigs.push(value);
+    else fields.set(line.slice(0, splitAt), value);
+  }
+  const references = (fields.get("References") ?? "").trim();
+  const canon = references
+    ? [...new Set(references.split(/\s+/))].sort().join(",")
+    : "";
+  const fingerprint = `1;${fields.get("StorePath")};${fields.get("NarHash")};${fields.get("NarSize")};${canon}`;
+  for (const sig of sigs) {
+    const [name, b64] = sig.split(":", 2);
+    if (name !== laneSigningName) continue;
+    return crypto.verify(
+      null,
+      Buffer.from(fingerprint, "ascii"),
+      lanePublicKey,
+      Buffer.from(b64, "base64"),
+    );
+  }
+  return false;
+}
 
 const results = [];
 async function check(name, fn) {
@@ -819,6 +871,11 @@ try {
           assert.match(body, /^FileSize: \d+$/m);
           assert.match(body, /^Sig: cachet-fixture-1:/m);
           assert.match(body, /^Sig: lane-sign-1:/m);
+          assert.equal(
+            laneSignatureVerifies(body),
+            true,
+            "a client with the public key must verify this document",
+          );
         },
       );
     },
@@ -1054,6 +1111,66 @@ try {
         const second = await fetch(`${base}/${NAR_KEY}`, { headers: denied });
         assert.equal(second.status, 401);
         assert.equal(stubHits.user, before + 1, "the denial is cached too");
+      });
+    },
+  );
+
+  // The memo's proof deletes the KV verdict between reads: a repeat the
+  // API never sees can only come from the isolate's own entry, which is
+  // the memo's whole claim.
+  const forgetVerdict = (token, persist) => {
+    const digest = crypto.createHash("sha256").update(token).digest("hex");
+    const forget = spawnSync(
+      "wrangler",
+      [
+        "kv",
+        "key",
+        "delete",
+        `ghverdict/${digest}`,
+        "--binding",
+        "CACHET_KV",
+        "--local",
+        "--persist-to",
+        persist,
+        "--config",
+        configPath,
+      ],
+      { encoding: "utf8" },
+    );
+    if (forget.status !== 0) {
+      throw new Error(
+        `verdict delete failed: ${forget.stderr}${forget.stdout}`,
+      );
+    }
+  };
+
+  await scenario(
+    "the isolate memo answers after the verdict is gone",
+    async () => [[NAR_KEY, await readFile(path.join(fixturesDir, NAR_FILE))]],
+    async ({ base, events, persist }) => {
+      const laptop = { authorization: `Bearer ${GOOD_LAPTOP_TOKEN}` };
+
+      await check("an admit repeats without the API", async () => {
+        const first = await fetch(`${base}/${NAR_KEY}`, { headers: laptop });
+        assert.equal(first.status, 200);
+        const apiHits = stubHits.user;
+        forgetVerdict(GOOD_LAPTOP_TOKEN, persist);
+        const second = await fetch(`${base}/${NAR_KEY}`, { headers: laptop });
+        assert.equal(second.status, 200);
+        assert.equal(stubHits.user, apiHits, "the memo served the repeat");
+        await untilEvent(events, '"event":"auth.memo_hit","kind":"allow"');
+      });
+
+      await check("a denial repeats without the API", async () => {
+        const denied = { authorization: "Bearer memo-denied-token" };
+        const first = await fetch(`${base}/${NAR_KEY}`, { headers: denied });
+        assert.equal(first.status, 401);
+        const apiHits = stubHits.user;
+        forgetVerdict("memo-denied-token", persist);
+        const second = await fetch(`${base}/${NAR_KEY}`, { headers: denied });
+        assert.equal(second.status, 401);
+        assert.equal(stubHits.user, apiHits, "the memo denied the repeat");
+        await untilEvent(events, '"event":"auth.memo_hit","kind":"deny"');
       });
     },
   );
@@ -1608,11 +1725,17 @@ try {
         );
         assert.equal(added.status, 0, added.stderr);
         storePath = added.stdout.trim().split("\n").pop();
+        const mintsBefore = stubHits.oidcMint;
         const pushed = await runCli(["push"], {
           ...pushEnv,
           CACHET_ROOTS: storePath,
         });
         assert.equal(pushed.status, 0, pushed.stderr);
+        assert.equal(
+          stubHits.oidcMint - mintsBefore,
+          1,
+          "one mint carries the whole push run",
+        );
         assert.ok(
           pushed.stdout.includes("cachet: 1 new to cachet"),
           pushed.stdout,
@@ -1644,6 +1767,11 @@ try {
             `storePath=${storePath}\n--- body ---\n${body}`,
           );
           assert.ok(body.includes("Sig: lane-sign-1:"), body);
+          assert.equal(
+            laneSignatureVerifies(body),
+            true,
+            "a client with the public key must verify this document",
+          );
           const nar = await fetch(`${base}/${body.match(/^URL: (.+)$/m)[1]}`, {
             headers: READ_AUTH(),
           });
@@ -1672,11 +1800,17 @@ try {
           );
           assert.equal(added.status, 0, added.stderr);
           const bigPath = added.stdout.trim().split("\n").pop();
+          const mintsBefore = stubHits.oidcMint;
           const pushed = await runCli(["push"], {
             ...pushEnv,
             CACHET_ROOTS: bigPath,
           });
           assert.equal(pushed.status, 0, pushed.stderr);
+          assert.equal(
+            stubHits.oidcMint - mintsBefore,
+            1,
+            "one mint carries the multipart run, parts included",
+          );
           assert.ok(
             pushed.stdout.includes("cachet: uploaded 2 objects"),
             pushed.stdout,

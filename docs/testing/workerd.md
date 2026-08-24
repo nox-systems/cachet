@@ -39,13 +39,19 @@ shape and by exact bytes; the corrupt-generation bypass; generation-zero
 behavior on an empty bucket; the OIDC rejection matrix (wrong org, alg
 confusion, staleness, expired tokens); guard ordering (411 before 413,
 401 before 411); the verify-then-sign pipeline end to end, from a NAR
-upload through a signed narinfo with both signatures and the file facts;
+upload through a signed narinfo whose signatures both verify against the
+lane's own public key (nix's fingerprint recipe re-derived in the driver:
+a lane asserting the Sig line's name alone armors the text while the
+bytes are free to rot) and the file facts;
 the multipart quartet with its record, part-size enforcement, replay, and
 abort; the CLI's own push, driven as the composite action drives it
 (snapshot step, `nix-store --add-fixed` payload, push) with the stub
 minting its OIDC tokens, asserting the staged tree's real layout reaches
 the bucket and serves back signed; read verdicts cached in KV for both the admit and the deny
-direction, with OIDC tokens answering reads as CI expects; lease renewal bound to the token's own claims with
+direction, with OIDC tokens answering reads as CI expects; the isolate's
+decision memo, proven by deleting the KV verdict between reads and
+watching the repeat in both directions answer with no GitHub API hit and
+an `auth.memo_hit` event; lease renewal bound to the token's own claims with
 forbidden_ref and forbidden_project refusals; the project listing; the
 public config document; and the browser login flow, from the login
 redirect's exact parameters through state consumption (a replayed state

@@ -133,12 +133,24 @@ async fn setup(
     let paths = resolve_setup_paths(&vars);
     let run = privileged_runner(&vars);
     let install = installer(&run);
+    // The daemon's trusted-users must name the invoking account; USER is
+    // its spelling on every shell cachet supports, and the env-fallback
+    // line names the failure loudly rather than wiring a wrong guess.
+    let login = std::env::var("USER")
+        .or_else(|_| std::env::var("LOGNAME"))
+        .map_err(|_| {
+            cachet_cli::CliError(
+                "USER and LOGNAME are both unset: cannot name the account for the daemon's trusted-users"
+                    .to_string(),
+            )
+        })?;
     let report = cachet_cli::setup::run_setup(
         &paths,
         &cachet_cli::setup::SetupInput {
             cache_url: url,
             public_key: config.public_key,
             token,
+            login,
         },
         &run,
         &install,
