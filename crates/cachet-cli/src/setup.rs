@@ -318,6 +318,10 @@ pub struct SetupReport {
     pub wrote: Vec<PathBuf>,
     /// How the daemon restart went.
     pub reload: ReloadOutcome,
+    /// Whether the host runs Determinate Nix. Reported because the two
+    /// installs are wired differently and a reader deserves to know
+    /// which one this machine got.
+    pub determinate: bool,
 }
 
 /// The full setup: rewrite the three files, then restart the daemon.
@@ -381,7 +385,11 @@ pub fn run_setup(
     wrote.push(paths.nix_custom_conf.clone());
 
     let reload = reload_daemon(paths, run);
-    Ok(SetupReport { wrote, reload })
+    Ok(SetupReport {
+        wrote,
+        reload,
+        determinate: paths.determinate,
+    })
 }
 
 #[cfg(test)]

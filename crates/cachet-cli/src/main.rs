@@ -26,7 +26,8 @@ enum Command {
         cache_url: String,
     },
     /// Write this machine's nix.conf and netrc so builds substitute from
-    /// the cache, then restart the daemon. Requires `cachet login` first.
+    /// the cache, then restart the daemon. Works with both Determinate
+    /// Nix and plain nix. Requires `cachet login` first.
     Setup {
         /// The cache's base URL; defaults to the one logged into.
         #[arg(long)]
@@ -237,6 +238,15 @@ fn installer<'r>(
 
 /// The closing report: every write, then how the daemon restart went.
 fn print_setup_report(host: &str, report: &cachet_cli::setup::SetupReport) {
+    // Name the install. The two are wired differently (Determinate reads
+    // the netrc it synthesizes from additionalNetrcSources, plain nix
+    // reads netrc-file), so a reader chasing a 401 needs to know which
+    // machine they are on before any of the paths below mean anything.
+    if report.determinate {
+        println!("cachet: Determinate Nix detected; wiring it the way it expects");
+    } else {
+        println!("cachet: nix detected");
+    }
     let mut wrote = report.wrote.iter();
     if let Some(first) = wrote.next() {
         println!("cachet: {host} configured in {}", first.display());

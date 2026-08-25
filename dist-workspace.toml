@@ -10,6 +10,18 @@ allow-dirty = ["ci"]
 cargo-dist-version = "0.32.0"
 # CI backends to support
 ci = "github"
+# Build each shipped package on its own rather than the whole workspace.
+#
+# why: cachet-worker is wasm32-only and fails a host build by
+# construction (CLAUDE.md §4) — it names getrandom, which its manifest
+# supplies only under cfg(target_arch = "wasm32"). dist's default is
+# `cargo build --workspace`, which builds it anyway and dies. That the
+# release pipeline ever worked was luck: cargo keeps compiling in-flight
+# units after a failure, so the run succeeded whenever cachet-cli
+# happened to finish linking before cachet-worker aborted, and failed
+# when it did not. This builds `--package=cachet-cli`, which is the only
+# package dist ships.
+precise-builds = true
 # The installers to generate for each app
 # The one-line installer for laptops (shell + powershell); the action
 # downloads the raw archives directly with checksum verification.

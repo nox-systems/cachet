@@ -1,11 +1,11 @@
-# The action consumers wire into their CI: install Determinate Nix trusting
+# The action consumers wire into their CI: install nix trusting
 # this cache, provision the job's read credential before the daemon starts,
 # download the pinned cachet binary, and hand the push phases to the nested
 # main/post action. Signing happens server-side, so the action holds no key
 # material; the job's OIDC token is the only credential it ever touches.
 name: cachet setup
 description: >-
-  Install Determinate Nix wired to a cachet deployment, then push what the
+  Install nix wired to a cachet deployment, then push what the
   job builds. Grant `permissions: { contents: read, id-token: write }` for
   the full path; in a job whose context cannot receive the grant (a forked
   pull request) the action installs plain nix and the build runs uncached,
@@ -61,13 +61,11 @@ inputs:
 runs:
   using: composite
   steps:
-    # Provision the read credential BEFORE Determinate is installed and its
-    # daemon starts. determinate-nixd synthesizes the netrc the daemon reads
-    # at daemon start, merging every file under
-    # authentication.additionalNetrcSources, and that startup synthesis is
-    # the only reliable one on these runners. Writing the credential and its
-    # registration here means the daemon's start-up synthesis sees both.
-    - name: Prepare the cachet cache before Determinate starts
+    # Provision the read credential BEFORE nix is installed and its daemon
+    # starts. The daemon reads netrc-file when it starts and not again, so
+    # a credential written afterwards is a credential the daemon never
+    # sees: cache reads answer 401 and every build recompiles from source.
+    - name: Prepare the cachet cache before the nix daemon starts
       shell: bash
       env:
         CACHET_CACHE_URL: ${{ inputs.cache-url }}
@@ -102,23 +100,13 @@ runs:
         fi
         host="$(printf '%s' "${CACHET_CACHE_URL}" | sed -e 's#^https\?://##' -e 's#/.*$##')"
 
-        # The credential file: real, outside the nix store, 0600.
-        sudo mkdir -p /etc/nix /etc/determinate
+        # The credential file: real, outside the nix store, 0600. The
+        # daemon is pointed at it by the netrc-file line below, which it
+        # reads when it starts, so the file has to exist first.
+        sudo mkdir -p /etc/nix
         printf 'machine %s login cachet password %s\n' "${host}" "${token}" \
           | sudo tee /etc/nix/netrc >/dev/null
         sudo chmod 600 /etc/nix/netrc
-
-        # Register it under authentication.additionalNetrcSources, merging
-        # when the installer pre-seeded the file.
-        if [ -f /etc/determinate/config.json ]; then
-          sudo cat /etc/determinate/config.json \
-            | jq '.authentication.additionalNetrcSources = ((.authentication.additionalNetrcSources // []) + ["/etc/nix/netrc"] | unique)' \
-            | sudo tee /etc/determinate/config.json.tmp >/dev/null
-          sudo mv /etc/determinate/config.json.tmp /etc/determinate/config.json
-        else
-          printf '{"authentication":{"additionalNetrcSources":["/etc/nix/netrc"]}}\n' \
-            | sudo tee /etc/determinate/config.json >/dev/null
-        fi
 
         # The deployment names its own signing key: fetch the public half
         # from the worker rather than asking consumers to paste it. This
@@ -131,34 +119,37 @@ runs:
         # the invoking user must itself be trusted for the key to count.
         {
           echo "CACHET_EXTRA_CONF<<EOF_CACHET_CONF"
+          echo "netrc-file = /etc/nix/netrc"
           echo "extra-substituters = ${CACHET_CACHE_URL%/}"
           echo "extra-trusted-public-keys = ${public_key}"
           echo "trusted-users = root $(whoami)"
           echo "EOF_CACHET_CONF"
         } >> "${GITHUB_ENV}"
-        echo "cachet: read credential provisioned before Determinate starts"
+        echo "cachet: read credential provisioned before the daemon starts"
 
-    - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
+    # Determinate's installer, installing plain nix rather than Determinate
+    # Nix.
+    #
+    # why: `determinate: false`. On a runner granting id-token: write,
+    # which this action requires for its own OIDC token, Determinate mints
+    # a second token and logs in to FlakeHub. This deployment is not a
+    # FlakeHub customer, so that login cannot succeed: it warns on every
+    # job, and the substituter it would have added answers 401 before
+    # every lookup falls through to cachet. The previous shape installed
+    # Determinate, let the login fail, and logged out afterwards, which
+    # also meant the daemon's credential had to be smuggled in through
+    # `additionalNetrcSources` before start-up so a failed login could not
+    # gate the netrc's synthesis. Plain nix reads `netrc-file` from its own
+    # config and none of that applies.
+    - uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
       with:
-        # The substituter and trusted key ride the install because a
-        # substituter added after the daemon has started is never consulted.
-        # In a job with no OIDC grant the provisioning step answered empty,
-        # and this install answers plain upstream-only nix.
+        determinate: false
+        # The credential, the substituter, and the trusted key all ride
+        # the install: the daemon reads its config when it starts, and a
+        # substituter added afterwards is never consulted. In a job with
+        # no OIDC grant the provisioning step answered empty, and this
+        # install answers plain upstream-only nix.
         extra-conf: ${{ env.CACHET_EXTRA_CONF }}
-
-    # The Determinate installer logged into FlakeHub on this runner (any job
-    # granting id-token: write gets one), which adds cache.flakehub.com as a
-    # substituter: every lookup then pays a 401 round trip before falling
-    # through to cachet. Log out; the cachet credential is independent.
-    - name: Log out of FlakeHub Cache, which this deployment does not use
-      shell: bash
-      run: |
-        set -euo pipefail
-        # `|| true`: a job without id-token never logged in, so logout is a
-        # no-op there, and this action must not fail a build over a cache it
-        # does not use.
-        sudo determinate-nixd auth logout || true
-        sudo determinate-nixd status || true
 
     - name: Download and verify the cachet binary
       shell: bash
@@ -225,7 +216,7 @@ runs:
         # regression surfaces in the log rather than as a silent rebuild: a
         # 404 means the credential is present and authenticated (the probed
         # path is simply absent), while a 401 means it is not.
-        daemon_netrc="$(nix config show netrc-file 2>/dev/null || echo /nix/var/determinate/netrc)"
+        daemon_netrc="$(nix config show netrc-file 2>/dev/null || echo /etc/nix/netrc)"
         probe_code="$(curl -s -o /dev/null -w '%{http_code}' --netrc-file "${daemon_netrc}" \
           "${CACHET_CACHE_URL%/}/0000000000000000000000000000000a.narinfo" 2>/dev/null || echo 000)"
         echo "cachet: read auth probe returned ${probe_code} (404 = authenticated, 401 = not)"
