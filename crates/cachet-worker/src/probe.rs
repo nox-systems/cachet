@@ -13,6 +13,14 @@
 //! Enumerating the source of truth costs a handful of list pages on any
 //! inventory GC's grace and leases permit, which is exactly the operation
 //! the collector already pays for its own inventory.
+//!
+//! Holding the enumeration between probes was tried and removed. A memo
+//! can only ever be a subset of what the bucket holds, so its drift is in
+//! the safe direction, but the thing it drifts away from is exactly the
+//! dedup that makes a warm push cheap: a job whose sibling pushed a path
+//! a moment ago reads it as absent and uploads it again. Paying the list
+//! calls buys a correct answer, and the cost is the collector's own
+//! inventory cost once per push.
 
 use std::collections::BTreeSet;
 
@@ -60,6 +68,34 @@ pub async fn answer_probe(env: &Env, now: UnixMillis, mut req: Request) -> Resul
         }
     }
 
+    let (held, pages) = match held_narinfos(env).await? {
+        Ok(pair) => pair,
+        Err(code) => return error::problem_response(code),
+    };
+
+    let present: Vec<String> = asked.intersection(&held).cloned().collect();
+    log::event(
+        "info",
+        "probe.bulk",
+        &[
+            ("paths", asked.len().to_string()),
+            ("present", present.len().to_string()),
+            ("pages", pages.to_string()),
+        ],
+    );
+
+    let body = serde_json::to_string(&cachet_api::ProbeAnswer { present })
+        .map_err(|_| worker::Error::RustError("the probe answer serializes".to_string()))?;
+    let headers = worker::Headers::new();
+    headers.set("content-type", "application/json")?;
+    headers.set("cache-control", "no-store")?;
+    Ok(Response::ok(body)?.with_headers(headers))
+}
+
+/// Every narinfo hash the bucket holds, and how many list pages it took.
+async fn held_narinfos(
+    env: &Env,
+) -> Result<std::result::Result<(BTreeSet<String>, u64), ClientError>> {
     let bucket = env.bucket("CACHE_BUCKET")?;
     // why: the delimiter collapses `nar/` into a common prefix, so the
     // enumeration prices root-level objects — narinfos — rather than the
@@ -83,7 +119,7 @@ pub async fn answer_probe(env: &Env, now: UnixMillis, mut req: Request) -> Resul
                     "probe.list_failed",
                     &[("error", failure.to_string())],
                 );
-                return error::problem_response(ClientError::StorageUnavailable);
+                return Ok(Err(ClientError::StorageUnavailable));
             }
         };
         pages += 1;
@@ -97,22 +133,5 @@ pub async fn answer_probe(env: &Env, now: UnixMillis, mut req: Request) -> Resul
         }
         cursor = listed.cursor();
     }
-
-    let present: Vec<String> = asked.intersection(&held).cloned().collect();
-    log::event(
-        "info",
-        "probe.bulk",
-        &[
-            ("paths", asked.len().to_string()),
-            ("present", present.len().to_string()),
-            ("pages", pages.to_string()),
-        ],
-    );
-
-    let body = serde_json::to_string(&cachet_api::ProbeAnswer { present })
-        .map_err(|_| worker::Error::RustError("the probe answer serializes".to_string()))?;
-    let headers = worker::Headers::new();
-    headers.set("content-type", "application/json")?;
-    headers.set("cache-control", "no-store")?;
-    Ok(Response::ok(body)?.with_headers(headers))
+    Ok(Ok((held, pages)))
 }

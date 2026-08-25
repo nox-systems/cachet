@@ -15,6 +15,18 @@ use worker::{Headers, Response, Result};
 pub fn problem_response(error: ClientError) -> Result<Response> {
     let headers = Headers::new();
     headers.set("content-type", PROBLEM_CONTENT_TYPE)?;
+    // why: nix fetches through curl with CURLAUTH_ANY, which waits for the
+    // server to name a scheme before it sends netrc credentials. curl
+    // sends Basic ahead of the challenge in practice, so this is not the
+    // cache's current cost, but a client that follows the negotiation
+    // literally would pay an extra round trip on every narinfo and every
+    // NAR, and the header is what the protocol says a 401 carries.
+    if error.status() == 401 {
+        headers.set(
+            "www-authenticate",
+            r#"Basic realm="cachet", charset="UTF-8""#,
+        )?;
+    }
     Ok(Response::ok(problem_body(error))?
         .with_status(error.status())
         .with_headers(headers))

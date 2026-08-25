@@ -1,6 +1,6 @@
 [package]
 name = "cachet-push"
-description = "The push pipeline as a native library: store snapshot and diff, upstream filtering, zstd staging, NAR-before-narinfo upload, and lease renewal. Consumed by the CLI and the GitHub Action."
+description = "The push pipeline as a native library: store snapshot and diff, per-path NAR serialization and zstd compression, NAR-before-narinfo upload, and lease renewal. Consumed by the CLI and the GitHub Action."
 edition.workspace = true
 version.workspace = true
 publish.workspace = true
@@ -20,14 +20,29 @@ serde_json.workspace = true
 # completion-based file I/O, and hand-rolling one is not on the table.
 tokio = { version = "1", features = ["fs", "io-util", "macros", "process", "rt-multi-thread", "time"] }
 # why: the wire half of the pipeline. rustls keeps OpenSSL's platform
-# lottery off laptops and runners alike, and the stream feature is what
-# the multipart plan's ranged reads ride.
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+# lottery off laptops and runners alike, the stream feature carries bodies
+# off disk instead of through memory, and http2 is what lets one
+# connection carry the whole upload window rather than one handshake per
+# object in flight.
+reqwest = { version = "0.12", default-features = false, features = ["http2", "json", "rustls-tls", "stream"] }
+# why: the client compresses the NARs it uploads, and this is the only
+# zstd ENCODER available to it. cachet-crypto's ruzstd decodes and cannot
+# encode, which is all the worker ever needs; the C library is banned from
+# the worker for that reason and allowed here, in a crate that compiles
+# only for hosts, through a named wrapper in deny.toml.
+zstd = "0.13"
 # why: probes fan out with `buffered` and uploads wave with `join_all`;
 # the alternative is a handwritten worker pool around JoinSet for no gain.
 futures-util = "0.3"
+# why: nix answers NarHash in SRI form, which is base64; the narinfo
+# spelling is nix32. Converting between them needs a decoder, and this is
+# the same one cachet-crypto already parses signing keys with.
+base64 = "0.22"
+
+# why: a compressed NAR too large to hold in memory spills to one scratch
+# file for as long as its upload runs; hand-rolled uniqueness in a
+# temporary path is an entropy bug waiting to happen.
+tempfile = "3"
 
 [dev-dependencies]
-# why: adapter tests stage into temporary directories; hand-rolled
-# uniqueness is an entropy bug waiting to happen.
 tempfile = "3"

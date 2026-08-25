@@ -16,6 +16,7 @@ pub mod generation;
 pub mod keys;
 pub mod lease;
 pub mod multipart;
+pub mod nar_facts;
 pub mod narinfo;
 pub mod oauth;
 pub mod problem;

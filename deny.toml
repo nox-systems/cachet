@@ -64,19 +64,24 @@ wildcards = "deny"
 # The internal crates depend on each other by path, which has no version and
 # reads as a wildcard; the ban still applies to external crates.
 allow-wildcard-paths = true
-# aws-lc and the C zstd crate do not build for wasm32-unknown-unknown;
-# ruzstd supplies the worker's only decompression need. ring carries the
-# same incompatibility, but the two native crates (cachet-push, cachet-cli)
-# need TLS on hosts and rustls's only remaining provider choices are ring
-# or aws-lc, so ring is allowed through exactly the rustls chain and no
-# further: a new dependant outside these wrappers fails the gate, and the
-# worker's artifact is scanned for it regardless (§5, check-wasm-hygiene).
+# aws-lc, ring, and the C zstd crate do not build for
+# wasm32-unknown-unknown, so none of them may reach the worker. Each is
+# still needed by the two native crates (cachet-push, cachet-cli), which
+# compile only for hosts, so each is allowed through exactly one named
+# chain and no further: a new dependant outside those wrappers fails the
+# gate. ring is rustls's provider, because rustls's only remaining
+# choices are ring or aws-lc. zstd is the push client's compressor:
+# ruzstd decodes and does not encode, and the client has to produce the
+# compressed NAR it uploads. The worker's artifact is scanned for all of
+# them regardless (§5, check-wasm-hygiene), so the ban protects the
+# bundle even if this list is ever wrong.
 deny = [
     { name = "ring", reason = "does not build for wasm32-unknown-unknown; allowed only as the rustls chain's native TLS provider", wrappers = ["rustls", "rustls-webpki"] },
     { name = "aws-lc-rs", reason = "does not build for wasm32-unknown-unknown" },
     { name = "aws-lc-sys", reason = "does not build for wasm32-unknown-unknown" },
-    { name = "zstd", reason = "C library, does not build for wasm32-unknown-unknown; use ruzstd" },
-    { name = "zstd-sys", reason = "C library, does not build for wasm32-unknown-unknown; use ruzstd" },
+    { name = "zstd", reason = "C library, does not build for wasm32-unknown-unknown; allowed only as the native push client's compressor", wrappers = ["cachet-push"] },
+    { name = "zstd-safe", reason = "C library, does not build for wasm32-unknown-unknown; allowed only under the zstd wrapper", wrappers = ["zstd"] },
+    { name = "zstd-sys", reason = "C library, does not build for wasm32-unknown-unknown; allowed only under the zstd wrapper", wrappers = ["zstd-safe"] },
 ]
 
 [sources]

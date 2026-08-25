@@ -112,6 +112,29 @@ pub const GC_REPORTS_KEY_PREFIX: &str = "gc-reports/";
 /// The edge-cache generation document's key.
 pub const GENERATION_OBJECT_KEY: &str = "meta/generation";
 
+/// A stored NAR's measured facts live under the reserved meta prefix,
+/// keyed by the NAR's own bucket key: `meta/nar/<hash>.nar.zst` records
+/// what `nar/<hash>.nar.zst` measured when it landed.
+pub const NAR_FACTS_KEY_PREFIX: &str = "meta/";
+
+/// A facts document is two hashes and two integers; anything approaching
+/// this is not one, and the cap precedes the read.
+pub const NAR_FACTS_BYTES_MAX: u64 = 512;
+
+/// A NAR write declares how many bytes its frame decodes to, and the
+/// decoder is bounded by that declaration. This is the ceiling on the
+/// declaration itself: no single store path decompresses past it, and the
+/// bound has to exist before the decode starts or it is not a bound.
+pub const NAR_DECOMPRESSED_BYTES_MAX: u64 = 68_719_476_736;
+
+/// The decoder is bounded a second time, by how far the stored bytes may
+/// expand. A declaration is attacker-chosen, so on its own it lets a tiny
+/// upload ask for an enormous decode; pairing it with a ratio means a
+/// compression bomb can only spend CPU in proportion to the bytes it
+/// actually uploaded. Real NARs of ordinary store paths land near 3x and
+/// even a tree of mostly zeroes stays well under this.
+pub const NAR_EXPANSION_RATIO_MAX: u64 = 200;
+
 /// A well-formed generation document is under a hundred bytes; anything
 /// approaching 256 is corrupt, and the read path bypasses the edge cache
 /// rather than trusting it.

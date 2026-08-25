@@ -23,7 +23,7 @@ default-members = [
 
 [workspace.package]
 edition = "2021"
-version = "0.0.6"
+version = "0.0.7"
 publish = false
 license = "Apache-2.0"
 
@@ -65,7 +65,26 @@ module_name_repetitions = "allow"
 # bug class, not on every function by default.
 must_use_candidate = "allow"
 
-# The profile that 'dist' will build with
+# The worker's profile, because worker-build compiles the wasm in release
+# and the stock release settings leave cross-crate inlining off. The hot
+# path is SHA-256 over every uploaded byte and a zstd decode over every
+# decompressed one, both of which live in other crates; fat LTO and a
+# single codegen unit let those inline into the streaming loop, and
+# aborting on panic drops unwinding tables from a bundle that has no
+# unwinder. Together with wasm SIMD (.cargo/config.toml) this takes the
+# bundle from 1,368,413 bytes to 1,252,428.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+
+# The profile that 'dist' will build with. It inherits release, so the
+# settings above would otherwise follow the shipped CLI binaries: the two
+# restated here are the ones that would change what those binaries do or
+# how long a release takes to build, and neither buys a command-line tool
+# anything. A panicking CLI should unwind and report, not abort.
 [profile.dist]
 inherits = "release"
 lto = "thin"
+codegen-units = 16
+panic = "unwind"

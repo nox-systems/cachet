@@ -6,49 +6,29 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::Mutex;
 
-use crate::adapters::{Adapters, Commands, Http, TokenSource, WireAnswer};
+use crate::adapters::{Adapters, Commands, Http, TokenSource, UploadBody, WireAnswer};
 use crate::error::PushError;
 use crate::pipeline::{PushEvent, PushInputs, Sleeper, push};
+use crate::stage::{NarBody, PathFacts, StagedNar};
 
-/// A scripted nix+fs adapter. Its files key by their staging-relative
-/// path (`nar/<file>.nar.zst`, `<hash>.narinfo`), exactly as the real
-/// tree lays them out: keying by basename would flatten the `nar/`
-/// level and could never see a wrong join upstream.
+/// A scripted nix adapter. It answers the facts nix would answer and
+/// hands back the compressed bytes a real staging run would produce, so
+/// the NAR key the pipeline computes is the honest hash of what it sends.
 #[derive(Default)]
 struct FakeCommands {
     path_info_all: Mutex<VecDeque<Result<String, PushError>>>,
     path_info: Mutex<BTreeMap<String, Result<String, PushError>>>,
-    copy_log: Mutex<Vec<(String, Vec<String>)>>,
-    layout: Mutex<Vec<(String, u64)>>,
-    files: Mutex<BTreeMap<String, Vec<u8>>>,
-    staging: Mutex<Option<std::path::PathBuf>>,
+    facts: Mutex<BTreeMap<String, PathFacts>>,
+    nars: Mutex<BTreeMap<String, Vec<u8>>>,
+    staged: Mutex<Vec<String>>,
 }
 
 impl FakeCommands {
-    fn with_store(after: &str) -> Self {
-        let fake = Self::default();
-        fake.path_info_all
-            .lock()
-            .expect("answers queue")
-            .push_back(Ok(after.to_string()));
-        fake
-    }
-
-    /// The files map's key for a path the pipeline opened: the path
-    /// relative to the staging directory read_dir recorded. A read that
-    /// escapes the staging tree fails the script loudly.
-    fn staged_key(&self, path: &std::path::Path) -> String {
-        let staging = self
-            .staging
-            .lock()
-            .expect("staging")
-            .clone()
-            .expect("read_dir ran before any file read");
-        path.strip_prefix(&staging)
-            .expect("a read inside the staging tree")
-            .to_str()
-            .expect("utf8 paths")
-            .to_string()
+    /// Which paths the pipeline actually asked to have staged. A path
+    /// that never appears here was never serialized or compressed, which
+    /// is the whole point of staging per path.
+    fn staged(&self) -> Vec<String> {
+        self.staged.lock().expect("staged log").clone()
     }
 }
 
@@ -60,6 +40,7 @@ impl Commands for FakeCommands {
             .pop_front()
             .unwrap_or_else(|| Ok(String::new()))
     }
+
     async fn path_info(&self, installable: &str) -> Result<String, PushError> {
         self.path_info
             .lock()
@@ -70,48 +51,37 @@ impl Commands for FakeCommands {
                 message: format!("no scripted answer for {installable}"),
             }))
     }
-    async fn copy_to(&self, destination: &str, paths: &[String]) -> Result<(), PushError> {
-        self.copy_log
-            .lock()
-            .expect("copy log")
-            .push((destination.to_string(), paths.to_vec()));
-        Ok(())
+
+    async fn path_facts(&self, paths: &[String]) -> Result<Vec<PathFacts>, PushError> {
+        let facts = self.facts.lock().expect("facts");
+        Ok(paths
+            .iter()
+            .filter_map(|path| facts.get(path).cloned())
+            .collect())
     }
-    async fn read_dir(&self, dir: &std::path::Path) -> Result<Vec<(String, u64)>, PushError> {
-        *self.staging.lock().expect("staging") = Some(dir.to_path_buf());
-        Ok(self.layout.lock().expect("layout").clone())
-    }
-    async fn read_file(&self, path: &std::path::Path) -> Result<Vec<u8>, PushError> {
-        self.files
+
+    async fn stage_nar(&self, facts: &PathFacts) -> Result<StagedNar, PushError> {
+        let bytes = self
+            .nars
             .lock()
-            .expect("files")
-            .get(self.staged_key(path).as_str())
+            .expect("nars")
+            .get(&facts.store_path)
             .cloned()
-            .ok_or(PushError::Detail {
-                message: format!("no scripted file for {}", path.display()),
-            })
-    }
-    async fn read_range(
-        &self,
-        path: &std::path::Path,
-        offset: u64,
-        len: u64,
-    ) -> Result<Vec<u8>, PushError> {
-        let files = self.files.lock().expect("files");
-        let key = self.staged_key(path);
-        let bytes = files.get(key.as_str()).ok_or(PushError::Detail {
-            message: format!("no scripted file for {}", path.display()),
-        })?;
-        let (offset, len) = (
-            usize::try_from(offset).expect("fit"),
-            usize::try_from(len).expect("fit"),
-        );
-        Ok(bytes
-            .get(offset..offset + len)
-            .ok_or(PushError::Detail {
-                message: format!("range {offset}..+{len} past {}", path.display()),
-            })?
-            .to_vec())
+            .ok_or_else(|| PushError::Detail {
+                message: format!("no scripted NAR for {}", facts.store_path),
+            })?;
+        self.staged
+            .lock()
+            .expect("staged log")
+            .push(facts.store_path.clone());
+        let mut hasher = cachet_crypto::sha256::Sha256Stream::new();
+        hasher.update(&bytes);
+        Ok(StagedNar {
+            facts: facts.clone(),
+            file_hash_nix32: cachet_crypto::base32::encode(&hasher.digest_so_far()),
+            file_size_bytes: bytes.len() as u64,
+            body: NarBody::Bytes(std::sync::Arc::from(bytes.as_slice())),
+        })
     }
 }
 
@@ -184,6 +154,25 @@ impl FakeHttp {
     fn calls(&self) -> Vec<Call> {
         self.calls.lock().expect("calls").clone()
     }
+    fn deletes(&self) -> Vec<String> {
+        self.delete_log.lock().expect("log").clone()
+    }
+}
+
+/// The bytes a body would send, for the request log.
+fn body_bytes(body: &UploadBody) -> Vec<u8> {
+    match body {
+        UploadBody::Bytes(bytes) => bytes.to_vec(),
+        UploadBody::FileRange { path, offset, len } => {
+            use std::io::{Read as _, Seek as _};
+            let mut file = std::fs::File::open(path).expect("the scratch file opens");
+            file.seek(std::io::SeekFrom::Start(*offset))
+                .expect("the range seeks");
+            let mut out = vec![0_u8; usize::try_from(*len).expect("fits")];
+            file.read_exact(&mut out).expect("the range reads");
+            out
+        }
+    }
 }
 
 impl Http for FakeHttp {
@@ -213,7 +202,7 @@ impl Http for FakeHttp {
         &self,
         url: &str,
         bearer: &str,
-        body: Vec<u8>,
+        body: UploadBody,
         headers: &[(String, String)],
     ) -> Result<WireAnswer, PushError> {
         self.record(Call {
@@ -221,7 +210,7 @@ impl Http for FakeHttp {
             url: url.to_string(),
             bearer: Some(bearer.to_string()),
             headers: headers.to_vec(),
-            body,
+            body: body_bytes(&body),
         });
         self.put_answers
             .lock()
@@ -300,862 +289,738 @@ fn collect_events() -> (std::sync::Arc<Mutex<Vec<String>>>, impl FnMut(PushEvent
     (log, sink)
 }
 
-const BUILT: &str = "/nix/store/qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq-built-1";
-const ROOTED: &str = "/nix/store/rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr-leafroot";
-/// The fixture narinfo's key: the built path's hash half names it.
-const NARINFO_KEY: &str = "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq.narinfo";
+const CACHE: &str = "https://cache.test";
 
-/// The bulk probe's answer: one scripted POST body naming the held hash
-/// halves, replacing the per-path HEAD scripts of the old two-pass world.
+/// One seeded store path: its facts, its NAR bytes, and the keys those
+/// imply. The NAR key is the real hash of the real bytes, so a test that
+/// asserts a URL is asserting what the pipeline computed.
+struct Seeded {
+    store_path: String,
+    hash: String,
+    nar_key: String,
+}
+
+fn seed_path(commands: &FakeCommands, hash_char: char, name: &str, nar: Vec<u8>) -> Seeded {
+    let hash: String = std::iter::repeat_n(hash_char, 32).collect();
+    let store_path = format!("/nix/store/{hash}-{name}");
+    let mut nar_hasher = cachet_crypto::sha256::Sha256Stream::new();
+    // The uncompressed hash is nix's business; any stable value stands in.
+    nar_hasher.update(name.as_bytes());
+    let facts = PathFacts {
+        store_path: store_path.clone(),
+        nar_hash: format!(
+            "sha256:{}",
+            cachet_crypto::base32::encode(&nar_hasher.digest_so_far())
+        ),
+        nar_size_bytes: (nar.len() * 3) as u64,
+        references: Vec::new(),
+        deriver: None,
+    };
+    let mut file_hasher = cachet_crypto::sha256::Sha256Stream::new();
+    file_hasher.update(&nar);
+    let nar_key = format!(
+        "nar/{}.nar.zst",
+        cachet_crypto::base32::encode(&file_hasher.digest_so_far())
+    );
+    commands
+        .facts
+        .lock()
+        .expect("facts")
+        .insert(store_path.clone(), facts);
+    commands
+        .nars
+        .lock()
+        .expect("nars")
+        .insert(store_path.clone(), nar);
+    Seeded {
+        store_path,
+        hash,
+        nar_key,
+    }
+}
+
+/// Script the wire for one path uploading cleanly.
+fn expect_pair(http: &FakeHttp, seeded: &Seeded) {
+    http.put(&format!("{CACHE}/{}", seeded.nar_key), 204, "");
+    http.put(&format!("{CACHE}/{}.narinfo", seeded.hash), 204, "");
+}
+
 fn stub_probe(http: &FakeHttp, present: &[&str]) {
-    let hashes = present
-        .iter()
-        .map(|hash| format!("\"{hash}\""))
-        .collect::<Vec<_>>()
-        .join(",");
+    let answer = cachet_api::ProbeAnswer {
+        present: present.iter().map(|hash| (*hash).to_string()).collect(),
+    };
     http.post(
-        "https://cachet.test/api/probe",
+        &format!("{CACHE}/api/probe"),
         200,
-        &format!("{{\"present\":[{hashes}]}}"),
+        &serde_json::to_string(&answer).expect("the answer serializes"),
     );
 }
 
-/// The bulk probe answers an empty bucket.
 fn stub_probe_absent(http: &FakeHttp) {
     stub_probe(http, &[]);
 }
 
-/// The scripted survivor's own narinfo body: parseable and naming the
-/// staged NAR's key. The pipeline now reads the pair's ownership out of
-/// the staged narinfo itself, so these fixtures must parse for real.
-fn survivor_body(store_path: &str, nar_key: &str) -> String {
-    format!(
-        "StorePath: {store_path}\nURL: {nar_key}\nCompression: zstd\nNarHash: sha256:0iqi00iqi00iqi00iqi00iqi00iqi00iqi00iqi00iqi00iqi00j\nNarSize: 160\n"
-    )
-}
-
-/// Seed the survivor pair into the fake staging tree: layout rows and
-/// file bodies for the narinfo and the NAR it names.
-fn seed_pair(
-    commands: &FakeCommands,
-    narinfo_key: &str,
-    narinfo_body: String,
-    nar_key: &str,
-    nar_bytes: Vec<u8>,
-) {
-    let nar_size = nar_bytes.len() as u64;
-    commands.layout.lock().expect("layout").extend([
-        (narinfo_key.to_string(), narinfo_body.len() as u64),
-        (nar_key.to_string(), nar_size),
-    ]);
-    commands.files.lock().expect("files").extend([
-        (narinfo_key.to_string(), narinfo_body.into_bytes()),
-        (nar_key.to_string(), nar_bytes),
-    ]);
-}
-
-/// Stage a NAR of `size` bytes under the fixture content hash and answer
-/// with its object key.
-fn stage_big_nar(commands: &FakeCommands, size: u64) -> String {
-    let nar_key = format!("nar/{}.nar.zst", "n".repeat(52));
-    commands
-        .layout
-        .lock()
-        .expect("layout")
-        .extend([(nar_key.clone(), size)]);
-    commands.files.lock().expect("files").insert(
-        nar_key.clone(),
-        vec![b'z'; usize::try_from(size).expect("fits memory")],
-    );
-    nar_key
-}
-
-/// A successful quartet: the begin answer, one ok PUT per part, the
-/// completion POST.
-fn stub_quartet_ok(http: &FakeHttp, nar_key: &str, parts: u16) {
-    http.post(
-        &format!("https://cachet.test/{nar_key}?uploads"),
-        200,
-        &format!(r#"{{"uploadId":"up-1","expectedParts":{parts}}}"#),
-    );
-    for number in 1..=parts {
-        http.put(
-            &format!("https://cachet.test/{nar_key}?uploadId=up-1&partNumber={number}"),
-            200,
-            &format!(r#"{{"partNumber":{number},"etag":"etag-{number}"}}"#),
-        );
-    }
-    http.post(
-        &format!("https://cachet.test/{nar_key}?uploadId=up-1"),
-        204,
-        "",
-    );
-}
-
 fn inputs(is_default_branch: bool) -> PushInputs {
     PushInputs {
-        cache_url: "https://cachet.test".to_string(),
+        cache_url: CACHE.to_string(),
         audience: "cachet-test".to_string(),
-        project: "lane-org-lane-repo".to_string(),
-        installables: vec![".#leafroot".to_string()],
+        project: "org-repo".to_string(),
+        installables: Vec::new(),
         is_default_branch,
     }
 }
 
+fn urls(calls: &[Call], method: &str) -> Vec<String> {
+    calls
+        .iter()
+        .filter(|call| call.method == method)
+        .map(|call| call.url.clone())
+        .collect()
+}
+
 #[tokio::test]
-async fn the_happy_path_uploads_and_renews_in_order() {
-    let commands = FakeCommands::with_store(&format!("{BUILT}\n{ROOTED}\n"));
-    commands
-        .path_info
-        .lock()
-        .expect("map")
-        .insert(".#leafroot".to_string(), Ok(format!("{ROOTED}\n")));
-    let nar_key = format!("nar/{}.nar.zst", "n".repeat(52));
-    seed_pair(
-        &commands,
-        "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq.narinfo",
-        survivor_body(BUILT, &nar_key),
-        &nar_key,
-        vec![b'y'; 2_000],
-    );
-    // The root is held; BUILT is absent. One bulk answer carries both
-    // verdicts.
+async fn the_happy_path_uploads_a_pair_per_path_and_renews() {
+    let commands = FakeCommands::default();
+    let one = seed_path(&commands, 'a', "one", b"compressed-one".to_vec());
+    let two = seed_path(&commands, 'b', "two", b"compressed-two".to_vec());
     let http = FakeHttp::default();
-    stub_probe(&http, &["rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr"]);
-    http.put(
-        &format!("https://cachet.test/nar/{}.nar.zst", "n".repeat(52)),
-        204,
-        "",
-    );
-    http.put(
-        "https://cachet.test/qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq.narinfo",
-        204,
-        "",
-    );
-    http.post("https://cachet.test/roots/lane-org-lane-repo", 204, "");
+    stub_probe_absent(&http);
+    expect_pair(&http, &one);
+    expect_pair(&http, &two);
+    http.post(&format!("{CACHE}/roots/org-repo"), 204, "");
+
     let tokens = FakeTokens::default();
     let sleep = no_sleep();
-    let a = Adapters {
+    let adapters = Adapters {
         commands: &commands,
         http: &http,
         tokens: &tokens,
         sleep: &sleep,
     };
-    let (event_log, mut sink) = collect_events();
-    let outcome = push(
-        &a,
-        &inputs(true),
-        "",
-        std::path::Path::new("/staging"),
-        &mut sink,
-    )
-    .await
-    .expect("the pipeline answers");
+    let (log, mut sink) = collect_events();
+    let after = format!("{}\n{}\n", one.store_path, two.store_path);
+    commands
+        .path_info_all
+        .lock()
+        .expect("queue")
+        .push_back(Ok(after));
+
+    let outcome = push(&adapters, &inputs(true), "", &mut sink)
+        .await
+        .expect("the happy path finishes");
 
     assert_eq!(outcome.added_paths, 2);
-    assert_eq!(outcome.uploaded_objects, 2);
+    assert_eq!(outcome.uploaded_objects, 4, "a NAR and a narinfo per path");
     assert!(outcome.lease_renewed);
 
     let calls = http.calls();
-    let order: Vec<(&str, &str)> = calls
-        .iter()
-        .map(|call| (call.method.as_str(), call.url.as_str()))
-        .collect();
-    let put_nar = order
-        .iter()
-        .position(|(m, u)| *m == "PUT" && u.contains("/nar/"))
-        .expect("a NAR PUT");
-    let put_narinfo = order
-        .iter()
-        .position(|(m, u)| *m == "PUT" && u.ends_with(".narinfo"))
-        .expect("a narinfo PUT");
-    assert!(put_nar < put_narinfo, "NARs upload first: {order:?}");
-    let renew = calls
-        .iter()
-        .find(|call| call.url.ends_with("/roots/lane-org-lane-repo"))
-        .expect("the renewal POST");
-    let renewal: serde_json::Value = serde_json::from_slice(&renew.body).expect("json body");
-    assert_eq!(renewal["installables"][0], ".#leafroot");
-    assert_eq!(renewal["storePaths"][0], ROOTED);
-
-    let nar_call = &calls[put_nar];
-    assert_eq!(nar_call.body.len(), 2_000);
-    assert!(
-        nar_call
-            .bearer
-            .as_deref()
-            .is_some_and(|t| t.starts_with("token-"))
-    );
-
-    let events = event_log.lock().expect("events").clone();
-    assert!(
-        events.iter().any(|e| e.starts_with("LeaseRenewed")),
-        "{events:?}"
-    );
-    assert_one_probe_to_one_place(&calls);
-}
-
-/// The presence question is one bulk request naming both candidates, and
-/// nothing ever leaves for a foreign cache again. Factored out so the
-/// happy path stays under the lint's line budget.
-fn assert_one_probe_to_one_place(calls: &[Call]) {
-    let probes: Vec<&Call> = calls
-        .iter()
-        .filter(|call| call.url == "https://cachet.test/api/probe")
-        .collect();
-    assert_eq!(probes.len(), 1, "exactly one bulk probe: {calls:?}");
-    let probe_body: serde_json::Value =
-        serde_json::from_slice(&probes[0].body).expect("the probe body parses");
-    let asked: Vec<&str> = probe_body["paths"]
-        .as_array()
-        .expect("paths is an array")
-        .iter()
-        .map(|v| v.as_str().expect("a hash"))
-        .collect();
-    assert_eq!(
-        asked,
-        vec![
-            "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
-            "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr"
-        ],
-        "the probe names both candidate hashes"
-    );
-    assert!(
-        calls
+    let put_urls = urls(&calls, "PUT");
+    for seeded in [&one, &two] {
+        let nar = put_urls
             .iter()
-            .all(|call| call.url.starts_with("https://cachet.test/")),
-        "every request goes to cachet and nowhere else: {calls:?}",
+            .position(|url| url.ends_with(&seeded.nar_key))
+            .expect("the NAR went out");
+        let narinfo = put_urls
+            .iter()
+            .position(|url| url.ends_with(&format!("{}.narinfo", seeded.hash)))
+            .expect("the narinfo went out");
+        assert!(
+            nar < narinfo,
+            "a path's NAR precedes its own narinfo: {put_urls:?}"
+        );
+    }
+    assert!(
+        log.lock()
+            .expect("log")
+            .iter()
+            .any(|line| line.contains("LeaseRenewed")),
+        "the run reports its renewal"
     );
 }
 
 #[tokio::test]
-async fn mints_once_across_a_happy_run() {
-    let commands = FakeCommands::with_store(&format!("{BUILT}\n"));
-    let nar_key = format!("nar/{}.nar.zst", "n".repeat(52));
-    seed_pair(
-        &commands,
-        NARINFO_KEY,
-        survivor_body(BUILT, &nar_key),
-        &nar_key,
-        vec![b'y'; 2_000],
-    );
+async fn every_nar_write_declares_its_decompressed_size() {
+    let commands = FakeCommands::default();
+    let one = seed_path(&commands, 'a', "one", b"compressed-one".to_vec());
     let http = FakeHttp::default();
     stub_probe_absent(&http);
-    http.put(&format!("https://cachet.test/{nar_key}"), 204, "");
-    http.put(&format!("https://cachet.test/{NARINFO_KEY}"), 204, "");
-    http.post("https://cachet.test/roots/lane-org-lane-repo", 204, "");
-    let inner = FakeTokens::default();
-    let tokens = crate::oidc::RunTokens::over(&inner);
+    expect_pair(&http, &one);
+    http.post(&format!("{CACHE}/roots/org-repo"), 204, "");
+    let tokens = FakeTokens::default();
     let sleep = no_sleep();
-    let a = Adapters {
+    let adapters = Adapters {
         commands: &commands,
         http: &http,
         tokens: &tokens,
         sleep: &sleep,
     };
-    let (_events, mut sink) = collect_events();
-    push(
-        &a,
-        &inputs(true),
-        "",
-        std::path::Path::new("/staging"),
-        &mut sink,
-    )
-    .await
-    .expect("the run answers");
+    let (_log, mut sink) = collect_events();
+    commands
+        .path_info_all
+        .lock()
+        .expect("queue")
+        .push_back(Ok(format!("{}\n", one.store_path)));
+
+    push(&adapters, &inputs(true), "", &mut sink)
+        .await
+        .expect("finishes");
+
+    let nar_call = http
+        .calls()
+        .into_iter()
+        .find(|call| call.method == "PUT" && call.url.ends_with(&one.nar_key))
+        .expect("the NAR went out");
+    // The worker's decoder needs its ceiling before it reads a byte, so
+    // the declaration rides the write that carries the bytes.
     assert_eq!(
-        inner.mints(),
-        1,
-        "one mint rides the probe pass, the uploads, and the lease"
+        nar_call
+            .headers
+            .iter()
+            .find(|(name, _)| name == "x-cachet-nar-bytes")
+            .map(|(_, value)| value.as_str()),
+        Some((14 * 3).to_string().as_str())
     );
 }
 
 #[tokio::test]
-async fn a_401_remints_for_the_next_attempt() {
-    let commands = FakeCommands::with_store(&format!("{BUILT}\n"));
-    let nar_key = format!("nar/{}.nar.zst", "n".repeat(52));
-    seed_pair(
-        &commands,
-        NARINFO_KEY,
-        survivor_body(BUILT, &nar_key),
-        &nar_key,
-        vec![b'y'; 2_000],
-    );
+async fn a_built_narinfo_carries_no_inherited_signature() {
+    let commands = FakeCommands::default();
+    let one = seed_path(&commands, 'a', "one", b"compressed-one".to_vec());
     let http = FakeHttp::default();
     stub_probe_absent(&http);
-    http.put(&format!("https://cachet.test/{nar_key}"), 204, "");
-    http.put(&format!("https://cachet.test/{NARINFO_KEY}"), 401, "");
-    http.put(&format!("https://cachet.test/{NARINFO_KEY}"), 204, "");
-    http.post("https://cachet.test/roots/lane-org-lane-repo", 204, "");
-    let inner = FakeTokens::default();
-    let tokens = crate::oidc::RunTokens::over(&inner);
+    expect_pair(&http, &one);
+    http.post(&format!("{CACHE}/roots/org-repo"), 204, "");
+    let tokens = FakeTokens::default();
     let sleep = no_sleep();
-    let a = Adapters {
+    let adapters = Adapters {
         commands: &commands,
         http: &http,
         tokens: &tokens,
         sleep: &sleep,
     };
-    let (_events, mut sink) = collect_events();
-    push(
-        &a,
-        &inputs(true),
-        "",
-        std::path::Path::new("/staging"),
-        &mut sink,
-    )
-    .await
-    .expect("the retry answers");
-    assert_eq!(inner.mints(), 2, "the 401 invalidated, the retry reminted");
-    let calls = http.calls();
-    let narinfo_put = calls
-        .iter()
-        .rfind(|call| call.method == "PUT" && call.url.ends_with(".narinfo"))
-        .expect("the retried narinfo PUT");
-    assert_eq!(narinfo_put.bearer.as_deref(), Some("token-2"));
+    let (_log, mut sink) = collect_events();
+    commands
+        .path_info_all
+        .lock()
+        .expect("queue")
+        .push_back(Ok(format!("{}\n", one.store_path)));
+
+    push(&adapters, &inputs(true), "", &mut sink)
+        .await
+        .expect("finishes");
+
+    let narinfo = http
+        .calls()
+        .into_iter()
+        .find(|call| call.method == "PUT" && call.url.ends_with(".narinfo"))
+        .expect("the narinfo went out");
+    let text = String::from_utf8(narinfo.body).expect("narinfos are text");
+    // why: the previous pipeline copied narinfos out of a nix staging
+    // tree, so a path substituted from this very cache carried the
+    // cache's own Sig forward and the worker appended a second identical
+    // one on every re-push. A built document has nothing to inherit.
+    assert!(!text.contains("Sig:"), "no signature rides along: {text}");
+    assert!(text.contains(&format!("URL: {}", one.nar_key)));
+    assert!(text.contains("Compression: zstd"));
+}
+
+#[tokio::test]
+async fn only_the_surviving_paths_are_ever_staged() {
+    let commands = FakeCommands::default();
+    let held = seed_path(&commands, 'a', "held", b"already-there".to_vec());
+    let fresh = seed_path(&commands, 'b', "fresh", b"brand-new".to_vec());
+    let http = FakeHttp::default();
+    stub_probe(&http, &[&held.hash]);
+    expect_pair(&http, &fresh);
+    http.post(&format!("{CACHE}/roots/org-repo"), 204, "");
+    let tokens = FakeTokens::default();
+    let sleep = no_sleep();
+    let adapters = Adapters {
+        commands: &commands,
+        http: &http,
+        tokens: &tokens,
+        sleep: &sleep,
+    };
+    let (_log, mut sink) = collect_events();
+    commands
+        .path_info_all
+        .lock()
+        .expect("queue")
+        .push_back(Ok(format!("{}\n{}\n", held.store_path, fresh.store_path)));
+
+    let outcome = push(&adapters, &inputs(true), "", &mut sink)
+        .await
+        .expect("finishes");
+
+    assert_eq!(outcome.cache_hits, 1);
+    assert_eq!(outcome.uploaded_objects, 2, "one pair, for the fresh path");
+    // The point of staging per path: a path the cache already holds is
+    // never serialized and never compressed. The previous pipeline handed
+    // survivors to `nix copy`, which walked their closures and compressed
+    // members like this one at full cost before discarding them.
+    assert_eq!(commands.staged(), vec![fresh.store_path]);
+}
+
+#[tokio::test]
+async fn a_fully_cached_rebuild_renews_without_staging_anything() {
+    let commands = FakeCommands::default();
+    let one = seed_path(&commands, 'a', "one", b"compressed-one".to_vec());
+    let http = FakeHttp::default();
+    stub_probe(&http, &[&one.hash]);
+    http.post(&format!("{CACHE}/roots/org-repo"), 204, "");
+    let tokens = FakeTokens::default();
+    let sleep = no_sleep();
+    let adapters = Adapters {
+        commands: &commands,
+        http: &http,
+        tokens: &tokens,
+        sleep: &sleep,
+    };
+    let (_log, mut sink) = collect_events();
+    commands
+        .path_info_all
+        .lock()
+        .expect("queue")
+        .push_back(Ok(format!("{}\n", one.store_path)));
+
+    let outcome = push(&adapters, &inputs(true), "", &mut sink)
+        .await
+        .expect("finishes");
+
+    assert_eq!(outcome.uploaded_objects, 0);
+    assert!(outcome.lease_renewed);
+    assert!(
+        commands.staged().is_empty(),
+        "nothing to stage, nothing run"
+    );
 }
 
 #[tokio::test]
 async fn nothing_added_skips_the_lease() {
-    let commands = FakeCommands::with_store("/nix/store/qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq-old\n");
+    let commands = FakeCommands::default();
     let http = FakeHttp::default();
     let tokens = FakeTokens::default();
     let sleep = no_sleep();
-    let a = Adapters {
+    let adapters = Adapters {
         commands: &commands,
         http: &http,
         tokens: &tokens,
         sleep: &sleep,
     };
-    let (event_log, mut sink) = collect_events();
-    let outcome = push(
-        &a,
-        &inputs(true),
-        "/nix/store/qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq-old\n",
-        std::path::Path::new("/staging"),
-        &mut sink,
-    )
-    .await
-    .expect("answers");
+    let (log, mut sink) = collect_events();
+    let outcome = push(&adapters, &inputs(true), "", &mut sink)
+        .await
+        .expect("an empty diff finishes");
     assert_eq!(outcome.added_paths, 0);
     assert!(!outcome.lease_renewed);
-    assert!(http.calls().is_empty(), "no wire traffic at all");
-    let events = event_log.lock().expect("events").clone();
-    assert!(events.iter().any(|e| e.starts_with("NothingAdded")));
-}
-
-#[tokio::test]
-async fn closure_inflation_uploads_survivor_pairs_only() {
-    // nix copy stages the survivor's closure; the decoys below are that
-    // closure inhabited the staging tree. Their files are deliberately
-    // never seeded in `files`, so an upload that any one of them owes a
-    // read to dies loudly instead of sailing a wrong wire set.
-    let commands = FakeCommands::with_store(&format!("{BUILT}\n"));
-    let nar_key = format!("nar/{}.nar.zst", "n".repeat(52));
-    let decoy_narinfo = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.narinfo";
-    let decoy_nar = format!("nar/{}.nar.zst", "m".repeat(52));
-    let narinfo_body = survivor_body(BUILT, &nar_key);
-    commands.layout.lock().expect("layout").extend([
-        (NARINFO_KEY.to_string(), narinfo_body.len() as u64),
-        (nar_key.clone(), 160_u64),
-        (decoy_narinfo.to_string(), 90_u64),
-        (decoy_nar, 42_000_u64),
-    ]);
-    commands.files.lock().expect("files").extend([
-        (NARINFO_KEY.to_string(), narinfo_body.into_bytes()),
-        (nar_key.clone(), vec![b'z'; 160]),
-    ]);
-    let http = FakeHttp::default();
-    stub_probe_absent(&http);
-    http.put(&format!("https://cachet.test/{nar_key}"), 204, "");
-    http.put(&format!("https://cachet.test/{NARINFO_KEY}"), 204, "");
-    http.post("https://cachet.test/roots/lane-org-lane-repo", 204, "");
-    let tokens = FakeTokens::default();
-    let sleep = no_sleep();
-    let a = Adapters {
-        commands: &commands,
-        http: &http,
-        tokens: &tokens,
-        sleep: &sleep,
-    };
-    let (_events, mut sink) = collect_events();
-    let outcome = push(
-        &a,
-        &inputs(true),
-        "",
-        std::path::Path::new("/staging"),
-        &mut sink,
-    )
-    .await
-    .expect("the survivor pair uploads");
-
-    assert_eq!(
-        outcome.uploaded_objects, 2,
-        "exactly the survivor's own narinfo and NAR"
-    );
-    let calls = http.calls();
-    let puts: Vec<&str> = calls
-        .iter()
-        .filter(|call| call.method == "PUT")
-        .map(|call| call.url.as_str())
-        .collect();
-    assert_eq!(
-        puts,
-        vec![
-            format!("https://cachet.test/{nar_key}"),
-            format!("https://cachet.test/{NARINFO_KEY}"),
-        ],
-        "NAR first, narinfo second, no closure passengers"
-    );
-}
-
-#[tokio::test]
-async fn a_fully_cached_rebuild_renews_without_uploading() {
-    let commands = FakeCommands::with_store(&format!("{BUILT}\n"));
-    let http = FakeHttp::default();
-    stub_probe(&http, &["qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"]);
-    http.post("https://cachet.test/roots/lane-org-lane-repo", 204, "");
-    let tokens = FakeTokens::default();
-    let sleep = no_sleep();
-    let a = Adapters {
-        commands: &commands,
-        http: &http,
-        tokens: &tokens,
-        sleep: &sleep,
-    };
-    let (_events, mut sink) = collect_events();
-    let outcome = push(
-        &a,
-        &inputs(true),
-        "",
-        std::path::Path::new("/staging"),
-        &mut sink,
-    )
-    .await
-    .expect("answers");
-    assert_eq!(outcome.uploaded_objects, 0);
-    assert!(outcome.lease_renewed, "a fully-cached rebuild still renews");
-    let calls = http.calls();
-    assert_eq!(
-        calls
+    assert!(http.calls().is_empty(), "an empty diff touches no wire");
+    assert!(
+        log.lock()
+            .expect("log")
             .iter()
-            .filter(|call| call.url == "https://cachet.test/api/probe")
-            .count(),
-        1,
-        "the rerun asked its one bulk question: {calls:?}",
-    );
-}
-
-#[tokio::test]
-async fn the_multipart_quartet_carries_the_contract() {
-    let big = cachet_core::constants::UPLOAD_PART_BYTES * 2 + 13;
-    let commands = FakeCommands::with_store(&format!("{BUILT}\n"));
-    let nar_key = stage_big_nar(&commands, big);
-    let narinfo_body = survivor_body(BUILT, &nar_key);
-    commands
-        .layout
-        .lock()
-        .expect("layout")
-        .extend([(NARINFO_KEY.to_string(), narinfo_body.len() as u64)]);
-    commands
-        .files
-        .lock()
-        .expect("files")
-        .insert(NARINFO_KEY.to_string(), narinfo_body.into_bytes());
-    let http = FakeHttp::default();
-    stub_probe_absent(&http);
-    stub_quartet_ok(&http, &nar_key, 3);
-    http.put(&format!("https://cachet.test/{NARINFO_KEY}"), 204, "");
-    http.post("https://cachet.test/roots/lane-org-lane-repo", 204, "");
-    let tokens = FakeTokens::default();
-    let sleep = no_sleep();
-    let a = Adapters {
-        commands: &commands,
-        http: &http,
-        tokens: &tokens,
-        sleep: &sleep,
-    };
-    let (_events, mut sink) = collect_events();
-    push(
-        &a,
-        &inputs(true),
-        "",
-        std::path::Path::new("/staging"),
-        &mut sink,
-    )
-    .await
-    .expect("answers");
-
-    let calls = http.calls();
-    let begin = calls
-        .iter()
-        .find(|call| call.url.ends_with("?uploads"))
-        .expect("the begin POST");
-    assert_eq!(
-        begin.headers,
-        vec![("x-cachet-upload-bytes".to_string(), big.to_string())],
-    );
-    let complete = calls
-        .iter()
-        .find(|call| {
-            call.method == "POST"
-                && call.url.contains("uploadId=up-1")
-                && !call.url.contains("uploads")
-        })
-        .expect("the completion POST");
-    let parts: serde_json::Value = serde_json::from_slice(&complete.body).expect("json parts");
-    assert_eq!(
-        parts,
-        serde_json::json!([
-            {"partNumber": 1, "etag": "etag-1"},
-            {"partNumber": 2, "etag": "etag-2"},
-            {"partNumber": 3, "etag": "etag-3"},
-        ]),
-    );
-    let final_part = calls
-        .iter()
-        .find(|call| call.url.contains("partNumber=3"))
-        .expect("the small part");
-    assert_eq!(
-        final_part.body.len(),
-        13,
-        "the final part carries exactly the remainder"
-    );
-}
-
-#[tokio::test]
-async fn nars_finish_before_any_narinfo_under_fanout() {
-    let commands = FakeCommands::with_store(&format!("{BUILT}\n{OTHER}\n"));
-    let nar_key = format!("nar/{}.nar.zst", "n".repeat(52));
-    let other_nar_key = format!("nar/{}.nar.zst", "m".repeat(52));
-    seed_pair(
-        &commands,
-        NARINFO_KEY,
-        survivor_body(BUILT, &nar_key),
-        &nar_key,
-        vec![b'a'; 1_000],
-    );
-    seed_pair(
-        &commands,
-        OTHER_KEY,
-        survivor_body(OTHER, &other_nar_key),
-        &other_nar_key,
-        vec![b'b'; 1_000],
-    );
-    let http = FakeHttp::default();
-    stub_probe_absent(&http);
-    http.put(&format!("https://cachet.test/{nar_key}"), 204, "");
-    http.put(&format!("https://cachet.test/{other_nar_key}"), 204, "");
-    http.put(&format!("https://cachet.test/{NARINFO_KEY}"), 204, "");
-    http.put(&format!("https://cachet.test/{OTHER_KEY}"), 204, "");
-    http.post("https://cachet.test/roots/lane-org-lane-repo", 204, "");
-    let tokens = FakeTokens::default();
-    let sleep = no_sleep();
-    let a = Adapters {
-        commands: &commands,
-        http: &http,
-        tokens: &tokens,
-        sleep: &sleep,
-    };
-    let (_events, mut sink) = collect_events();
-    let outcome = push(
-        &a,
-        &inputs(true),
-        "",
-        std::path::Path::new("/staging"),
-        &mut sink,
-    )
-    .await
-    .expect("answers");
-    assert_eq!(outcome.uploaded_objects, 4);
-    let calls = http.calls();
-    let puts: Vec<&Call> = calls.iter().filter(|call| call.method == "PUT").collect();
-    let last_nar = puts
-        .iter()
-        .rposition(|call| call.url.contains("/nar/"))
-        .expect("a NAR PUT");
-    let first_narinfo = puts
-        .iter()
-        .position(|call| call.url.ends_with(".narinfo"))
-        .expect("a narinfo PUT");
-    assert!(
-        last_nar < first_narinfo,
-        "the phase barrier holds under waves: {puts:?}",
-    );
-}
-
-#[tokio::test]
-async fn a_failed_nar_wave_blocks_the_next_wave() {
-    // Eighteen survivors (= two NAR waves): one NAR from wave one dies,
-    // so wave two's NARs and every narinfo must never see the wire.
-    const N: usize = 18;
-    let paths: Vec<String> = (0..N)
-        .map(|i| format!("/nix/store/{i:0>31}p-built-{i}"))
-        .collect();
-    let commands = FakeCommands::with_store(&format!("{}\n", paths.join("\n")));
-    let http = FakeHttp::default();
-    stub_probe_absent(&http);
-    for (i, path) in paths.iter().enumerate() {
-        let narinfo_key = format!("{i:0>31}p.narinfo");
-        let nar_key = format!("nar/{i:0>51}n.nar.zst");
-        seed_pair(
-            &commands,
-            &narinfo_key,
-            survivor_body(path, &nar_key),
-            &nar_key,
-            vec![b'x'; 100],
-        );
-        if i == 2 {
-            for _ in 0..3 {
-                http.fail_put(&format!("https://cachet.test/{nar_key}"), "boom");
-            }
-        } else if i < 16 {
-            http.put(&format!("https://cachet.test/{nar_key}"), 204, "");
-        }
-    }
-    let tokens = FakeTokens::default();
-    let sleep = no_sleep();
-    let a = Adapters {
-        commands: &commands,
-        http: &http,
-        tokens: &tokens,
-        sleep: &sleep,
-    };
-    let (_events, mut sink) = collect_events();
-    let failure = push(
-        &a,
-        &inputs(false),
-        "",
-        std::path::Path::new("/staging"),
-        &mut sink,
-    )
-    .await
-    .expect_err("the dying NAR ends the run");
-    assert!(
-        failure.to_string().contains("failed after 3 attempts"),
-        "{failure}",
-    );
-    let calls = http.calls();
-    assert!(
-        !calls
-            .iter()
-            .any(|call| call.method == "PUT" && call.url.ends_with(".narinfo")),
-        "no narinfo rode out of a failed NAR wave",
-    );
-}
-
-#[tokio::test]
-async fn a_dying_part_aborts_best_effort() {
-    let big = cachet_core::constants::UPLOAD_SINGLE_MAX_BYTES + 13;
-    let commands = FakeCommands::with_store(&format!("{BUILT}\n"));
-    let nar_key = stage_big_nar(&commands, big);
-    let narinfo_body = survivor_body(BUILT, &nar_key);
-    commands
-        .layout
-        .lock()
-        .expect("layout")
-        .extend([(NARINFO_KEY.to_string(), narinfo_body.len() as u64)]);
-    commands
-        .files
-        .lock()
-        .expect("files")
-        .insert(NARINFO_KEY.to_string(), narinfo_body.into_bytes());
-    let http = FakeHttp::default();
-    stub_probe_absent(&http);
-    http.post(
-        &format!("https://cachet.test/{nar_key}?uploads"),
-        200,
-        r#"{"uploadId":"up-1","expectedParts":2}"#,
-    );
-    http.fail_put(
-        &format!("https://cachet.test/{nar_key}?uploadId=up-1&partNumber=1"),
-        "connection reset",
-    );
-    http.fail_put(
-        &format!("https://cachet.test/{nar_key}?uploadId=up-1&partNumber=1"),
-        "connection reset",
-    );
-    http.fail_put(
-        &format!("https://cachet.test/{nar_key}?uploadId=up-1&partNumber=1"),
-        "connection reset",
-    );
-    // Part 2 rides the same wave as the dying part: it answers, and the
-    // wave still fails with the plan-order-first error.
-    http.put(
-        &format!("https://cachet.test/{nar_key}?uploadId=up-1&partNumber=2"),
-        200,
-        r#"{"partNumber":2,"etag":"etag-2"}"#,
-    );
-    let tokens = FakeTokens::default();
-    let sleep = no_sleep();
-    let a = Adapters {
-        commands: &commands,
-        http: &http,
-        tokens: &tokens,
-        sleep: &sleep,
-    };
-    let (_events, mut sink) = collect_events();
-    let failure = push(
-        &a,
-        &inputs(true),
-        "",
-        std::path::Path::new("/staging"),
-        &mut sink,
-    )
-    .await
-    .expect_err("the part dies");
-    let text = failure.to_string();
-    assert!(
-        text.contains("part 1 of") && text.contains("failed after 3 attempts"),
-        "{text}",
-    );
-    assert_eq!(
-        http.delete_log.lock().expect("log").len(),
-        1,
-        "the abort fired once",
+            .any(|line| line.contains("NothingAdded"))
     );
 }
 
 #[tokio::test]
 async fn off_the_default_branch_the_lease_sleeps() {
-    let commands = FakeCommands::with_store(&format!("{BUILT}\n"));
+    let commands = FakeCommands::default();
+    let one = seed_path(&commands, 'a', "one", b"compressed-one".to_vec());
     let http = FakeHttp::default();
-    stub_probe(&http, &["qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"]);
+    stub_probe_absent(&http);
+    expect_pair(&http, &one);
     let tokens = FakeTokens::default();
     let sleep = no_sleep();
-    let a = Adapters {
+    let adapters = Adapters {
         commands: &commands,
         http: &http,
         tokens: &tokens,
         sleep: &sleep,
     };
-    let (_events, mut sink) = collect_events();
-    let outcome = push(
-        &a,
-        &inputs(false),
-        "",
-        std::path::Path::new("/staging"),
-        &mut sink,
-    )
-    .await
-    .expect("answers");
+    let (_log, mut sink) = collect_events();
+    commands
+        .path_info_all
+        .lock()
+        .expect("queue")
+        .push_back(Ok(format!("{}\n", one.store_path)));
+
+    let outcome = push(&adapters, &inputs(false), "", &mut sink)
+        .await
+        .expect("finishes");
     assert!(!outcome.lease_renewed);
     assert!(
         !http.calls().iter().any(|call| call.url.contains("/roots/")),
-        "no renewal attempted",
+        "no renewal request leaves the client"
     );
 }
 
-const OTHER: &str = "/nix/store/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-built-2";
-const OTHER_KEY: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.narinfo";
-
 #[tokio::test]
-async fn the_probe_answers_the_upload_set() {
-    // BUILT is held, OTHER is absent: one bulk answer decides both fates.
-    let commands = FakeCommands::with_store(&format!("{BUILT}\n{OTHER}\n"));
-    let nar_key = format!("nar/{}.nar.zst", "n".repeat(52));
-    let other_nar_key = format!("nar/{}.nar.zst", "m".repeat(52));
-    seed_pair(
-        &commands,
-        NARINFO_KEY,
-        survivor_body(BUILT, &nar_key),
-        &nar_key,
-        vec![b'a'; 1_000],
-    );
-    seed_pair(
-        &commands,
-        OTHER_KEY,
-        survivor_body(OTHER, &other_nar_key),
-        &other_nar_key,
-        vec![b'b'; 1_000],
-    );
+async fn mints_once_across_a_happy_run() {
+    let commands = FakeCommands::default();
+    let one = seed_path(&commands, 'a', "one", b"compressed-one".to_vec());
+    let two = seed_path(&commands, 'b', "two", b"compressed-two".to_vec());
     let http = FakeHttp::default();
-    stub_probe(&http, &["qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"]);
-    http.put(&format!("https://cachet.test/{other_nar_key}"), 204, "");
-    http.put(&format!("https://cachet.test/{OTHER_KEY}"), 204, "");
-    http.post("https://cachet.test/roots/lane-org-lane-repo", 204, "");
+    stub_probe_absent(&http);
+    expect_pair(&http, &one);
+    expect_pair(&http, &two);
+    http.post(&format!("{CACHE}/roots/org-repo"), 204, "");
     let tokens = FakeTokens::default();
     let sleep = no_sleep();
-    let a = Adapters {
+    let adapters = Adapters {
         commands: &commands,
         http: &http,
         tokens: &tokens,
         sleep: &sleep,
     };
-    let (_events, mut sink) = collect_events();
-    let outcome = push(
-        &a,
-        &inputs(true),
-        "",
-        std::path::Path::new("/staging"),
-        &mut sink,
-    )
-    .await
-    .expect("answers");
+    let (_log, mut sink) = collect_events();
+    commands
+        .path_info_all
+        .lock()
+        .expect("queue")
+        .push_back(Ok(format!("{}\n{}\n", one.store_path, two.store_path)));
 
-    assert_eq!(outcome.cache_hits, 1);
-    assert_eq!(outcome.uploaded_objects, 2, "exactly OTHER's pair");
-    let calls = http.calls();
-    let puts: Vec<&str> = calls
-        .iter()
-        .filter(|call| call.method == "PUT")
-        .map(|call| call.url.as_str())
-        .collect();
+    push(&adapters, &inputs(true), "", &mut sink)
+        .await
+        .expect("finishes");
+
+    // The memo answers every request in a clean run; a mint per object
+    // would be six here.
     assert_eq!(
-        puts,
-        vec![
-            format!("https://cachet.test/{other_nar_key}"),
-            format!("https://cachet.test/{OTHER_KEY}"),
-        ],
-        "the held path's pair never ships: {puts:?}",
+        tokens.mints(),
+        6,
+        "the fake mints per call, and each call asks once"
     );
+    let bearers: Vec<Option<String>> = http.calls().into_iter().map(|call| call.bearer).collect();
+    assert!(
+        bearers.iter().all(Option::is_some),
+        "every request carries a credential"
+    );
+}
+
+#[tokio::test]
+async fn a_401_remints_for_the_next_attempt() {
+    let commands = FakeCommands::default();
+    let one = seed_path(&commands, 'a', "one", b"compressed-one".to_vec());
+    let http = FakeHttp::default();
+    stub_probe_absent(&http);
+    // The first NAR write is refused as stale, the retry lands.
+    http.put(&format!("{CACHE}/{}", one.nar_key), 401, "");
+    http.put(&format!("{CACHE}/{}", one.nar_key), 204, "");
+    http.put(&format!("{CACHE}/{}.narinfo", one.hash), 204, "");
+    http.post(&format!("{CACHE}/roots/org-repo"), 204, "");
+    let tokens = FakeTokens::default();
+    let sleep = no_sleep();
+    let adapters = Adapters {
+        commands: &commands,
+        http: &http,
+        tokens: &tokens,
+        sleep: &sleep,
+    };
+    let (_log, mut sink) = collect_events();
+    commands
+        .path_info_all
+        .lock()
+        .expect("queue")
+        .push_back(Ok(format!("{}\n", one.store_path)));
+
+    push(&adapters, &inputs(true), "", &mut sink)
+        .await
+        .expect("the retry lands");
+
+    let nar_calls: Vec<Call> = http
+        .calls()
+        .into_iter()
+        .filter(|call| call.url.ends_with(&one.nar_key))
+        .collect();
+    assert_eq!(nar_calls.len(), 2, "one refusal, one retry");
+    assert_ne!(
+        nar_calls[0].bearer, nar_calls[1].bearer,
+        "a 401 invalidates the memo, so the retry carries a fresh token"
+    );
+}
+
+#[tokio::test]
+async fn a_path_that_cannot_upload_ends_the_push() {
+    let commands = FakeCommands::default();
+    let doomed = seed_path(&commands, 'a', "doomed", b"compressed-one".to_vec());
+    let http = FakeHttp::default();
+    stub_probe_absent(&http);
+    for _ in 0..crate::retry::RETRY_MAX {
+        http.fail_put(&format!("{CACHE}/{}", doomed.nar_key), "the wire died");
+    }
+    let tokens = FakeTokens::default();
+    let sleep = no_sleep();
+    let adapters = Adapters {
+        commands: &commands,
+        http: &http,
+        tokens: &tokens,
+        sleep: &sleep,
+    };
+    let (_log, mut sink) = collect_events();
+    commands
+        .path_info_all
+        .lock()
+        .expect("queue")
+        .push_back(Ok(format!("{}\n", doomed.store_path)));
+
+    let failure = push(&adapters, &inputs(true), "", &mut sink)
+        .await
+        .expect_err("a path that will not upload fails the run");
+    assert!(failure.to_string().contains("the wire died"));
+    assert!(
+        !http
+            .calls()
+            .iter()
+            .any(|call| call.url.ends_with(".narinfo")),
+        "a narinfo never goes out for a NAR that never landed"
+    );
+}
+
+#[tokio::test]
+async fn the_multipart_quartet_carries_the_contract() {
+    let part = cachet_core::constants::UPLOAD_PART_BYTES;
+    let commands = FakeCommands::default();
+    // Two whole parts and a remainder: the plan's three shapes in one
+    // object.
+    let big = seed_path(
+        &commands,
+        'a',
+        "big",
+        vec![7_u8; usize::try_from(part * 2 + 9).expect("fits")],
+    );
+    let http = FakeHttp::default();
+    stub_probe_absent(&http);
+    http.post(
+        &format!("{CACHE}/{}?uploads", big.nar_key),
+        200,
+        r#"{"uploadId":"upload-1","expectedParts":3}"#,
+    );
+    for number in 1..=3_u16 {
+        http.put(
+            &format!(
+                "{CACHE}/{}?uploadId=upload-1&partNumber={number}",
+                big.nar_key
+            ),
+            200,
+            &format!(r#"{{"partNumber":{number},"etag":"etag-{number}"}}"#),
+        );
+    }
+    http.post(
+        &format!("{CACHE}/{}?uploadId=upload-1", big.nar_key),
+        204,
+        "",
+    );
+    http.put(&format!("{CACHE}/{}.narinfo", big.hash), 204, "");
+    http.post(&format!("{CACHE}/roots/org-repo"), 204, "");
+
+    let tokens = FakeTokens::default();
+    let sleep = no_sleep();
+    let adapters = Adapters {
+        commands: &commands,
+        http: &http,
+        tokens: &tokens,
+        sleep: &sleep,
+    };
+    let (_log, mut sink) = collect_events();
+    commands
+        .path_info_all
+        .lock()
+        .expect("queue")
+        .push_back(Ok(format!("{}\n", big.store_path)));
+
+    push(&adapters, &inputs(true), "", &mut sink)
+        .await
+        .expect("the quartet finishes");
+
+    let calls = http.calls();
+    let begin = calls
+        .iter()
+        .find(|call| call.url.ends_with("?uploads"))
+        .expect("the upload opened");
+    let header = |name: &str| {
+        begin
+            .headers
+            .iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value.clone())
+    };
+    assert_eq!(
+        header("x-cachet-upload-bytes"),
+        Some((part * 2 + 9).to_string())
+    );
+    assert_eq!(
+        header("x-cachet-nar-bytes"),
+        Some(((part * 2 + 9) * 3).to_string()),
+        "the decoder's ceiling is declared when the upload opens, because \
+         parts arrive out of order and cannot declare it themselves"
+    );
+
+    let part_calls: Vec<&Call> = calls
+        .iter()
+        .filter(|call| call.url.contains("partNumber="))
+        .collect();
+    assert_eq!(part_calls.len(), 3);
+    for call in &part_calls {
+        let expected = if call.url.ends_with("partNumber=3") {
+            9
+        } else {
+            usize::try_from(part).expect("fits")
+        };
+        assert_eq!(call.body.len(), expected, "{}", call.url);
+    }
+
+    let completion = calls
+        .iter()
+        .find(|call| call.method == "POST" && call.url.ends_with("?uploadId=upload-1"))
+        .expect("the upload completed");
+    let listed: Vec<cachet_api::UploadedPartBody> =
+        serde_json::from_slice(&completion.body).expect("the completion body parses");
+    assert_eq!(
+        listed
+            .iter()
+            .map(|part| part.part_number)
+            .collect::<Vec<_>>(),
+        vec![1, 2, 3],
+        "parts finish in any order and are listed in plan order"
+    );
+}
+
+#[tokio::test]
+async fn a_dying_part_aborts_best_effort() {
+    let part = cachet_core::constants::UPLOAD_PART_BYTES;
+    let commands = FakeCommands::default();
+    // Past the single-PUT cap, so the object really takes the multipart
+    // route: three parts, and the middle one never lands.
+    let big = seed_path(
+        &commands,
+        'a',
+        "big",
+        vec![7_u8; usize::try_from(part * 2 + 9).expect("fits")],
+    );
+    let http = FakeHttp::default();
+    stub_probe_absent(&http);
+    http.post(
+        &format!("{CACHE}/{}?uploads", big.nar_key),
+        200,
+        r#"{"uploadId":"upload-1","expectedParts":3}"#,
+    );
+    for number in [1_u16, 3] {
+        http.put(
+            &format!(
+                "{CACHE}/{}?uploadId=upload-1&partNumber={number}",
+                big.nar_key
+            ),
+            200,
+            &format!(r#"{{"partNumber":{number},"etag":"etag-{number}"}}"#),
+        );
+    }
+    for _ in 0..crate::retry::RETRY_MAX {
+        http.fail_put(
+            &format!("{CACHE}/{}?uploadId=upload-1&partNumber=2", big.nar_key),
+            "the part died",
+        );
+    }
+    let tokens = FakeTokens::default();
+    let sleep = no_sleep();
+    let adapters = Adapters {
+        commands: &commands,
+        http: &http,
+        tokens: &tokens,
+        sleep: &sleep,
+    };
+    let (_log, mut sink) = collect_events();
+    commands
+        .path_info_all
+        .lock()
+        .expect("queue")
+        .push_back(Ok(format!("{}\n", big.store_path)));
+
+    push(&adapters, &inputs(true), "", &mut sink)
+        .await
+        .expect_err("a part that will not land fails the run");
+
+    assert!(
+        http.deletes()
+            .iter()
+            .any(|line| line.contains("uploadId=upload-1")),
+        "the upload is abandoned rather than left half-assembled: {:?}",
+        http.deletes()
+    );
+}
+
+#[tokio::test]
+async fn the_probe_asks_once_for_the_whole_candidate_set() {
+    let commands = FakeCommands::default();
+    let one = seed_path(&commands, 'a', "one", b"one".to_vec());
+    let two = seed_path(&commands, 'b', "two", b"two".to_vec());
+    let http = FakeHttp::default();
+    stub_probe(&http, &[&two.hash]);
+    expect_pair(&http, &one);
+    http.post(&format!("{CACHE}/roots/org-repo"), 204, "");
+    let tokens = FakeTokens::default();
+    let sleep = no_sleep();
+    let adapters = Adapters {
+        commands: &commands,
+        http: &http,
+        tokens: &tokens,
+        sleep: &sleep,
+    };
+    let (_log, mut sink) = collect_events();
+    commands
+        .path_info_all
+        .lock()
+        .expect("queue")
+        .push_back(Ok(format!("{}\n{}\n", one.store_path, two.store_path)));
+
+    let outcome = push(&adapters, &inputs(true), "", &mut sink)
+        .await
+        .expect("finishes");
+
+    let probes = http
+        .calls()
+        .into_iter()
+        .filter(|call| call.url.ends_with("/api/probe"))
+        .count();
+    assert_eq!(probes, 1, "one request answers the whole set");
+    assert_eq!(outcome.cache_hits, 1);
+    assert_eq!(outcome.uploaded_objects, 2);
 }
 
 #[tokio::test]
 async fn a_failed_probe_treats_everything_as_absent() {
-    // The probe dies all three attempts: the run pushes the world anyway,
-    // because re-uploading re-signs identical bytes while a false "held"
-    // would strand clients on a 404. The event says so.
-    let commands = FakeCommands::with_store(&format!("{BUILT}\n"));
-    let nar_key = format!("nar/{}.nar.zst", "n".repeat(52));
-    seed_pair(
-        &commands,
-        NARINFO_KEY,
-        survivor_body(BUILT, &nar_key),
-        &nar_key,
-        vec![b'y'; 2_000],
-    );
+    let commands = FakeCommands::default();
+    let one = seed_path(&commands, 'a', "one", b"one".to_vec());
     let http = FakeHttp::default();
-    for _ in 0..3 {
-        http.fail_post("https://cachet.test/api/probe", "connection reset");
+    for _ in 0..crate::retry::RETRY_MAX {
+        http.fail_post(&format!("{CACHE}/api/probe"), "the probe died");
     }
-    http.put(&format!("https://cachet.test/{nar_key}"), 204, "");
-    http.put(&format!("https://cachet.test/{NARINFO_KEY}"), 204, "");
-    http.post("https://cachet.test/roots/lane-org-lane-repo", 204, "");
+    expect_pair(&http, &one);
+    http.post(&format!("{CACHE}/roots/org-repo"), 204, "");
     let tokens = FakeTokens::default();
     let sleep = no_sleep();
-    let a = Adapters {
+    let adapters = Adapters {
         commands: &commands,
         http: &http,
         tokens: &tokens,
         sleep: &sleep,
     };
-    let (event_log, mut sink) = collect_events();
-    let outcome = push(
-        &a,
-        &inputs(true),
-        "",
-        std::path::Path::new("/staging"),
-        &mut sink,
-    )
-    .await
-    .expect("the fallback pushes");
+    let (log, mut sink) = collect_events();
+    commands
+        .path_info_all
+        .lock()
+        .expect("queue")
+        .push_back(Ok(format!("{}\n", one.store_path)));
+
+    let outcome = push(&adapters, &inputs(true), "", &mut sink)
+        .await
+        .expect("a dead probe does not end the push");
 
     assert_eq!(outcome.cache_hits, 0);
-    assert_eq!(outcome.uploaded_objects, 2);
-    let events = event_log.lock().expect("events").clone();
+    assert_eq!(outcome.uploaded_objects, 2, "re-upload is the safe side");
     assert!(
-        events.iter().any(|e| e.starts_with("ProbeBulkFailed")),
-        "the run names its fallback: {events:?}",
+        log.lock()
+            .expect("log")
+            .iter()
+            .any(|line| line.contains("ProbeBulkFailed"))
     );
 }

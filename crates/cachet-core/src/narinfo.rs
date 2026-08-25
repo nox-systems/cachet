@@ -199,7 +199,16 @@ impl Narinfo {
     #[must_use]
     pub fn with_signature(&self, signature: String) -> Self {
         let mut signatures = self.signatures.clone();
-        signatures.push(signature);
+        // why: appending unconditionally made a re-push grow the document.
+        // A path substituted from this cache carries the cache's own Sig
+        // in the local store, so a client that copied its narinfo forward
+        // handed back a document already signed, and every cycle appended
+        // another identical line until the document hit its byte cap and
+        // pushes started failing. A signature that is already present says
+        // exactly what a second copy would.
+        if !signatures.contains(&signature) {
+            signatures.push(signature);
+        }
         Self {
             signatures,
             ..self.clone()
@@ -316,4 +325,49 @@ fn parse_references(raw: Option<&String>) -> Result<Vec<String>> {
         parse_store_path_basename(entry).map_err(|_| ClientError::MalformedNarinfo)?;
     }
     Ok(entries.iter().map(|s| (*s).to_string()).collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn document() -> Narinfo {
+        Narinfo::parse(&format!(
+            "StorePath: /nix/store/{}-pkg\nURL: nar/{}.nar.zst\nNarHash: sha256:0iqi0\nNarSize: 12\n",
+            "a".repeat(32),
+            "g".repeat(52)
+        ))
+        .expect("the document parses")
+    }
+
+    #[test]
+    fn signing_twice_leaves_one_signature() {
+        let signature = "cachet.example-1:abcd".to_string();
+        let once = document().with_signature(signature.clone());
+        assert_eq!(once.signatures, vec![signature.clone()]);
+        // The re-push case: a client hands back a document this cache
+        // already signed, and signing it again must not grow it.
+        let twice = once.with_signature(signature.clone());
+        assert_eq!(
+            twice.signatures,
+            vec![signature],
+            "a signature already present is not appended again"
+        );
+        assert_eq!(
+            twice.serialize().matches("Sig:").count(),
+            1,
+            "the served document carries one Sig line"
+        );
+    }
+
+    #[test]
+    fn a_second_distinct_signature_still_joins() {
+        let first = document().with_signature("cachet.example-1:aaaa".to_string());
+        let rotated = first.with_signature("cachet.example-2:bbbb".to_string());
+        assert_eq!(
+            rotated.signatures.len(),
+            2,
+            "a rotated key adds a signature rather than replacing one"
+        );
+    }
 }

@@ -6,6 +6,7 @@
 //! because the size guard cannot run on an unknown length, and the guard
 //! must precede the read or it is not a guard.
 
+use crate::constants::NAR_EXPANSION_RATIO_MAX;
 use crate::error::{ClientError, Result};
 use crate::narinfo::Narinfo;
 use crate::types::StorePathHash;
@@ -33,6 +34,21 @@ pub fn require_content_length(header: Option<&str>, cap_bytes: u64) -> Result<u6
         return Err(ClientError::BodyTooLarge);
     }
     Ok(length)
+}
+
+/// How far a NAR write's decoder may run before it refuses.
+///
+/// Two bounds, and the decode stops at the lower one. The client declares
+/// what its frame decodes to, which is what an honest write needs so the
+/// decoder can refuse a frame that keeps producing bytes. That
+/// declaration is attacker-chosen, so on its own a one-kilobyte upload
+/// could ask for a sixty-gigabyte decode; the second bound is how far the
+/// uploaded bytes may expand, which ties the work to bytes the client
+/// actually sent. A compression bomb therefore costs its author
+/// proportional upload, and an honest NAR never approaches either bound
+/// (ordinary store paths decompress near threefold).
+pub fn nar_decode_bound(compressed_bytes: u64, declared_nar_bytes: u64) -> u64 {
+    declared_nar_bytes.min(compressed_bytes.saturating_mul(NAR_EXPANSION_RATIO_MAX))
 }
 
 /// The claims a narinfo document makes about itself, checked before the
@@ -235,6 +251,18 @@ mod tests {
             Some(format!("sha256:{}", "g".repeat(52)).as_str())
         );
         assert_eq!(document.file_size_bytes, Some(42));
+    }
+
+    #[test]
+    fn the_decode_bound_takes_the_lower_of_the_two() {
+        // An honest NAR: the declaration is far below the ratio bound, so
+        // the declaration is what stops the decoder.
+        assert_eq!(nar_decode_bound(131_961_582, 409_205_960), 409_205_960);
+        // A bomb: a kilobyte declaring sixty-four gigabytes gets the ratio
+        // bound instead, which is proportional to what it uploaded.
+        assert_eq!(nar_decode_bound(1_024, u64::MAX), 1_024 * 200);
+        // The ratio never overflows into a larger bound.
+        assert_eq!(nar_decode_bound(u64::MAX, 4_096), 4_096);
     }
 
     #[test]

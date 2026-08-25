@@ -62,15 +62,42 @@ impl GenerationDocument {
     }
 }
 
-/// The edge-cache key for an object, built under the synthetic origin
-/// rather than the request's own, so the key is ours and the generation
-/// can be part of it. Bumping the generation changes every object's cache
-/// key at once: no point of presence is asked for its stale entries again,
-/// and no purge API or per-key walk is needed.
+/// The edge-cache key for an object that exists, built under the
+/// synthetic origin rather than the request's own so the key is ours.
+///
+/// No generation rides this key. Both kinds of object are addressed by a
+/// hash of their own content: a NAR key names the hash of its bytes, and
+/// a narinfo describes one store path's fixed facts. Prefixing them with
+/// the generation meant one destructive sweep changed every object's key
+/// at once, so the daily collector threw away every warm entry in every
+/// point of presence and the thirty-day lifetime these entries are given
+/// could never be reached.
+///
+/// What the generation used to buy here was prompt invalidation after a
+/// sweep, and the cost of losing it is bounded: an object the collector
+/// deleted can still answer from a warm point of presence until its entry
+/// expires. That is a path nothing references any more, and a client that
+/// substitutes it gets bytes that verify. The one document that is not
+/// strictly immutable is a narinfo whose key was rotated, and a rotation
+/// adds a key rather than retiring one, so the older signature still
+/// verifies for every client configured before it.
 #[must_use]
-pub fn object_cache_key(generation: u64, request_path: &str) -> String {
+pub fn object_cache_key(request_path: &str) -> String {
     let path = request_path.strip_prefix('/').unwrap_or(request_path);
-    format!("{EDGE_CACHE_KEY_ORIGIN}/g{generation}/{path}")
+    format!("{EDGE_CACHE_KEY_ORIGIN}/object/{path}")
+}
+
+/// The edge-cache key for an object we do not have.
+///
+/// This one is generation-scoped, because a negative answer is the only
+/// object-path entry that a change in the bucket can make wrong: a path
+/// pushed after the miss was cached must not keep reading as absent. The
+/// entries are short-lived anyway, so the prefix costs a sweep nothing
+/// worth measuring and closes the window a sweep-then-push would open.
+#[must_use]
+pub fn miss_cache_key(generation: u64, request_path: &str) -> String {
+    let path = request_path.strip_prefix('/').unwrap_or(request_path);
+    format!("{EDGE_CACHE_KEY_ORIGIN}/g{generation}/miss/{path}")
 }
 
 /// The edge-cache key for the generation document itself. It sits outside
@@ -111,15 +138,36 @@ mod tests {
     }
 
     #[test]
-    fn cache_keys_compose_the_generation() {
+    fn an_objects_key_survives_a_sweep() {
+        // The leading slash of a request path is the only thing stripped;
+        // no generation rides the key, so a bump leaves warm entries warm.
         assert_eq!(
-            object_cache_key(7, "/abc.narinfo"),
-            "https://cachet-edge.invalid/g7/abc.narinfo"
+            object_cache_key("/abc.narinfo"),
+            "https://cachet-edge.invalid/object/abc.narinfo"
         );
         assert_eq!(
-            object_cache_key(7, "nar/xyz"),
-            "https://cachet-edge.invalid/g7/nar/xyz"
+            object_cache_key("nar/xyz"),
+            "https://cachet-edge.invalid/object/nar/xyz"
         );
+    }
+
+    #[test]
+    fn a_misses_key_carries_the_generation() {
+        // A negative answer is the one object-path entry a change in the
+        // bucket can make wrong, so it is the one that a bump clears.
+        assert_eq!(
+            miss_cache_key(7, "/abc.narinfo"),
+            "https://cachet-edge.invalid/g7/miss/abc.narinfo"
+        );
+        assert_ne!(
+            miss_cache_key(7, "/abc.narinfo"),
+            miss_cache_key(8, "/abc.narinfo"),
+            "a sweep stops a cached absence from outliving the push after it"
+        );
+    }
+
+    #[test]
+    fn the_generation_document_keys_outside_both_spaces() {
         assert_eq!(
             generation_cache_key(),
             "https://cachet-edge.invalid/meta/generation"

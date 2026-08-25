@@ -1,0 +1,10 @@
+# Wasm SIMD for the worker's build target.
+#
+# The write path hashes every uploaded byte with SHA-256 and decodes every
+# compressed one with ruzstd, both of which vectorize. Workers has
+# supported the wasm SIMD proposal for years, and without this flag the
+# compiler emits scalar code for a runtime that can run the vector form.
+# The flag is scoped to the wasm target because the native crates get
+# their own vectorization from the host's baseline features.
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "target-feature=+simd128"]
