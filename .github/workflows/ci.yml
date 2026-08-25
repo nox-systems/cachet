@@ -19,29 +19,7 @@ permissions:
   id-token: write
 
 jobs:
-  # The dependency build, once, before anything that needs it.
-  #
-  # why: its own job. Every lane restores this derivation's target
-  # directory, and the lanes all start at once, so none of them can
-  # substitute it from the cache: on any change to Cargo.toml or
-  # Cargo.lock every lane built the same 278 crates in parallel and one
-  # of them won the race to publish the result. Building it here and
-  # letting the lanes wait costs one job's latency and saves the rest of
-  # that work. On a run that touches neither file this job substitutes
-  # and finishes in seconds.
-  deps:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: nix on the cachet cache
-        uses: nox-systems/cachet/action@v0
-        with:
-          cache-url: https://cachet.nox.so
-          roots: .#devShells.x86_64-linux.default
-      - run: nix build -L '.#packages.x86_64-linux.deps'
-
   fmt:
-    needs: deps
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -53,7 +31,6 @@ jobs:
       - run: nix develop --command just fmt-check
 
   clippy:
-    needs: deps
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -65,7 +42,6 @@ jobs:
       - run: nix develop --command just clippy
 
   unit:
-    needs: deps
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -77,7 +53,6 @@ jobs:
       - run: nix develop --command just unit
 
   property:
-    needs: deps
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -89,7 +64,6 @@ jobs:
       - run: nix develop --command just property
 
   golden:
-    needs: deps
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -103,7 +77,6 @@ jobs:
   # Impure like deny: kani setup downloads its own toolchain, so this job is
   # a just verb in the dev shell, not a derivation.
   kani:
-    needs: deps
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -161,7 +134,6 @@ jobs:
   # The impure gate: cargo deny fetches the advisory database. A failure here
   # is a triage signal, not necessarily a regression in the change.
   deny:
-    needs: deps
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -175,7 +147,6 @@ jobs:
   # The wasm build proves the deployable target compiles; the hygiene gate
   # scans its artifact.
   wasm:
-    needs: deps
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -190,7 +161,6 @@ jobs:
   # the duplicated build keeps the two gates independent, and the hygiene
   # job still fails fast on its own.
   wasm-hygiene:
-    needs: deps
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -204,7 +174,6 @@ jobs:
   # The OpenAPI bijection: the committed document against the code that
   # generates it. Regenerate with `just openapi`.
   openapi:
-    needs: deps
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -216,7 +185,6 @@ jobs:
       - run: nix develop --command just openapi-check
 
   workerd:
-    needs: deps
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
