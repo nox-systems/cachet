@@ -126,7 +126,17 @@ deploy stage:
         . ".env.{{ stage }}"
         set +a
     fi
-    bun run deploy --stage "{{ stage }}"
+    # why: alchemy asks before it changes anything, and a run with no
+    # terminal cannot answer, so every CI deploy stopped at the prompt
+    # with "Non-interactive terminal detected". Approving on behalf of a
+    # run that has no way to be asked is not a decision being taken away
+    # from anyone: it is the only answer available. A terminal still gets
+    # the prompt, which is where a human is present to read the plan.
+    approve=()
+    if [ ! -t 0 ]; then
+        approve=(--yes)
+    fi
+    bun run deploy --stage "{{ stage }}" "${approve[@]}"
 
 # tear one stage down; alchemy confirms before deleting anything
 destroy stage:

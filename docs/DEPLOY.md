@@ -61,6 +61,12 @@ stack: R2 bucket, KV namespace, the worker with its bindings, the
 garbage collector's cron (`0 5 * * *`), and the custom domain. It is
 idempotent: rerunning converges, it never duplicates.
 
+Alchemy prints the plan and asks before it changes anything. In a
+terminal you answer it. A run with no terminal, which is every CI
+deploy, approves automatically, because there is nobody there to ask and
+the alternative is a deploy that stops at the prompt. Tearing a
+deployment down always asks, terminal or not.
+
 The worker deploys with observability on, Smart Placement, and a CPU
 ceiling of five minutes. Observability is what makes a slow read
 diagnosable: the worker's own events say whether a read answered from
