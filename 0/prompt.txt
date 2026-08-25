@@ -1,0 +1,84 @@
+<task-notification>
+<task-id>bdnyho58h</task-id>
+<summary>Monitor event: "CI checks on PR #18"</summary>
+<event>announce: skipping
+build-global-artifacts: skipping
+build-local-artifacts (${{ join(matrix.targets, ', ') }}): skipping
+host: skipping
+plan: pass</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bdnyho58h</task-id>
+<summary>Monitor event: "CI checks on PR #18"</summary>
+<event>actionlint: pass
+deny: pass
+doc-manifest: pass
+lane-manifest: pass</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bdnyho58h</task-id>
+<summary>Monitor event: "CI checks on PR #18"</summary>
+<event>fmt: pass
+openapi: pass
+scripts: pass</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bdnyho58h</task-id>
+<summary>Monitor event: "CI checks on PR #18"</summary>
+<event>kani: pass
+wasm-hygiene: pass
+wasm: pass</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bdnyho58h</task-id>
+<summary>Monitor event: "CI checks on PR #18"</summary>
+<event>workerd: pass</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bdnyho58h</task-id>
+<summary>Monitor event: "CI checks on PR #18"</summary>
+<event>clippy: pass
+golden: pass
+property: pass</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bdnyho58h</task-id>
+<summary>Monitor event: "CI checks on PR #18"</summary>
+<event>unit: pass
+ALL CHECKS COMPLETE</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bdnyho58h</task-id>
+<tool-use-id>toolu_01Ra2bbvMNz6xkd4xVgNf9kx</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-shivanshvij-Development-nox-cachet/5fc1018a-6e02-430c-8419-8f2100730cb5/tasks/bdnyho58h.output</output-file>
+<status>completed</status>
+<summary>Monitor "CI checks on PR #18" stream ended</summary>
+</task-notification>
