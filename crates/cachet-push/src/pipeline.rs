@@ -3,28 +3,44 @@
 //! compose the decision layer over the adapters; nothing here knows nix
 //! argv or reqwest.
 
-use crate::adapters::{Adapters, Commands, Http, TokenSource, WireAnswer};
+use crate::adapters::{Adapters, Commands, Http, TokenSource, UploadBody, WireAnswer};
 use crate::error::PushError;
 use crate::filter::drop_already_cached;
-use crate::plan::{
-    StagedObject, UploadMechanics, object_url, owned_object_keys, plan_mechanics,
-    read_staging_layout, upload_order,
-};
+use crate::plan::{UploadMechanics, object_url, plan_mechanics};
 use crate::retry::{RETRY_MAX, delay_after};
 use crate::snapshot::{bound_candidates, parse_snapshot, store_diff};
+use crate::stage::PathFacts;
+use futures_util::StreamExt as _;
 
-/// One wave's upper membership: sixteen object uploads in flight, the
-/// previous pipeline's tuning carried over.
+/// How many store paths the pipeline works on at once.
+///
+/// A path is staged and then uploaded, so a slot alternates between
+/// spending CPU on compression and waiting on the network; running
+/// sixteen means the two overlap instead of taking turns. The previous
+/// pipeline ran the same width but as barriered waves, where every wave
+/// cost its slowest member and finished slots idled until it landed.
+/// This is a sliding window: a finished path is replaced immediately.
 const UPLOAD_CONCURRENCY: usize = 16;
 
-/// why: the budget bounds resident bodies at four large ones; waves
-/// partition by count first and bytes second, and the budget must always
-/// admit the largest legal single body.
-const UPLOAD_WAVE_BYTES: u64 = 4 * cachet_core::constants::UPLOAD_SINGLE_MAX_BYTES;
+/// The part fan-out inside one multipart upload.
+///
+/// Multipart covers the objects large enough that one of them can hold
+/// the whole window's attention, so its parts go out eight wide. The
+/// previous pipeline uploaded multipart objects strictly one at a time,
+/// in a sequential loop outside the window entirely, which made the
+/// largest NARs in a push serialize against each other.
+const PART_CONCURRENCY: usize = 8;
 
-/// The part fan-out inside one multipart upload. Its byte budget matches
-/// four whole parts, which is also all the parts one wave may hold.
-const PART_CONCURRENCY: usize = 4;
+/// How often the pipeline reports progress while a long push runs. The
+/// staging phase used to print nothing at all for minutes at a time.
+const PROGRESS_EVERY: usize = 25;
+
+/// The header a NAR write declares its decompressed size in, so the
+/// worker's decoder has a ceiling before it reads a byte.
+const NAR_BYTES_HEADER: &str = "x-cachet-nar-bytes";
+
+/// The header a multipart upload declares its total compressed size in.
+const UPLOAD_BYTES_HEADER: &str = "x-cachet-upload-bytes";
 
 /// One sleep, injected so the unit lane never waits.
 pub type Sleeper = dyn Fn(u64) -> futures_util::future::BoxFuture<'static, ()> + Send + Sync;
@@ -93,6 +109,15 @@ pub enum PushEvent {
         /// The probe's complaint.
         message: String,
     },
+    /// A push is partway through its paths. Emitted every so often so a
+    /// long upload is legible while it runs rather than only once it
+    /// ends.
+    UploadProgress {
+        /// Paths finished so far.
+        done: usize,
+        /// Paths the push is working through.
+        total: usize,
+    },
     /// All surviving objects landed.
     UploadedObjects {
         /// Narinfo plus NAR file count.
@@ -127,13 +152,13 @@ pub async fn main_snapshot<C: Commands>(
     }
 }
 
-/// The post step: diff, filter, stage, upload, renew. The pipeline's
-/// result is the job's diagnosis; the caller decides what green means.
+/// The post step: diff, probe, then a window of paths each serialized,
+/// compressed, and uploaded on its own, then renew. The pipeline's result
+/// is the job's diagnosis; the caller decides what green means.
 pub async fn push<C: Commands, H: Http, T: TokenSource>(
     a: &Adapters<'_, C, H, T>,
     inputs: &PushInputs,
     before_snapshot: &str,
-    staging_dir: &std::path::Path,
     events: &mut dyn FnMut(PushEvent),
 ) -> Result<PushOutcome, PushError> {
     let mut outcome = PushOutcome::default();
@@ -193,43 +218,11 @@ pub async fn push<C: Commands, H: Http, T: TokenSource>(
         return finish_with_lease(a, inputs, events, outcome, &resolved_root_paths).await;
     }
 
-    // Stage through nix: the store's own serialization and compression,
-    // unsigned — the cache's pipeline verifies, then signs.
-    let destination = format!("file://{}?compression=zstd", staging_dir.display());
-    a.commands.copy_to(&destination, &cached.to_upload).await?;
-    let entries = a.commands.read_dir(staging_dir).await?;
-    let mut objects = read_staging_layout(&entries)?;
-    // why: `nix copy` stages the survivors' closures, but the probe
-    // already priced every path. The wire set is the survivors' own
-    // pairs: their narinfos plus exactly the NARs those narinfos name.
-    // Closure members predate this job — pushed when they entered the
-    // store, or foreign and fetched from the next substituter — so
-    // re-staging them is the thousands-of-objects-for-a-handful-of-paths
-    // class this filter exists to stop. GC reads are safe by the same
-    // construction: a deep reference without a pushed narinfo marks
-    // without descent.
-    let mut survivor_bodies = std::collections::BTreeMap::new();
-    for path in &cached.to_upload {
-        let hash = cachet_core::keys::parse_store_path(path)
-            .map_err(|_| PushError::Detail {
-                message: format!("a survivor outside the store-path grammar: {path}"),
-            })?
-            .hash
-            .as_str()
-            .to_string();
-        let key = format!("{hash}{}", cachet_core::constants::NARINFO_KEY_SUFFIX);
-        let body = a.commands.read_file(&staging_dir.join(&key)).await?;
-        survivor_bodies.insert(
-            hash,
-            String::from_utf8(body).map_err(|_| PushError::Detail {
-                message: format!("the staged narinfo for {path} is not text"),
-            })?,
-        );
-    }
-    let owned = owned_object_keys(&survivor_bodies)?;
-    objects.retain(|object| owned.contains(&object.key));
-    upload_order(&mut objects);
-    let uploaded = upload_objects(a, inputs, staging_dir, &objects).await?;
+    // Every surviving path's facts in one nix invocation: NarHash and
+    // NarSize come out of nix's own database, so the client never hashes
+    // an uncompressed NAR itself.
+    let facts = a.commands.path_facts(&cached.to_upload).await?;
+    let uploaded = upload_paths(a, inputs, &facts, events).await?;
     outcome.uploaded_objects = uploaded;
     events(PushEvent::UploadedObjects { count: uploaded });
 
@@ -338,114 +331,112 @@ async fn probe_present_set<C: Commands, H: Http, T: TokenSource>(
     Ok(std::collections::BTreeSet::from_iter(answer.present))
 }
 
-/// Run an item list through the wave plan: each wave's items join_all,
-/// and a failing wave ends the run with the plan-order-first error
-/// before any later wave starts. Waves are how the fan-out stays
-/// testable: the call traffic for one wave is a fixed set, and result
-/// mapping preserves item order by construction.
-async fn wave_run<'x, T, R>(
-    items: &'x [T],
-    sizes: &[u64],
-    max_count: usize,
-    byte_budget: u64,
-    run: &(dyn Fn(&'x T) -> futures_util::future::BoxFuture<'x, Result<R, PushError>> + Sync + 'x),
-) -> Result<Vec<R>, PushError> {
-    debug_assert_eq!(items.len(), sizes.len());
-    let mut done = Vec::with_capacity(items.len());
-    for (start, end) in crate::plan::wave_plan(sizes, max_count, byte_budget) {
-        let wave = futures_util::future::join_all(items[start..end].iter().map(run)).await;
-        // join_all preserves item order, so the first Err here is the
-        // plan-order-first failure of the whole list.
-        match wave.into_iter().collect::<Result<Vec<_>, _>>() {
-            Ok(batch) => done.extend(batch),
-            Err(first) => return Err(first),
-        }
-    }
-    Ok(done)
-}
-
-/// Upload every object: single NARs in waves, multipart quartets one at
-/// a time with their parts waved inside, then every narinfo in waves.
-/// why: the worker verifies the NAR-before-narinfo ordering rather than
-/// trusting it (NEVER-DANGLE), but the client keeps its own promise —
-/// every NAR completes before any narinfo begins.
-async fn upload_objects<C: Commands, H: Http, T: TokenSource>(
+/// Push every surviving path, several at once.
+///
+/// The window slides: a path that finishes is replaced immediately
+/// rather than waiting for its neighbours, and a path is staged and
+/// uploaded by the same task, so compression and network overlap by
+/// construction. The previous pipeline separated the two into phases with
+/// a barrier between them, which meant every NAR in the push had to land
+/// before the first narinfo went out.
+///
+/// A failure ends the push. Dropping the window cancels what is still in
+/// flight, so a run that cannot finish stops scheduling instead of
+/// working through thousands more paths to reach the same error. What
+/// already landed stays landed: objects are content-addressed and each
+/// path's NAR precedes its own narinfo, so a partial push leaves the
+/// cache consistent and the next run resumes from the probe.
+async fn upload_paths<C: Commands, H: Http, T: TokenSource>(
     a: &Adapters<'_, C, H, T>,
     inputs: &PushInputs,
-    staging_dir: &std::path::Path,
-    objects: &[StagedObject],
+    facts: &[PathFacts],
+    events: &mut dyn FnMut(PushEvent),
 ) -> Result<usize, PushError> {
-    let mut singles = Vec::new();
-    let mut single_sizes = Vec::new();
-    let mut multiparts = Vec::new();
-    let mut narinfos = Vec::new();
-    let mut narinfo_sizes = Vec::new();
-    for object in objects {
-        match plan_mechanics(&object.key, object.size_bytes)? {
-            UploadMechanics::Single => {
-                if object.is_narinfo() {
-                    narinfos.push(object);
-                    narinfo_sizes.push(object.size_bytes);
-                } else {
-                    singles.push(object);
-                    single_sizes.push(object.size_bytes);
+    let total = facts.len();
+    let mut uploaded = 0;
+    let mut done = 0;
+    let mut failure = None;
+    {
+        let mut window = futures_util::stream::iter(facts.iter())
+            .map(|path_facts| push_one_path(a, inputs, path_facts))
+            .buffer_unordered(UPLOAD_CONCURRENCY);
+        while let Some(result) = window.next().await {
+            match result {
+                Ok(objects) => {
+                    uploaded += objects;
+                    done += 1;
+                    if done % PROGRESS_EVERY == 0 || done == total {
+                        events(PushEvent::UploadProgress { done, total });
+                    }
+                }
+                Err(refusal) => {
+                    failure = Some(refusal);
+                    break;
                 }
             }
-            UploadMechanics::Multipart(shape) => multiparts.push((object, shape)),
         }
     }
-    let run_single =
-        |object: &&StagedObject| -> futures_util::future::BoxFuture<'_, Result<(), PushError>> {
-            // The future owns its object: a wave outlives the caller's stack,
-            // so nothing the wave runs may borrow a parameter frame.
-            let object = (*object).clone();
-            Box::pin(async move { upload_single(a, inputs, staging_dir, &object).await })
-        };
-    wave_run(
-        &singles,
-        &single_sizes,
-        UPLOAD_CONCURRENCY,
-        UPLOAD_WAVE_BYTES,
-        &run_single,
-    )
-    .await?;
-    for (object, shape) in multiparts {
-        upload_multipart(a, inputs, staging_dir, object, shape).await?;
+    match failure {
+        Some(refusal) => Err(refusal),
+        None => Ok(uploaded),
     }
-    wave_run(
-        &narinfos,
-        &narinfo_sizes,
-        UPLOAD_CONCURRENCY,
-        UPLOAD_WAVE_BYTES,
-        &run_single,
-    )
-    .await?;
-    Ok(objects.len())
 }
 
-/// The single PUT, retried as a unit. The body loads once; each attempt
-/// reuses it with a token seconds old.
+/// One path end to end: serialize and compress it, send the NAR, then
+/// send the narinfo that names it.
+///
+/// The ordering promise is per path rather than per push. The worker
+/// verifies NAR-before-narinfo itself (NEVER-DANGLE) and refuses a
+/// narinfo whose NAR has not been stored and measured, so nothing is lost
+/// by letting one path's narinfo go out while another path's NAR is still
+/// uploading.
+async fn push_one_path<C: Commands, H: Http, T: TokenSource>(
+    a: &Adapters<'_, C, H, T>,
+    inputs: &PushInputs,
+    facts: &PathFacts,
+) -> Result<usize, PushError> {
+    let staged = a.commands.stage_nar(facts).await?;
+    let key = staged.nar_key();
+    let body: UploadBody = staged.body.clone().into();
+    let nar_bytes = staged.facts.nar_size_bytes;
+    match plan_mechanics(&key, staged.file_size_bytes)? {
+        UploadMechanics::Single => upload_single(a, inputs, &key, body, nar_bytes).await?,
+        UploadMechanics::Multipart(shape) => {
+            upload_multipart(a, inputs, &key, body, nar_bytes, shape).await?;
+        }
+    }
+    let document = staged.narinfo()?;
+    upload_narinfo(a, inputs, &document).await?;
+    // The NAR and its narinfo: what this path added to the cache.
+    Ok(2)
+}
+
+/// The headers a NAR write carries: the decoder's ceiling, declared
+/// before the worker reads a byte.
+fn nar_headers(nar_bytes: u64) -> Vec<(String, String)> {
+    vec![(NAR_BYTES_HEADER.to_string(), nar_bytes.to_string())]
+}
+
+/// The single PUT, retried as a unit. The body is cheap to clone, so an
+/// attempt costs a re-send rather than a re-compression or a memcopy.
 async fn upload_single<C: Commands, H: Http, T: TokenSource>(
     a: &Adapters<'_, C, H, T>,
     inputs: &PushInputs,
-    staging_dir: &std::path::Path,
-    object: &StagedObject,
+    key: &str,
+    body: UploadBody,
+    nar_bytes: u64,
 ) -> Result<(), PushError> {
-    let body = a
-        .commands
-        // why: the object's key IS its staging-relative path; reading by
-        // anything narrower (a basename) misses nar/'s level of the tree.
-        .read_file(&staging_dir.join(&object.key))
-        .await?;
-    let url = object_url(&inputs.cache_url, &object.key, "");
-    let what = format!("PUT {}", object.key);
+    let url = object_url(&inputs.cache_url, key, "");
+    let what = format!("PUT {key}");
+    let headers = nar_headers(nar_bytes);
     with_retries(&what, a.sleep, || {
         let url = url.clone();
         let body = body.clone();
+        let headers = headers.clone();
         let label = what.clone();
         async move {
             let token = a.tokens.mint(&inputs.audience).await?;
-            let answer = a.http.put(&url, &token, body, &[]).await?;
+            let answer = a.http.put(&url, &token, body, &headers).await?;
             // why: a 401 is the only truthful signal a run-scoped token
             // has aged out; telling the source to refill it is cheaper
             // than minting for every attempt.
@@ -459,91 +450,85 @@ async fn upload_single<C: Commands, H: Http, T: TokenSource>(
     Ok(())
 }
 
-/// One multipart upload's parts, waved 4-wide. A failed wave aborts the
-/// upload best-effort and the plan-order-first part failure returns;
-/// the completion-body order comes from the wave's index alignment, so
-/// part numbers ascend without sorting.
+/// The narinfo PUT. This is the request the worker signs on, and it
+/// reads the facts its NAR's write already recorded rather than the NAR
+/// itself, so it costs a small round trip however large the path is.
+async fn upload_narinfo<C: Commands, H: Http, T: TokenSource>(
+    a: &Adapters<'_, C, H, T>,
+    inputs: &PushInputs,
+    document: &cachet_core::narinfo::Narinfo,
+) -> Result<(), PushError> {
+    let key = format!(
+        "{}{}",
+        document.store_path_hash,
+        cachet_core::constants::NARINFO_KEY_SUFFIX
+    );
+    let url = object_url(&inputs.cache_url, &key, "");
+    let bytes: std::sync::Arc<[u8]> = std::sync::Arc::from(document.serialize().into_bytes());
+    let what = format!("PUT {key}");
+    with_retries(&what, a.sleep, || {
+        let url = url.clone();
+        let body = UploadBody::Bytes(std::sync::Arc::clone(&bytes));
+        let label = what.clone();
+        async move {
+            let token = a.tokens.mint(&inputs.audience).await?;
+            let answer = a.http.put(&url, &token, body, &[]).await?;
+            if answer.status == 401 {
+                a.tokens.invalidate(&inputs.audience).await;
+            }
+            require_2xx(&label, answer)
+        }
+    })
+    .await?;
+    Ok(())
+}
+
+/// Every part of one multipart upload, eight in flight.
 async fn upload_parts<C: Commands, H: Http, T: TokenSource>(
     a: &Adapters<'_, C, H, T>,
     inputs: &PushInputs,
-    staging_dir: &std::path::Path,
-    object: &StagedObject,
+    key: &str,
+    body: &UploadBody,
     upload_id: &str,
     shape: cachet_core::multipart::PlanShape,
 ) -> Result<Vec<cachet_api::UploadedPartBody>, PushError> {
     let numbers: Vec<u64> = (1..=shape.count).collect();
-    let sizes: Vec<u64> = numbers
-        .iter()
-        .map(|number| {
-            if *number == shape.count {
-                shape.last_len
-            } else {
-                cachet_core::constants::UPLOAD_PART_BYTES
-            }
-        })
-        .collect();
-    let run_part = |number: &u64| -> futures_util::future::BoxFuture<
-        '_,
-        Result<cachet_api::UploadedPartBody, PushError>,
-    > {
-        Box::pin(upload_one_part(
-            a,
-            inputs,
-            staging_dir,
-            object,
-            upload_id,
-            shape,
-            *number,
-        ))
-    };
-    match wave_run(
-        &numbers,
-        &sizes,
-        PART_CONCURRENCY,
-        PART_CONCURRENCY as u64 * cachet_core::constants::UPLOAD_PART_BYTES,
-        &run_part,
-    )
-    .await
-    {
-        Ok(parts) => Ok(parts),
-        Err(failure) => {
-            // why: canceling sibling PUTs mid-wave would make the abort
-            // coverage timing-dependent; a finished wave plus one DELETE
-            // is the deterministic version of the same cleanup.
-            abort_multipart(a, inputs, object, upload_id).await;
-            Err(failure)
-        }
-    }
+    let mut parts: Vec<cachet_api::UploadedPartBody> = futures_util::stream::iter(numbers)
+        .map(|number| upload_one_part(a, inputs, key, body, upload_id, shape, number))
+        .buffer_unordered(PART_CONCURRENCY)
+        .collect::<Vec<_>>()
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?;
+    // The completion body names parts in ascending order; the window
+    // finishes them in whatever order the wire allows.
+    parts.sort_by_key(|part| part.part_number);
+    Ok(parts)
 }
 
-/// The multipart quartet, each piece retried alone; a part that dies
-/// aborts the upload best-effort and the failure propagates.
+/// Open the upload, send its parts, and complete it. A failure anywhere
+/// aborts the upload so the bucket keeps no half-assembled object.
 async fn upload_multipart<C: Commands, H: Http, T: TokenSource>(
     a: &Adapters<'_, C, H, T>,
     inputs: &PushInputs,
-    staging_dir: &std::path::Path,
-    object: &StagedObject,
+    key: &str,
+    body: UploadBody,
+    nar_bytes: u64,
     shape: cachet_core::multipart::PlanShape,
 ) -> Result<(), PushError> {
-    let url = object_url(&inputs.cache_url, &object.key, "?uploads");
-    let what = format!("begin {}", object.key);
+    let url = object_url(&inputs.cache_url, key, "?uploads");
+    let what = format!("begin {key}");
+    let headers = vec![
+        (UPLOAD_BYTES_HEADER.to_string(), body.len().to_string()),
+        (NAR_BYTES_HEADER.to_string(), nar_bytes.to_string()),
+    ];
     let created: cachet_api::UploadCreated = with_retries(&what, a.sleep, || {
         let url = url.clone();
+        let headers = headers.clone();
         let label = what.clone();
         async move {
             let token = a.tokens.mint(&inputs.audience).await?;
-            let answer = a
-                .http
-                .post(
-                    &url,
-                    &token,
-                    Vec::new(),
-                    &[(
-                        "x-cachet-upload-bytes".to_string(),
-                        object.size_bytes.to_string(),
-                    )],
-                )
-                .await?;
+            let answer = a.http.post(&url, &token, Vec::new(), &headers).await?;
             if answer.status == 401 {
                 a.tokens.invalidate(&inputs.audience).await;
             }
@@ -555,18 +540,24 @@ async fn upload_multipart<C: Commands, H: Http, T: TokenSource>(
     })
     .await?;
 
-    let parts = upload_parts(a, inputs, staging_dir, object, &created.upload_id, shape).await?;
+    let parts = match upload_parts(a, inputs, key, &body, &created.upload_id, shape).await {
+        Ok(parts) => parts,
+        Err(failure) => {
+            abort_multipart(a, inputs, key, &created.upload_id).await;
+            return Err(failure);
+        }
+    };
 
     let url = object_url(
         &inputs.cache_url,
-        &object.key,
+        key,
         &format!("?uploadId={}", created.upload_id),
     );
-    let body = serde_json::to_vec(&parts).expect("the completion body serializes");
-    let what = format!("complete {}", object.key);
-    with_retries(&what, a.sleep, || {
+    let body_bytes = serde_json::to_vec(&parts).expect("the completion body serializes");
+    let what = format!("complete {key}");
+    let completed = with_retries(&what, a.sleep, || {
         let url = url.clone();
-        let body = body.clone();
+        let body = body_bytes.clone();
         let label = what.clone();
         async move {
             let token = a.tokens.mint(&inputs.audience).await?;
@@ -585,16 +576,22 @@ async fn upload_multipart<C: Commands, H: Http, T: TokenSource>(
             require_2xx(&label, answer)
         }
     })
-    .await?;
+    .await;
+    if let Err(failure) = completed {
+        abort_multipart(a, inputs, key, &created.upload_id).await;
+        return Err(failure);
+    }
     Ok(())
 }
 
-/// One part: a ranged read from the staged file and one PUT.
+/// One part: a slice of the staged body and one PUT. Slicing a file body
+/// is two integers, so a part never materializes its bytes in memory
+/// before the wire asks for them.
 async fn upload_one_part<C: Commands, H: Http, T: TokenSource>(
     a: &Adapters<'_, C, H, T>,
     inputs: &PushInputs,
-    staging_dir: &std::path::Path,
-    object: &StagedObject,
+    key: &str,
+    body: &UploadBody,
     upload_id: &str,
     shape: cachet_core::multipart::PlanShape,
     number: u64,
@@ -605,52 +602,45 @@ async fn upload_one_part<C: Commands, H: Http, T: TokenSource>(
     } else {
         cachet_core::constants::UPLOAD_PART_BYTES
     };
-    let body = a
-        .commands
-        .read_range(&staging_dir.join(&object.key), offset, length)
-        .await?;
+    let part = body.slice(offset, length);
     let url = object_url(
         &inputs.cache_url,
-        &object.key,
+        key,
         &format!("?uploadId={upload_id}&partNumber={number}"),
     );
-    let what = format!("part {number} of {}", object.key);
-    with_retries(&what, a.sleep, || {
+    let what = format!("PUT part {number} of {key}");
+    let answer = with_retries(&what, a.sleep, || {
         let url = url.clone();
-        let body = body.clone();
+        let part = part.clone();
         let label = what.clone();
         async move {
             let token = a.tokens.mint(&inputs.audience).await?;
-            let answer = a.http.put(&url, &token, body, &[]).await?;
+            let answer = a.http.put(&url, &token, part, &[]).await?;
             if answer.status == 401 {
                 a.tokens.invalidate(&inputs.audience).await;
             }
-            let answer = require_2xx(&label, answer)?;
-            serde_json::from_slice(&answer.body).map_err(|failure| PushError::Detail {
-                message: format!("the part answer did not parse: {failure}"),
-            })
+            require_2xx(&label, answer)
         }
     })
-    .await
+    .await?;
+    serde_json::from_slice(&answer.body).map_err(|failure| PushError::Detail {
+        message: format!("the part answer did not parse: {failure}"),
+    })
 }
 
-/// The abort: best-effort by contract; a mint failure skips silently and
-/// the collector reclaims the upload later.
+/// Discard an upload the pipeline could not finish, best effort. A
+/// failed abort leaves a record the collector reaps once it is stale, so
+/// the refusal the caller is already carrying is the one worth reporting.
 async fn abort_multipart<C: Commands, H: Http, T: TokenSource>(
     a: &Adapters<'_, C, H, T>,
     inputs: &PushInputs,
-    object: &StagedObject,
+    key: &str,
     upload_id: &str,
 ) {
-    let Ok(token) = a.tokens.mint(&inputs.audience).await else {
-        return;
-    };
-    let url = object_url(
-        &inputs.cache_url,
-        &object.key,
-        &format!("?uploadId={upload_id}"),
-    );
-    let _ = a.http.delete(&url, &token).await;
+    let url = object_url(&inputs.cache_url, key, &format!("?uploadId={upload_id}"));
+    if let Ok(token) = a.tokens.mint(&inputs.audience).await {
+        let _ = a.http.delete(&url, &token).await;
+    }
 }
 
 /// The retry envelope: an operation runs until it works or the envelope

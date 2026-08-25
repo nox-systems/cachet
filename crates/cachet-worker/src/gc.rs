@@ -39,6 +39,7 @@ use cachet_core::gc::{
 use cachet_core::generation::GenerationDocument;
 use cachet_core::keys::{NarKey, parse_nar_key, parse_store_path};
 use cachet_core::lease::LeaseDocument;
+use cachet_core::nar_facts::facts_key_for;
 use cachet_core::narinfo::Narinfo;
 use cachet_core::types::{StorePathHash, UnixMillis};
 use cachet_core::upload_record::UploadRecord;
@@ -932,9 +933,15 @@ async fn run_sweep_stage(
         }
         let end = (nars_done + GC_DELETE_BATCH).min(sweep.nar_deletes.len());
         budget.spend();
-        bucket
-            .delete_multiple(sweep.nar_deletes[nars_done..end].to_vec())
-            .await?;
+        // A NAR's facts document belongs to exactly one NAR and to
+        // nothing else, so it leaves in the same call as the bytes it
+        // describes. Batching them together rather than in a pass of
+        // their own keeps the operation count per tick unchanged: 128
+        // NARs still cost one delete, and a facts document left behind
+        // would sit in the bucket forever, unreachable and unswept.
+        let mut batch = sweep.nar_deletes[nars_done..end].to_vec();
+        batch.extend(batch.clone().iter().map(|key| facts_key_for(key)));
+        bucket.delete_multiple(batch).await?;
         sweep.bytes_freed += sweep.nar_deletes[nars_done..end]
             .iter()
             .map(|key| sweep.bytes_by_key.get(key).copied().unwrap_or(0))

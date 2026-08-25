@@ -128,6 +128,9 @@ pub fn render_event(event: &PushEvent) -> String {
             &format!("{to_upload} new to cachet, {cache_hits} already cached"),
             *unparseable_paths,
         ),
+        PushEvent::UploadProgress { done, total } => {
+            format!("cachet: uploaded {done} of {total} paths")
+        }
         PushEvent::UploadedObjects { count } => format!("cachet: uploaded {count} objects"),
         PushEvent::LeaseSkippedNotDefaultBranch => {
             "cachet: not the default branch, so the lease is not renewed".to_string()
@@ -225,10 +228,6 @@ async fn run_pipeline_inner(
     };
     let before = std::fs::read_to_string(cachet_push::adapters::snapshot_path(&env.runner_temp))
         .unwrap_or_default();
-    // why: the staging tree exists only for the `nix copy` half of this
-    // run; it dies with the guard.
-    let staging = tempfile::tempdir()
-        .map_err(|failure| CliError(format!("could not make the staging directory: {failure}")))?;
     let inputs = cachet_push::pipeline::PushInputs {
         cache_url: env.cache_url,
         audience: env.audience,
@@ -237,7 +236,7 @@ async fn run_pipeline_inner(
         is_default_branch: env.is_default_branch,
     };
     let mut sink = |event: PushEvent| tell(&render_event(&event));
-    cachet_push::pipeline::push(&adapters, &inputs, &before, staging.path(), &mut sink)
+    cachet_push::pipeline::push(&adapters, &inputs, &before, &mut sink)
         .await
         .map_err(|failure| CliError(failure.to_string()))?;
     Ok(())

@@ -33,21 +33,28 @@ the lane ends, and gitignored.
 
 The lane covers the read path, the write path, and the API surface so
 far: the handshake body and its headers; narinfo and NAR serving with
-wire headers; positive and negative edge caching through the
-generation-scoped key space; HEAD semantics; problem+json rejections by
-shape and by exact bytes; the corrupt-generation bypass; generation-zero
-behavior on an empty bucket; the OIDC rejection matrix (wrong org, alg
-confusion, staleness, expired tokens); guard ordering (411 before 413,
-401 before 411); the verify-then-sign pipeline end to end, from a NAR
-upload through a signed narinfo whose signatures both verify against the
-lane's own public key (nix's fingerprint recipe re-derived in the driver:
-a lane asserting the Sig line's name alone armors the text while the
-bytes are free to rot) and the file facts;
+wire headers; positive and negative edge caching through their two key
+spaces (a stored object's entry carries no generation and survives a
+sweep, a cached absence carries one and does not); HEAD semantics;
+problem+json rejections by shape and by exact bytes; the
+corrupt-generation bypass, which degrades the negative half only;
+generation-zero behavior on an empty bucket; the OIDC rejection matrix
+(wrong org, alg confusion, staleness, expired tokens); guard ordering
+(411 before 413, 401 before 411); the verify-then-sign pipeline end to
+end, from a NAR upload through a signed narinfo whose signatures both
+verify against the lane's own public key (nix's fingerprint recipe
+re-derived in the driver: a lane asserting the Sig line's name alone
+armors the text while the bytes are free to rot) and the file facts; the
+write-time measurement that pipeline rests on, where a NAR write that
+omits its declared decompressed size answers 411, bytes that do not hash
+to the key naming them are refused and deleted, the facts document beside
+a stored NAR is unreachable from any request, and re-pushing a narinfo
+this deployment already signed leaves its signature list unchanged;
 the multipart quartet with its record, part-size enforcement, replay, and
 abort; the CLI's own push, driven as the composite action drives it
 (snapshot step, `nix-store --add-fixed` payload, push) with the stub
-minting its OIDC tokens, asserting the staged tree's real layout reaches
-the bucket and serves back signed; read verdicts cached in KV for both the admit and the deny
+minting its OIDC tokens, asserting that the path the client serialized
+and compressed itself reaches the bucket and serves back signed; read verdicts cached in KV for both the admit and the deny
 direction, with OIDC tokens answering reads as CI expects; the isolate's
 decision memo, proven by deleting the KV verdict between reads and
 watching the repeat in both directions answer with no GitHub API hit and

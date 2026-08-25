@@ -18,6 +18,12 @@ pub struct UploadRecord {
     /// The number of parts the plan expects, from `plan_shape`.
     #[serde(rename = "expectedParts")]
     pub expected_parts: u64,
+    /// What the client declared the assembled NAR decompresses to. The
+    /// completion measures the assembled object, and a decoder needs its
+    /// ceiling before it starts; the parts arrive out of order, so the
+    /// declaration has to be recorded when the upload opens.
+    #[serde(rename = "narBytes")]
+    pub nar_bytes: u64,
     /// When the upload was created, in epoch milliseconds.
     #[serde(rename = "createdAtMs")]
     pub created_at_ms: u64,
@@ -57,6 +63,7 @@ mod tests {
             key: format!("nar/{}.nar.zst", "x".repeat(52)),
             total_bytes: 3_000,
             expected_parts: 2,
+            nar_bytes: 9_000,
             created_at_ms: 1_780_000_000_000,
         };
         assert_eq!(
@@ -71,6 +78,7 @@ mod tests {
             key: String::new(),
             total_bytes: 1,
             expected_parts: 1,
+            nar_bytes: 1,
             created_at_ms: 1_000,
         };
         assert!(!record.is_stale(UnixMillis::new(500)));

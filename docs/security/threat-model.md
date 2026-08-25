@@ -22,17 +22,28 @@ live paths (leases and their closures) are never swept.
 **Poisoned narinfo.** An attacker with a valid write credential uploads
 a narinfo naming bytes other than what CI built: a wrong `NarHash`,
 a wrong `NarSize`, a NAR that is not the compressed form of the store
-path. Defense: verify-then-sign; the worker recomputes the stored
-object's hashes and signs only a narinfo whose declared facts match the
-stored bytes. The verified value is a type the signer cannot be called
-without (ADR 0001). Proven: the rejection matrix in the workerd lane
-(hash mismatch, size mismatch, missing NAR, malformed lines), the
-verify pipeline's unit tests.
+path. Defense: verify-then-sign; the worker measures the stored object's
+hashes and signs only a narinfo whose declared facts match the stored
+bytes. The measurement happens on the write that stores those bytes,
+which records it beside the object, and the narinfo request reads the
+record rather than the object (ADR 0012); a multipart upload measures on
+completion, because its parts arrive out of order. The verified value is
+a type the signer cannot be called without (ADR 0001), and a narinfo
+whose NAR was never measured is refused rather than signed. Proven: the
+rejection matrix in the workerd lane (hash mismatch, size mismatch,
+missing NAR, malformed lines, bytes that do not hash to the key naming
+them), the verify pipeline's unit tests.
 
 **Decompression amp.** A crafted `.nar.zst` expands past plausible
 memory or CPU. Defense: streaming decompression with a hard byte limit
-declared before decode; the stream aborts at the cap. Proven: ruzstd
-stream tests with compressed-bomb fixtures.
+declared before decode; the stream aborts at the cap. The limit is the
+lower of two bounds. The client declares what its frame decodes to in
+`x-cachet-nar-bytes`, capped by `NAR_DECOMPRESSED_BYTES_MAX`; because
+that declaration is attacker-chosen, it is paired with a bound on how far
+the uploaded bytes may expand (`NAR_EXPANSION_RATIO_MAX`), so a bomb can
+only spend CPU in proportion to bytes it actually sent. Proven: ruzstd
+stream tests with compressed-bomb fixtures, the decode-bound cases in
+cachet-core's write tests.
 
 **Forged OIDC.** A presented token with the algorithm switched to
 `none`/`HS256`, a wrong `iss` or `aud`, an org the deployment does not
@@ -106,9 +117,12 @@ outside the list answers 403 forbidden_admin, an anonymous request
 
 **Supply chain of cachet itself.** A malicious dependency or a
 wasm-incompatible crypto crate enters the tree. Defense: cargo deny
-(advisories, licenses, bans, with ring accessible only through the
-rustls wrappers), exact pins where generation behavior matters (utoipa),
-dependabot weekly, and the wasm-hygiene scan over the shipped bundle.
+(advisories, licenses, bans, with ring reachable only through the rustls
+wrappers and the C zstd library only through the native push client,
+which never compiles to wasm), exact pins where generation behavior
+matters (utoipa), dependabot weekly, and the wasm-hygiene scan over the
+shipped bundle, which refuses ring, aws-lc, tokio, and the C zstd
+library's symbols in the artifact regardless of what the ban list says.
 Proven: `just deny`, `just wasm-hygiene`, the workspace `publish =
 false` (no crate ever uploads to crates.io).
 

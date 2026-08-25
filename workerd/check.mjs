@@ -549,7 +549,7 @@ await scenario(
 );
 
 await scenario(
-  "a corrupt generation document bypasses the edge",
+  "a corrupt generation document bypasses the negative edge only",
   async () => {
     const narinfo = await readFile(path.join(fixturesDir, NARINFO_KEY));
     return [
@@ -558,22 +558,46 @@ await scenario(
     ];
   },
   async ({ base, events, clearEvents }) => {
-    await check("the service degrades to bucket reads", async () => {
+    // A stored object's edge entry carries no generation, because both
+    // kinds of object are addressed by a hash of their own content: a
+    // generation nobody can read says nothing about whether those bytes
+    // are still the bytes. A cached absence is the entry a corrupt
+    // generation must not be trusted with, since it is the one a write
+    // can make wrong, so that is the half that degrades.
+    await check("a stored object still answers from the edge", async () => {
       const first = await fetch(`${base}/${NARINFO_KEY}`, {
         headers: READ_AUTH(),
       });
       assert.equal(first.status, 200);
+      await untilEvent(events, '"event":"generation.document_corrupt"');
       clearEvents();
       const second = await fetch(`${base}/${NARINFO_KEY}`, {
         headers: READ_AUTH(),
       });
       assert.equal(second.status, 200);
-      await untilEvent(events, '"event":"generation.document_corrupt"');
-      await untilEvent(events, '"event":"read.bucket_hit"');
-      assert.match(events(), /"event":"generation\.document_corrupt"/);
-      assert.match(events(), /"event":"read\.bucket_hit"/);
-      assert.doesNotMatch(events(), /"event":"read\.edge_hit"/);
+      await untilEvent(events, '"event":"read.edge_hit"');
+      assert.match(events(), /"event":"read\.edge_hit"/);
     });
+
+    await check(
+      "an absence is re-read from the bucket every time",
+      async () => {
+        clearEvents();
+        for (const _attempt of [1, 2]) {
+          const res = await fetch(`${base}/${OTHER_NARINFO}`, {
+            headers: READ_AUTH(),
+          });
+          assert.equal(res.status, 404);
+        }
+        await untilEvent(events, '"event":"read.miss"');
+        const misses = events().match(/"event":"read\.miss"/g) ?? [];
+        assert.equal(
+          misses.length,
+          2,
+          "with no readable generation there is no key to cache a miss under",
+        );
+      },
+    );
   },
 );
 
@@ -616,7 +640,15 @@ try {
       );
       const narBytes = await readFile(path.join(fixturesDir, NAR_FILE));
       const validToken = mint();
-      const auth = (token) => ({ authorization: `Bearer ${token}` });
+      // Every NAR write declares what its frame decodes to. The worker
+      // measures the bytes as they stream into the bucket, and a decoder
+      // needs its ceiling before it reads the first one; the narinfo that
+      // would carry NarSize has not arrived yet at that point.
+      const laneNarSize = narinfoFixture.match(/NarSize: (\d+)/)[1];
+      const auth = (token) => ({
+        authorization: `Bearer ${token}`,
+        "x-cachet-nar-bytes": laneNarSize,
+      });
 
       await check(
         "the public config names orgs, host, and the deployment key",
@@ -858,6 +890,109 @@ try {
       );
 
       await check(
+        "re-pushing a signed narinfo does not add a second signature",
+        async () => {
+          // The client builds its documents now, so nothing it sends
+          // carries an inherited Sig. A narinfo read back out of this
+          // cache does, and a client that hands one back must not make
+          // the stored document grow: the previous behaviour appended a
+          // second identical line on every push, substitute, re-push
+          // cycle until the document hit its byte cap.
+          const served = await fetch(`${base}/${NARINFO_KEY}`, {
+            headers: READ_AUTH(),
+          });
+          assert.equal(served.status, 200);
+          const signed = await served.text();
+          const before = signed.match(/^Sig: .*$/gm) ?? [];
+          // The fixture is nix-signed, so the stored document carries
+          // nix's line and this deployment's.
+          assert.equal(before.length, 2, signed);
+          const deploymentKeyName = (
+            await readFile(
+              path.join(laneFixturesDir, "signing-key.public"),
+              "utf8",
+            )
+          )
+            .trim()
+            .split(":")[0];
+          const ours = before.filter((line) =>
+            line.includes(`${deploymentKeyName}:`),
+          );
+          assert.equal(ours.length, 1, signed);
+
+          const again = await fetch(`${base}/${NARINFO_KEY}`, {
+            method: "PUT",
+            headers: auth(validToken),
+            body: signed,
+          });
+          assert.equal(again.status, 204, await again.text());
+          const after = await fetch(`${base}/${NARINFO_KEY}`, {
+            headers: READ_AUTH(),
+          });
+          const reserved = await after.text();
+          assert.deepEqual(
+            reserved.match(/^Sig: .*$/gm) ?? [],
+            before,
+            "signing a document this cache already signed changes nothing",
+          );
+        },
+      );
+
+      await check("a NAR write without its declared size is 411", async () => {
+        // The decoder's ceiling is declared before the bytes move. A
+        // write that omits it is refused for the same reason a write
+        // without a content length is: the guard cannot run.
+        const res = await fetch(`${base}/${NAR_KEY}`, {
+          method: "PUT",
+          headers: { authorization: `Bearer ${validToken}` },
+          body: narBytes,
+        });
+        const text = await res.text();
+        assert.equal(res.status, 411, text);
+        assert.equal(JSON.parse(text).code, "length_required");
+      });
+
+      await check(
+        "bytes that do not hash to their key never land",
+        async () => {
+          // The NAR key names the hash of the bytes it holds, and the
+          // write measures them on the way past, so the disagreement is
+          // caught by the request that carries them rather than by the
+          // narinfo that would later name them.
+          const wrongKey = `nar/${"9".repeat(52)}.nar.zst`;
+          const res = await fetch(`${base}/${wrongKey}`, {
+            method: "PUT",
+            headers: auth(validToken),
+            body: narBytes,
+          });
+          const text = await res.text();
+          assert.equal(res.status, 400, text);
+          assert.equal(JSON.parse(text).code, "file_hash_mismatch");
+          // The refused object is gone, so nothing is left for a narinfo
+          // to name.
+          const gone = await fetch(`${base}/${wrongKey}`, {
+            headers: READ_AUTH(),
+          });
+          assert.equal(gone.status, 404);
+        },
+      );
+
+      await check(
+        "a NAR's measured facts are unreachable from a request",
+        async () => {
+          // The facts live beside the object under the reserved meta
+          // prefix, which key validation refuses before any lookup runs.
+          const res = await fetch(`${base}/meta/${NAR_KEY}`, {
+            headers: READ_AUTH(),
+          });
+          assert.ok(
+            res.status === 400 || res.status === 404,
+            `the facts document is not addressable: ${res.status}`,
+          );
+        },
+      );
+
+      await check(
         "the stored narinfo serves both signatures and the file facts",
         async () => {
           const res = await fetch(`${base}/${NARINFO_KEY}`, {
@@ -914,8 +1049,18 @@ try {
     async ({ base }) => {
       const validToken = mint();
       const auth = { authorization: `Bearer ${validToken}` };
-      const objectKey = `nar/${"9".repeat(52)}.nar.zst`;
-      const partBytes = Buffer.from("not the fixture nar's bytes".repeat(4)); // 108 bytes
+      // The real fixture, assembled through the multipart route. The
+      // completion measures what the parts assembled into, so the bytes
+      // have to be a NAR that decodes and whose hash is the key naming
+      // it: an object that measures as something else is refused and
+      // deleted, which is the contract this scenario exists to hold.
+      const narinfoFixture = await readFile(
+        path.join(fixturesDir, NARINFO_KEY),
+        "utf8",
+      );
+      const laneNarSize = narinfoFixture.match(/NarSize: (\d+)/)[1];
+      const objectKey = NAR_KEY;
+      const partBytes = await readFile(path.join(fixturesDir, NAR_FILE));
 
       await check(
         "creating an upload without a credential is 401",
@@ -946,6 +1091,7 @@ try {
           headers: {
             ...auth,
             "x-cachet-upload-bytes": String(partBytes.length),
+            "x-cachet-nar-bytes": laneNarSize,
           },
         });
         const text = await res.text();
@@ -1504,6 +1650,7 @@ await scenario(
         key: `nar/${"q".repeat(52)}.nar.zst`,
         totalBytes: 10,
         expectedParts: 1,
+        narBytes: 30,
         createdAtMs: 0,
       })}\n`,
     ],

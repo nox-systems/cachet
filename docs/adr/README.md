@@ -25,3 +25,5 @@ why, and the why is read on demand.
 | [0009](0009-alchemy-deployments.md) | alchemy provisions, stages isolate | Deploys converge via one stack program; stages share no resources; the worker bundle uploads byte-for-byte |
 | [0010](0010-deployment-identity-is-configuration.md) | Deployment identity is configuration | An open-source repo carries no hostname, no org slug, no key bytes: every deployment value arrives as a var or a secret |
 | [0011](0011-deployment-names.md) | Deployments are named, and the name is housekeeping | One name drives the env file, the alchemy stage, and the resource prefix; the host stays the only protocol identity |
+| [0012](0012-measure-the-nar-when-it-lands.md) | A NAR is measured by the write that stores it | Verify-then-sign is unchanged; the measurement moves to the request already carrying the bytes, so a narinfo costs a small read instead of a full re-read and decode |
+| [0013](0013-edge-keys-outlive-sweeps.md) | An object's edge-cache key carries no generation | Content-addressed bytes cannot go stale, so a daily sweep no longer throws away every warm entry; only cached absences stay generation-scoped |

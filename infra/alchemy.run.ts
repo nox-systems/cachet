@@ -65,6 +65,21 @@ export default Alchemy.Stack(
       },
       // The collector fires daily; GC_ARMED stays unset (armed by default).
       crons: ["0 5 * * *"],
+      // The worker's own event stream is the only way to tell an edge hit
+      // from a bucket read in production, and without this it goes
+      // nowhere: a slow read cannot be diagnosed from the outside.
+      observability: { enabled: true },
+      // A multipart completion reads the assembled NAR back to measure
+      // it, which is the one request in the system whose cost scales with
+      // the object. The paid-plan default is thirty seconds; the ceiling
+      // is five minutes, and a NAR large enough to need multipart deserves
+      // the headroom rather than a killed request the client retries.
+      limits: { cpuMs: 300_000 },
+      // R2 and KV are what almost every request waits on, so the isolate
+      // belongs near them rather than near the client. Streaming a NAR
+      // body is unaffected either way, and the cold read path's several
+      // sequential round trips are not.
+      placement: { mode: "smart" },
       // Only the custom domain serves: no workers.dev URL, no per-version
       // preview URLs. A cache answers on one name, and that name is the
       // signing key's identity.

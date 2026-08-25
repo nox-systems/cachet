@@ -221,6 +221,7 @@ mod tests {
             key: format!("nar/{}.nar.zst", "x".repeat(52)),
             total_bytes,
             expected_parts,
+            nar_bytes: total_bytes * 3,
             created_at_ms: 1,
         }
     }

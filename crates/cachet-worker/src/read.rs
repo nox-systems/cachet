@@ -5,7 +5,9 @@
 
 use cachet_core::constants::{GENERATION_OBJECT_KEY, NIX_CACHE_INFO};
 use cachet_core::error::ClientError;
-use cachet_core::generation::{GenerationDocument, generation_cache_key, object_cache_key};
+use cachet_core::generation::{
+    GenerationDocument, generation_cache_key, miss_cache_key, object_cache_key,
+};
 use cachet_core::read::{
     NOT_FOUND_BODY, ObjectKind, cache_info_response_headers, generation_response_headers,
     is_edge_cacheable, not_found_response_headers, object_response_headers,
@@ -150,14 +152,30 @@ pub async fn serve_object(
     kind: ObjectKind,
     generation: Option<u64>,
 ) -> Result<Response> {
-    let cache_key = generation.map(|generation| object_cache_key(generation, request_path));
+    // Two key spaces, looked up in the order they pay off. A stored
+    // object's entry outlives sweeps, so the common warm read answers on
+    // the first lookup; a cached absence is generation-scoped and short,
+    // and only a request the cache has no object for reaches it.
+    let object_key = object_cache_key(request_path);
+    let miss_key = generation.map(|generation| miss_cache_key(generation, request_path));
 
-    if let Some(cache_key) = &cache_key {
-        if let Some(hit) = Cache::default().get(cache_key, true).await? {
+    if let Some(hit) = Cache::default().get(&object_key, true).await? {
+        log::event(
+            "info",
+            "read.edge_hit",
+            &[("kind", kind.name().to_string())],
+        );
+        return Ok(hit);
+    }
+    if let Some(miss_key) = &miss_key {
+        if let Some(hit) = Cache::default().get(miss_key, true).await? {
             log::event(
                 "info",
                 "read.edge_hit",
-                &[("kind", kind.name().to_string())],
+                &[
+                    ("kind", kind.name().to_string()),
+                    ("answer", "miss".to_string()),
+                ],
             );
             return Ok(hit);
         }
@@ -170,10 +188,10 @@ pub async fn serve_object(
         // substituter, while a 5xx would make it retry us.
         log::event("info", "read.miss", &[("kind", kind.name().to_string())]);
         let mut missing = miss_response(true)?;
-        if let Some(cache_key) = cache_key {
+        if let Some(miss_key) = miss_key {
             let cached = missing.cloned()?;
             ctx.wait_until(async move {
-                let _ = Cache::default().put(cache_key, cached).await;
+                let _ = Cache::default().put(miss_key, cached).await;
             });
         }
         return Ok(missing);
@@ -190,12 +208,10 @@ pub async fn serve_object(
         &object_response_headers(kind, size),
     )?;
     if is_edge_cacheable(size) {
-        if let Some(cache_key) = cache_key {
-            let cached = response.cloned()?;
-            ctx.wait_until(async move {
-                let _ = Cache::default().put(cache_key, cached).await;
-            });
-        }
+        let cached = response.cloned()?;
+        ctx.wait_until(async move {
+            let _ = Cache::default().put(object_key, cached).await;
+        });
     } else {
         // The read succeeded and the object is only too large to cache, so
         // this line is a diagnostic rather than an error.

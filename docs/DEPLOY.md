@@ -61,6 +61,15 @@ stack: R2 bucket, KV namespace, the worker with its bindings, the
 garbage collector's cron (`0 5 * * *`), and the custom domain. It is
 idempotent: rerunning converges, it never duplicates.
 
+The worker deploys with observability on, Smart Placement, and a CPU
+ceiling of five minutes. Observability is what makes a slow read
+diagnosable: the worker's own events say whether a read answered from
+the edge, from the bucket, or not at all, and without it those events go
+nowhere. Smart Placement moves the isolate next to R2 and KV, which is
+what almost every request waits on. The CPU ceiling covers the one
+request whose cost scales with the object, a multipart completion
+measuring the NAR its parts assembled.
+
 ## The configuration contract
 
 `just deploy <name>` reads `infra/.env.<name>` (or exported

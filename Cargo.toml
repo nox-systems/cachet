@@ -23,7 +23,7 @@ default-members = [
 
 [workspace.package]
 edition = "2021"
-version = "0.0.6"
+version = "0.0.7"
 publish = false
 license = "Apache-2.0"
 
@@ -64,6 +64,18 @@ module_name_repetitions = "allow"
 # why: #[must_use] belongs on the call sites where ignoring the value is a
 # bug class, not on every function by default.
 must_use_candidate = "allow"
+
+# The worker's own profile. worker-build compiles the wasm in release, and
+# the stock release profile leaves cross-crate inlining off: the hot path
+# is SHA-256 over every uploaded byte and a zstd decode over every
+# decompressed one, both of which live in other crates. Fat LTO and a
+# single codegen unit let those inline into the streaming loop, and
+# aborting on panic drops the unwinding tables from a bundle that has no
+# unwinder anyway.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
 
 # The profile that 'dist' will build with
 [profile.dist]
