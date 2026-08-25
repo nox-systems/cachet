@@ -1,0 +1,60 @@
+<task-notification>
+<task-id>bf12etsr4</task-id>
+<summary>Monitor event: "CI checks on PR #21"</summary>
+<event>actionlint: pass
+announce: skipping
+build-global-artifacts: skipping
+build-local-artifacts (${{ join(matrix.targets, ', ') }}): skipping
+clippy: pass
+deny: pass
+doc-manifest: pass
+fmt: pass
+golden: pass
+host: skipping
+kani: pass
+lane-manifest: pass
+openapi: pass
+plan: pass
+property: pass
+scripts: pass
+unit: pass
+wasm-hygiene: pass
+wasm: pass
+workerd: pass
+PR21 ALL CHECKS COMPLETE</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bf12etsr4</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-shivanshvij-Development-nox-cachet/5fc1018a-6e02-430c-8419-8f2100730cb5/tasks/bf12etsr4.output</output-file>
+<status>completed</status>
+<summary>Monitor "CI checks on PR #21" stream ended</summary>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>b2yt94qxs</task-id>
+<summary>Monitor event: "the v0.0.7 release re-run"</summary>
+<event>[Monitor timed out — re-arm if needed.]</event>
+</task-notification>
+
+---
+
+why did 0.0.7 release re-run???
+
+---
+
+Dude first, I'm not sure you won anything by splitting the deps action? Not sure what that buys us? The deps action builds and uploads the deps, is that so that if the deps do change they get built once? I get that, but the issue is that now you have a 50s tax to every CI run lol
+
+---
+
+I've squASH MERGED 21
+
+---
+
+Okay new branch, with the revert, as longas thr 4min only happens on lockfile changes and sticks to 1min otherwise. Then, list out all the other changes you'll make in this branch, and then make them to fix 100% of the issues we've found so far, and then open one big fat honking pr
