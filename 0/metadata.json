@@ -1,0 +1,59 @@
+{
+  "cli_version": "0.10.2",
+  "checkpoint_id": "01M0VTSJ91BJZVD0NKVYM9NK33",
+  "session_id": "5fc1018a-6e02-430c-8419-8f2100730cb5",
+  "strategy": "manual-commit",
+  "created_at": "2026-08-25T06:47:48.594622Z",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    ".github/workflows/ci.yml",
+    "action/action.yml",
+    "nix/checks.nix"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-opus-5[1m]",
+  "turn_id": "09a50156b4e3",
+  "checkpoint_transcript_start": 2672,
+  "transcript_lines_at_start": 2672,
+  "compact_transcript_start": 480,
+  "token_usage": {
+    "input_tokens": 28,
+    "cache_creation_tokens": 19425,
+    "cache_read_tokens": 10119395,
+    "output_tokens": 10609,
+    "api_call_count": 14
+  },
+  "session_metrics": {
+    "turn_count": 32
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-08-25T06:47:48.44195Z",
+    "agent_lines": 5,
+    "agent_removed": 3,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 1,
+    "total_committed": 5,
+    "total_lines_changed": 9,
+    "agent_percentage": 88.88888888888889,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 48,
+      "user_lines_removed": 1,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".github/workflows/ci.yml": 32,
+        "action/action.yml": 7,
+        "nix/checks.nix": 9
+      },
+      "user_removed_per_file": {
+        "action/action.yml": 1
+      }
+    }
+  ]
+}

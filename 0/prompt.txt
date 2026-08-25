@@ -1,0 +1,7 @@
+do both in the same PR 
+
+One more thing to figure out is authentication. We use `cachet login` on a local laptop, which auths with github OIDC device flow. I have no idea of htis is secure, where the rough edges are, and how the fuck refreshes are handled (or if they are evne neceessary) Would suck if a user had to keep calling cachet login
+
+---
+
+Oh I see it's the same action just with determinate=false
