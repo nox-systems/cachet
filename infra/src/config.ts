@@ -28,6 +28,10 @@ export interface StageConfig {
   uiOrigin: string | undefined;
   /** The GC grace override; the worker's default (14 days) applies unset. */
   gcGraceMs: string | undefined;
+  // The Cloudflare API token the counter route reads analytics with,
+  // scoped to reading them and nothing else. Absent means the deployment
+  // counts but does not report.
+  statsToken: string | undefined;
 }
 
 const REQUIRED = ["HOST", "ORGS", "OAUTH_CLIENT_ID", "ADMINS"] as const;
@@ -100,5 +104,6 @@ export function loadStageConfig(stage: string): StageConfig {
     domain,
     uiOrigin: value("UI_ORIGIN"),
     gcGraceMs: value("GC_GRACE_MS"),
+    statsToken: value("STATS_TOKEN"),
   };
 }

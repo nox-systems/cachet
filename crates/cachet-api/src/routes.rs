@@ -7,7 +7,7 @@
 
 use crate::{
     GcRunList, ProbeAnswer, ProbeBody, ProblemBody, ProjectList, PublicConfig, ReadTokenIssued,
-    RenewalBody, StatsBody, UploadCreated, UploadedPartBody,
+    RenewalBody, StatsBody, StatsEvents, UploadCreated, UploadedPartBody,
 };
 
 /// `GET /nix-cache-info`: the nix handshake. Immutable per deployment
@@ -148,6 +148,33 @@ pub fn public_config_get() {}
     )
 )]
 pub fn openapi_get() {}
+
+/// `GET /api/self/events`: the deployment's own counters, grouped.
+///
+/// The caller chooses a question rather than composing one: `subject` is
+/// one of `reads`, `writes`, `probes`; `by` names one of the six
+/// dimensions the writers fill; `window` is `day`, `week`, or `month`.
+/// Anything else is refused. The worker builds the SQL from those
+/// choices and runs it against Cloudflare with a token scoped to reading
+/// analytics and nothing else, so no caller text reaches a statement.
+/// Requires an admin credential.
+#[utoipa::path(
+    get,
+    path = "/api/self/events",
+    params(
+        ("subject" = String, Query, description = "reads | writes | probes"),
+        ("by" = Option<String>, Query, description = "kind | outcome | actor | repository | reference | project"),
+        ("window" = Option<String>, Query, description = "day | week | month; day when unstated"),
+    ),
+    responses(
+        (status = 200, description = "The totals, largest first", body = StatsEvents, content_type = "application/json"),
+        (status = 400, description = "problem+json; code=malformed_query", body = ProblemBody, content_type = "application/problem+json"),
+        (status = 401, description = "problem+json; code=unauthorized", body = ProblemBody, content_type = "application/problem+json"),
+        (status = 403, description = "problem+json; code=forbidden_admin", body = ProblemBody, content_type = "application/problem+json"),
+        (status = 503, description = "problem+json; code=storage_unavailable", body = ProblemBody, content_type = "application/problem+json"),
+    )
+)]
+pub fn stats_events() {}
 
 /// `POST /api/login/exchange`: trade a GitHub identity for this
 /// deployment's own read credential. The GitHub token is checked for org

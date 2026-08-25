@@ -94,6 +94,7 @@ equivalents). These variables define the deployment:
 | `CACHET_DEPLOY_GC_GRACE_MS` | no | Grace override; default 14 days. Set 0 for throwaway test deployments. |
 | `CACHET_SIGNING_KEY` | yes | The `<host>-1:<base64>` secret from bootstrap. |
 | `CACHET_OAUTH_CLIENT_SECRET` | yes | The OAuth App's client secret. |
+| `CACHET_DEPLOY_STATS_TOKEN` | no | A Cloudflare API token scoped to Account Analytics:Read. Without it the deployment counts but cannot report. |
 
 The deploy also reads `CLOUDFLARE_API_TOKEN` and
 `CLOUDFLARE_ACCOUNT_ID`, unprefixed by choice: they are wrangler and
@@ -136,6 +137,102 @@ clone, so they carry over untouched; the served public config's key
 prefix after the deploy confirms the identity did not move. Rolling
 back is the same command against the previous tag, as the rollback
 section below describes.
+
+## Statistics
+
+Every read, every write, and every push's presence probe writes one data
+point to the deployment's Analytics Engine dataset, `cachet_<name>`. The
+worker can only write to it, because that is all the platform allows a
+worker to do, so reading is Cloudflare's SQL API with an account token.
+
+The columns are the same for every point, so one query shape answers
+most questions:
+
+| Column | Meaning |
+| --- | --- |
+| `index1` | `read`, `write`, or `probe`. |
+| `blob1` | What it was: `narinfo`, `nar`, `part`, `begin`, `complete`, `abort`, `probe`. |
+| `blob2` | How it went: `edge_hit`, `bucket_hit`, `miss`, `stored`, or the HTTP status of a refusal. |
+| `blob3` | Who asked: `ci`, `laptop`, `browser`, `anonymous`. |
+| `blob4` | `owner/repo` of the workflow run, empty for anyone else. |
+| `blob5` | That run's ref, empty for anyone else. |
+| `blob6` | The lease name, where one applies. |
+| `double1` | How many things the point counts. |
+| `double2` | Bytes, where the answer is bytes. |
+
+An admin reads them through the deployment rather than through
+Cloudflare: `GET /api/self/events` takes `subject` (`reads`, `writes`,
+`probes`), `by` (one of the six dimensions, `outcome` when unstated),
+and `window` (`day`, `week`, `month`), and answers the totals largest
+first.
+
+```
+curl -sS --netrc-file ~/.netrc \
+  "https://<host>/api/self/events?subject=reads&by=actor&window=week"
+```
+
+The caller chooses a question; it never sends one. The worker composes
+the SQL from those three choices, every part of it a literal or an enum
+value, because the credential behind the route is a Cloudflare API
+token and a caller who could compose SQL would be composing it with that
+token's authority. A choice the deployment does not offer answers 400
+`malformed_query` rather than falling back to a different question. The
+route requires an admin: an org member outside `CACHET_ADMINS` answers
+403, an anonymous request 401.
+
+Querying Cloudflare directly is the operator's path, and needs their own
+token rather than the deployment's. The hit rate, split by what was
+being read:
+
+```sql
+SELECT blob1 AS kind, blob2 AS outcome, SUM(_sample_interval * double1) AS reads
+FROM cachet_production
+WHERE index1 = 'read' AND timestamp > NOW() - INTERVAL '1' DAY
+GROUP BY kind, outcome
+```
+
+Who the cache is actually for, which is the question a hit rate alone
+does not answer:
+
+```sql
+SELECT blob3 AS actor, SUM(_sample_interval * double1) AS reads,
+       SUM(_sample_interval * double2) AS bytes
+FROM cachet_production
+WHERE index1 = 'read' AND timestamp > NOW() - INTERVAL '7' DAY
+GROUP BY actor
+```
+
+Which repositories push, and whether their pushes are landing:
+
+```sql
+SELECT blob4 AS repository, blob2 AS outcome, SUM(_sample_interval * double1) AS writes
+FROM cachet_production
+WHERE index1 = 'write' AND blob4 != '' AND timestamp > NOW() - INTERVAL '7' DAY
+GROUP BY repository, outcome
+ORDER BY writes DESC
+```
+
+How much work the cache saves a push, from the probe that prices it:
+`double1` is what the push asked about and `double2` is what the cache
+already held, so their ratio is the write-side hit rate:
+
+```sql
+SELECT SUM(_sample_interval * double2) / SUM(_sample_interval * double1) AS already_held
+FROM cachet_production
+WHERE index1 = 'probe' AND timestamp > NOW() - INTERVAL '1' DAY
+```
+
+Any of these takes a `timestamp` bucket in the `GROUP BY` to become a
+trend rather than a total.
+
+The collector's own numbers are not here: `/api/self/gc-runs` and
+`/api/self/stats` already serve them from the run reports, which is a
+better source because it is the run's own record rather than a sample.
+
+A dataset is pure configuration, so it costs nothing until something
+writes to it and nothing is torn down with the deployment. A worker
+older than the binding counts nothing and serves exactly as well;
+nothing here is ever worth failing a request over.
 
 ## Verifying a deployment
 

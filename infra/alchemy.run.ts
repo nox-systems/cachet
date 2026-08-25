@@ -37,6 +37,16 @@ export default Alchemy.Stack(
     const kv = yield* Cloudflare.KV.Namespace("KV", {
       title: resourceName,
     });
+    // Reads, writes, and probes are counted here, one data point each,
+    // with the dimensions a question gets grouped by: what, how it went,
+    // who asked, and which repository they were pushing for. The worker
+    // can only write to it (the platform allows nothing else), so
+    // reading is Cloudflare's SQL API and the queries live in
+    // docs/DEPLOY.md. A dataset is pure configuration: nothing is
+    // created, and nothing is destroyed when a deployment goes away.
+    const events = yield* Cloudflare.AnalyticsEngine.Dataset("Events", {
+      dataset: resourceName.replaceAll("-", "_"),
+    });
 
     const worker = yield* Cloudflare.Worker("Worker", {
       name: resourceName,
@@ -46,6 +56,20 @@ export default Alchemy.Stack(
       env: {
         CACHE_BUCKET: bucket,
         CACHET_KV: kv,
+        CACHET_EVENTS: events,
+        // The dataset's own name, so the counter route can query the
+        // one it writes to without a second place to keep it in step.
+        CACHET_STATS_DATASET: resourceName.replaceAll("-", "_"),
+        // why: reading a dataset is Cloudflare's SQL API, which takes an
+        // account token; a worker cannot read what it writes here. The
+        // token is scoped to reading account analytics and nothing else,
+        // so a compromised worker gains a view of counters the operator
+        // already owns and no power over R2, KV, or the worker itself.
+        // Optional: a deployment without it counts normally and simply
+        // cannot report.
+        ...(cfg.statsToken === undefined
+          ? {}
+          : { CACHET_STATS_TOKEN: Config.redacted("CACHET_STATS_TOKEN") }),
         CACHET_ORGS: cfg.orgs,
         CACHET_AUDIENCE: cfg.audience,
         CACHET_DEFAULT_BRANCH_REF: cfg.defaultBranchRef,

@@ -81,6 +81,11 @@ pub enum ClientError {
     /// The probe payload did not parse, carried a hash outside the
     /// grammar, or outgrew its entry cap.
     MalformedProbe,
+    /// A counter question naming a subject, dimension, or window that is
+    /// not one of the choices. Refused rather than defaulted: a caller
+    /// asking a question this deployment cannot answer should hear so,
+    /// not receive the answer to a different one.
+    MalformedQuery,
 }
 
 impl ClientError {
@@ -99,7 +104,8 @@ impl ClientError {
             | Self::FileHashMismatch
             | Self::NarHashMismatch
             | Self::MalformedOauth
-            | Self::MalformedProbe => 400,
+            | Self::MalformedProbe
+            | Self::MalformedQuery => 400,
             Self::Unauthorized | Self::OauthStateUnknown => 401,
             Self::ForbiddenOrg
             | Self::ForbiddenRef
@@ -142,6 +148,7 @@ impl ClientError {
             Self::OauthStateUnknown => "oauth_state_unknown",
             Self::ForbiddenAdmin => "forbidden_admin",
             Self::MalformedProbe => "malformed_probe",
+            Self::MalformedQuery => "malformed_query",
         }
     }
 
@@ -176,6 +183,7 @@ impl ClientError {
             Self::OauthStateUnknown => "oauth state unknown or expired",
             Self::ForbiddenAdmin => "outside the configured admins",
             Self::MalformedProbe => "probe payload did not parse",
+            Self::MalformedQuery => "query names a choice this deployment does not offer",
         }
     }
 }

@@ -1867,6 +1867,51 @@ await scenario(
     const laptop = { authorization: `Bearer ${GOOD_LAPTOP_TOKEN}` };
     const member = { authorization: `Bearer ${MEMBER_TOKEN}` };
 
+    await check("the counter route gates before it queries", async () => {
+      // The credential behind this route is a Cloudflare API token, so
+      // the gate matters more here than on a route that only reads the
+      // bucket. Nothing below gets far enough to need the token: the
+      // lane binds none, and every row here is refused before the query.
+      const anon = await fetch(`${base}/api/self/events?subject=reads`);
+      assert.equal(anon.status, 401, await anon.text());
+
+      const nonAdmin = await fetch(`${base}/api/self/events?subject=reads`, {
+        headers: member,
+      });
+      const nonAdminText = await nonAdmin.text();
+      assert.equal(nonAdmin.status, 403, nonAdminText);
+      assert.equal(JSON.parse(nonAdminText).code, "forbidden_admin");
+
+      // An admin choosing something this deployment does not offer is
+      // told so, rather than quietly answered a different question. The
+      // hostile shapes are the ones that would matter if the choice ever
+      // reached a statement.
+      for (const query of [
+        "subject=reads&by=blob1,%20blob2",
+        "subject=reads&by=actor'%3B%20DROP%20TABLE%20x%3B%20--",
+        "subject=reads&window=decade",
+        "subject=everything",
+        "by=actor",
+      ]) {
+        const res = await fetch(`${base}/api/self/events?${query}`, {
+          headers: laptop,
+        });
+        const text = await res.text();
+        assert.equal(res.status, 400, `${query} -> ${text}`);
+        assert.equal(JSON.parse(text).code, "malformed_query", query);
+      }
+
+      // A valid choice with no token bound reports the deployment's own
+      // misconfiguration, not the caller's: it counts, it cannot report.
+      const unconfigured = await fetch(
+        `${base}/api/self/events?subject=reads&by=actor`,
+        { headers: laptop },
+      );
+      const unconfiguredText = await unconfigured.text();
+      assert.equal(unconfigured.status, 503, unconfiguredText);
+      assert.equal(JSON.parse(unconfiguredText).code, "storage_unavailable");
+    });
+
     await check("the reports API serves admins and nobody else", async () => {
       const anon = await fetch(`${base}/api/self/gc-runs`);
       assert.equal(anon.status, 401);

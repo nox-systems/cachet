@@ -3,7 +3,10 @@
 //! host, and public signing key here, so nothing the client needs ever
 //! rides in a secret channel it does not yet have.
 
-use cachet_core::constants::{GC_LATEST_REPORT_KEY, GC_REPORTS_KEY_PREFIX, GC_RUNS_PAGE_LIMIT};
+use cachet_core::constants::{
+    ACCOUNT_ID_VAR, GC_LATEST_REPORT_KEY, GC_REPORTS_KEY_PREFIX, GC_RUNS_PAGE_LIMIT,
+    STATS_DATASET_VAR, STATS_TOKEN_SECRET,
+};
 use cachet_core::error::ClientError;
 use cachet_core::gc::{GcReport, parse_run_id};
 use cachet_core::types::UnixMillis;
@@ -87,6 +90,150 @@ fn self_headers() -> worker::Result<worker::Headers> {
 pub fn json_no_store<B: serde::Serialize>(body: &B) -> worker::Result<Response> {
     let text = serde_json::to_string(body).expect("typed bodies serialize");
     Ok(Response::ok(text)?.with_headers(self_headers()?))
+}
+
+/// `GET /api/self/events`: the deployment's own counters.
+///
+/// The caller chooses a question; the worker composes the SQL. That is
+/// the whole security posture of this route, because the credential
+/// behind it is a Cloudflare API token: a caller who could compose SQL
+/// would be composing it with that token's authority. Every part of the
+/// statement is a literal or an enum value (cachet-core's
+/// `stats_query`), so no caller text reaches it at all.
+///
+/// # Errors
+///
+/// Propagates a header or body failure as the worker's generic 500.
+pub async fn stats_events(env: &Env, now: UnixMillis, req: &Request) -> worker::Result<Response> {
+    if let Err(code) = verdict::require_admin(env, now, req).await {
+        return crate::error::problem_response(code);
+    }
+    let url = req.url()?;
+    let pick = |name: &str| {
+        url.query_pairs()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value.into_owned())
+    };
+    let (Some(subject), Some(dimension), Some(window)) = (
+        pick("subject")
+            .as_deref()
+            .and_then(cachet_core::stats_query::QuerySubject::parse),
+        pick("by")
+            .as_deref()
+            .or(Some("outcome"))
+            .and_then(cachet_core::stats_query::QueryDimension::parse),
+        cachet_core::stats_query::QueryWindow::parse(pick("window").as_deref()),
+    ) else {
+        return crate::error::problem_response(ClientError::MalformedQuery);
+    };
+    let query = cachet_core::stats_query::StatsQuery {
+        subject,
+        dimension,
+        window,
+    };
+
+    let Ok(token) = env.secret(STATS_TOKEN_SECRET) else {
+        // A deployment that has not been given the token counts happily
+        // and simply cannot report; that is configuration, not an
+        // outage the caller caused.
+        log::event("warn", "api.stats_token_missing", &[]);
+        return crate::error::problem_response(ClientError::StorageUnavailable);
+    };
+    let Ok(account) = env.var(ACCOUNT_ID_VAR) else {
+        log::event("warn", "api.stats_account_missing", &[]);
+        return crate::error::problem_response(ClientError::StorageUnavailable);
+    };
+    let dataset = env
+        .var(STATS_DATASET_VAR)
+        .map(|value| value.to_string())
+        .unwrap_or_default();
+    if dataset.is_empty() {
+        log::event("warn", "api.stats_dataset_missing", &[]);
+        return crate::error::problem_response(ClientError::StorageUnavailable);
+    }
+
+    let rows = match run_stats_sql(
+        &account.to_string(),
+        &token.to_string(),
+        &query.sql(&dataset),
+    )
+    .await
+    {
+        Ok(rows) => rows,
+        Err(code) => return crate::error::problem_response(code),
+    };
+    let body = cachet_api::StatsEvents {
+        subject: pick("subject").unwrap_or_default(),
+        dimension: pick("by").unwrap_or_else(|| "outcome".to_string()),
+        window: pick("window").unwrap_or_else(|| "day".to_string()),
+        rows,
+    };
+    let text = serde_json::to_string(&body).expect("typed bodies serialize");
+    Ok(Response::ok(text)?.with_headers(self_headers()?))
+}
+
+/// Run one composed statement against Cloudflare's SQL API.
+async fn run_stats_sql(
+    account: &str,
+    token: &str,
+    sql: &str,
+) -> std::result::Result<Vec<cachet_api::StatsRow>, ClientError> {
+    let headers = worker::Headers::new();
+    let _ = headers.set("authorization", &format!("Bearer {token}"));
+    let _ = headers.set("content-type", "text/plain");
+    let mut init = worker::RequestInit::new();
+    init.with_method(worker::Method::Post);
+    init.headers.clone_from(&headers);
+    init.with_body(Some(sql.to_string().into()));
+    let request = worker::Request::new_with_init(
+        &format!("https://api.cloudflare.com/client/v4/accounts/{account}/analytics_engine/sql"),
+        &init,
+    )
+    .map_err(|_| ClientError::StorageUnavailable)?;
+    let mut response = worker::Fetch::Request(request)
+        .send()
+        .await
+        .map_err(|_| ClientError::StorageUnavailable)?;
+    if response.status_code() != 200 {
+        // why: the upstream's own words never reach the caller. It
+        // answers about an account, not about this cache, and an admin
+        // reading a chart is not the audience for a Cloudflare error.
+        log::event(
+            "error",
+            "api.stats_query_failed",
+            &[("status", response.status_code().to_string())],
+        );
+        return Err(ClientError::StorageUnavailable);
+    }
+    let answer: SqlAnswer = response
+        .json()
+        .await
+        .map_err(|_| ClientError::StorageUnavailable)?;
+    Ok(answer
+        .data
+        .into_iter()
+        .map(|row| cachet_api::StatsRow {
+            dimension: row.dimension,
+            count: row.count,
+            bytes: row.bytes,
+        })
+        .collect())
+}
+
+/// Cloudflare's SQL answer, only the part this route reads.
+#[derive(serde::Deserialize)]
+struct SqlAnswer {
+    data: Vec<SqlRow>,
+}
+
+/// One row, named by the aliases `stats_query` gives its columns.
+#[derive(serde::Deserialize)]
+struct SqlRow {
+    dimension: String,
+    #[serde(default)]
+    count: f64,
+    #[serde(default)]
+    bytes: f64,
 }
 
 /// `GET /api/self/gc-runs`: one page of run ids, oldest first. Pagination

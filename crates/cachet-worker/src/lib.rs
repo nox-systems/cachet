@@ -16,6 +16,7 @@ mod oauth;
 mod probe;
 mod read;
 mod roots;
+mod stats;
 mod verdict;
 mod write;
 
@@ -132,10 +133,12 @@ async fn fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
             Err(code) => return error::problem_response(code),
         };
         let authorized = authorize_write(&env, now, &req).await;
+        let caller = write_caller(&authorized);
         if let Err(code) = authorized {
             return error::problem_response(code);
         }
-        return write::put_narinfo(&env, req, &hash).await;
+        let answered = write::put_narinfo(&env, req, &hash).await;
+        return count_write(&env, "narinfo", &caller, answered);
     }
 
     if path.starts_with("/nar/") {
@@ -173,6 +176,9 @@ async fn fixed_get_routes(
     if let Some(run_id) = path.strip_prefix("/api/self/gc-runs/") {
         return Some(api::gc_run_read(env, now, req, run_id).await);
     }
+    if path == "/api/self/events" {
+        return Some(api::stats_events(env, now, req).await);
+    }
     if path == "/api/self/stats" {
         return Some(api::stats(env, now, req).await);
     }
@@ -200,10 +206,12 @@ async fn write_routes(
         Err(code) => return error::problem_response(code),
     };
     let authorized = authorize_write(&env, now, &req).await;
+    let caller = write_caller(&authorized);
     if let Err(code) = authorized {
         return error::problem_response(code);
     }
-    match method {
+    let kind = write_kind(&req, &method);
+    let answered = match method {
         Method::Put => {
             match (
                 query_value(&req, "uploadId"),
@@ -240,7 +248,62 @@ async fn write_routes(
             write::abort_multipart(&env, &key, &upload_id).await
         }
         _ => error::problem_response(ClientError::NotFound),
+    };
+    count_write(&env, kind, &caller, answered)
+}
+
+/// What a write was against, for the statistic. Read off the route
+/// rather than the handler, because this is the one place that knows
+/// which branch the request took before it takes it.
+fn write_kind(req: &Request, method: &Method) -> &'static str {
+    match method {
+        Method::Put if query_value(req, "partNumber").is_some() => "part",
+        Method::Put => "nar",
+        Method::Post if query_value(req, "uploadId").is_some() => "complete",
+        Method::Post => "begin",
+        Method::Delete => "abort",
+        _ => "unknown",
     }
+}
+
+/// The caller dimensions a write carries: which run it came from.
+fn write_caller(
+    authorized: &cachet_core::error::Result<cachet_core::auth::OidcIdentity>,
+) -> cachet_core::stats::StatCaller {
+    authorized.as_ref().map_or_else(
+        |_| cachet_core::stats::StatCaller::anonymous(),
+        |identity| cachet_core::stats::StatCaller::ci(&identity.repository, &identity.ref_),
+    )
+}
+
+/// Count one write, and answer exactly what the handler answered.
+///
+/// The outcome is the status rather than the error code, because the
+/// code lives in a body this layer would have to consume to read, and a
+/// rejection rate answers the question either way. A refusal counts: a
+/// deployment refusing every push is the thing an operator most wants a
+/// number for.
+fn count_write(
+    env: &Env,
+    kind: &str,
+    caller: &cachet_core::stats::StatCaller,
+    answered: Result<Response>,
+) -> Result<Response> {
+    let Ok(response) = answered else {
+        return answered;
+    };
+    let status = response.status_code();
+    let outcome = if (200..300).contains(&status) {
+        "stored".to_string()
+    } else {
+        status.to_string()
+    };
+    stats::emit(
+        env,
+        &cachet_core::stats::StatPoint::new(cachet_core::stats::StatEvent::Write, kind, &outcome)
+            .by(caller),
+    );
+    Ok(response)
 }
 
 /// One query parameter, if present.
@@ -292,6 +355,12 @@ async fn read_routes(
             .await
         }
     };
+    // why: the actor is read off the credential that already resolved,
+    // so counting costs nothing and cannot disagree with the decision.
+    let caller = match &authorized {
+        Ok(identity) => stat_caller(identity),
+        Err(_) => cachet_core::stats::StatCaller::anonymous(),
+    };
     if let Err(code) = authorized {
         return Some(error::problem_response(code));
     }
@@ -301,8 +370,26 @@ async fn read_routes(
     };
     Some(match method {
         Method::Head => read::head_object(env, &bucket_key, kind).await,
-        _ => read::serve_object(env, ctx, path, &bucket_key, kind, generation).await,
+        _ => read::serve_object(env, ctx, path, &bucket_key, kind, generation, &caller).await,
     })
+}
+
+/// Which caller class a resolved read identity belongs to.
+///
+/// The identity already knows: the read path told the three credential
+/// shapes apart to resolve it, and carries which one won. Re-deriving it
+/// from a login would be guesswork, and wrong for a workflow run, whose
+/// login is its repository owner rather than a person.
+fn stat_caller(identity: &verdict::ReadIdentity) -> cachet_core::stats::StatCaller {
+    match identity {
+        verdict::ReadIdentity::Session { .. } => cachet_core::stats::StatCaller::browser(),
+        verdict::ReadIdentity::Token { .. } => cachet_core::stats::StatCaller::laptop(),
+        verdict::ReadIdentity::Ci {
+            repository,
+            reference,
+            ..
+        } => cachet_core::stats::StatCaller::ci(repository, reference),
+    }
 }
 
 /// The write-path credential against the request's Authorization header.

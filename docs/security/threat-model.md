@@ -136,6 +136,23 @@ assets can never be replaced after the fact. Proven: the download
 step's verification before extraction; a mismatch fails the install
 step.
 
+**The counter route's Cloudflare token.** The deployment holds an API
+token so an admin can read its own counters, because a worker cannot
+read the dataset it writes to: that is Cloudflare's SQL API, and it
+takes an account credential. Defense, in three parts. The token is
+scoped to reading account analytics and nothing else, so a worker
+compromise yields a view of counts the operator already owns and no
+power over R2, KV, the worker, or DNS. The route is admin-gated like
+every other `/api/self` route. And the caller chooses a question rather
+than composing one: `subject`, `by`, and `window` each parse into a
+closed enum or are refused, and the statement is built from literals and
+enum values, so no caller text reaches SQL that would run with that
+token's authority. The token is optional; a deployment without it counts
+and does not report. Proven: the query builder's tests (a hostile string
+parses into no choice at all), and the counter route's rows in the
+workerd lane covering the anonymous, non-admin, and unoffered-choice
+answers.
+
 **Admin API abuse.** A non-admin org member reads GC reports or stats,
 or an anonymous caller reaches them. Defense: admin routes require a
 resolved identity plus membership in `CACHET_ADMINS`; an org member

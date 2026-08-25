@@ -128,6 +128,30 @@ pub struct ProbeBody {
     pub paths: Vec<String>,
 }
 
+/// One row of a counter answer: a dimension's value and its totals.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct StatsRow {
+    /// The grouped value, empty where the dimension did not apply.
+    pub dimension: String,
+    /// How many things it counts, sample-corrected.
+    pub count: f64,
+    /// Bytes, where the answer is bytes.
+    pub bytes: f64,
+}
+
+/// The `GET /api/self/events` answer: what the chosen question totalled.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct StatsEvents {
+    /// What was counted: `reads`, `writes`, or `probes`.
+    pub subject: String,
+    /// What it was grouped by.
+    pub dimension: String,
+    /// How far back the answer looks.
+    pub window: String,
+    /// The rows, largest first.
+    pub rows: Vec<StatsRow>,
+}
+
 /// The `POST /api/login/exchange` body: what GitHub handed the CLI
 /// alongside the access token. Both are optional because an OAuth App
 /// that has not opted into expiring tokens issues neither, and its
@@ -221,8 +245,9 @@ pub struct ProblemBody {
         routes::gc_runs_list,
         routes::gc_run_get,
         routes::stats_get,
+        routes::stats_events,
     ),
-    components(schemas(PublicConfig, ProjectList, RenewalBody, ProbeBody, ProbeAnswer, ProblemBody, UploadCreated, UploadedPartBody, GcRunList, StatsBody, ReadTokenIssued, LoginExchangeBody))
+    components(schemas(PublicConfig, ProjectList, RenewalBody, ProbeBody, ProbeAnswer, ProblemBody, UploadCreated, UploadedPartBody, GcRunList, StatsBody, ReadTokenIssued, LoginExchangeBody, StatsRow, StatsEvents))
 )]
 pub struct ApiDoc;
 

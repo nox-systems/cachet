@@ -32,7 +32,12 @@ struct MemoEntry {
 
 #[derive(Clone)]
 enum MemoDecision {
-    Member { login: String },
+    /// The identity this credential resolved to, whole. The caller class
+    /// is part of what was decided, and a login alone cannot be turned
+    /// back into one.
+    Member {
+        identity: ReadIdentity,
+    },
     Deny,
 }
 
@@ -92,8 +97,21 @@ fn memo_forget(key: &str) {
 /// The read-time identity: who the request authenticates as, and how.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReadIdentity {
-    /// A validated device-flow GitHub token.
+    /// A person's machine: a credential this deployment issued, or the
+    /// GitHub token behind one.
     Token { login: String },
+    /// A workflow run, holding the OIDC token it also writes with. Its
+    /// own variant because the two answer different questions: a run is
+    /// never an admin, and counting it as a laptop would make every
+    /// read statistic claim people were at their desks.
+    Ci {
+        /// The repository owner the run belongs to.
+        login: String,
+        /// `owner/repo` of the run.
+        repository: String,
+        /// The ref it ran on.
+        reference: String,
+    },
     /// A live browser session. The session id is carried for admin routes
     /// to bind without re-reading it.
     Session { login: String },
@@ -262,7 +280,7 @@ fn memoized_answer(digest_hex: &str, now: UnixMillis) -> Option<Result<ReadIdent
     };
     log::event("info", "auth.memo_hit", &[("kind", kind.to_string())]);
     Some(match decision {
-        MemoDecision::Member { login } => Ok(ReadIdentity::Token { login }),
+        MemoDecision::Member { identity } => Ok(identity),
         MemoDecision::Deny => Err(ClientError::Unauthorized),
     })
 }
@@ -303,17 +321,20 @@ async fn resolve_token(env: &Env, now: UnixMillis, token: &str) -> Result<ReadId
                     .saturating_sub(cachet_core::constants::OIDC_CLOCK_TOLERANCE_MS)
                     .min(now.as_u64() + MEMO_ALLOW_TTL_MS)
             });
+        let read_identity = ReadIdentity::Ci {
+            login: identity.repository_owner,
+            repository: identity.repository,
+            reference: identity.ref_,
+        };
         memo_write(
             &digest_hex,
             MemoDecision::Member {
-                login: identity.repository_owner.clone(),
+                identity: read_identity.clone(),
             },
             memo_expiry,
             now,
         );
-        return Ok(ReadIdentity::Token {
-            login: identity.repository_owner,
-        });
+        return Ok(read_identity);
     }
     let kv = env
         .kv(KV_BINDING)
@@ -325,17 +346,18 @@ async fn resolve_token(env: &Env, now: UnixMillis, token: &str) -> Result<ReadId
     {
         if verdict_fresh(&verdict, now) {
             return if verdict.org_member {
+                let identity = ReadIdentity::Token {
+                    login: verdict.login,
+                };
                 memo_write(
                     &digest_hex,
                     MemoDecision::Member {
-                        login: verdict.login.clone(),
+                        identity: identity.clone(),
                     },
                     now.as_u64() + MEMO_ALLOW_TTL_MS,
                     now,
                 );
-                Ok(ReadIdentity::Token {
-                    login: verdict.login,
-                })
+                Ok(identity)
             } else {
                 memo_write(
                     &digest_hex,
@@ -353,7 +375,9 @@ async fn resolve_token(env: &Env, now: UnixMillis, token: &str) -> Result<ReadId
         memo_write(
             &digest_hex,
             MemoDecision::Member {
-                login: verdict.login.clone(),
+                identity: ReadIdentity::Token {
+                    login: verdict.login.clone(),
+                },
             },
             now.as_u64() + MEMO_ALLOW_TTL_MS,
             now,
@@ -476,7 +500,13 @@ pub(crate) fn admins(env: &Env) -> Vec<String> {
 /// the deployment does not list.
 pub(crate) async fn require_admin(env: &Env, now: UnixMillis, req: &Request) -> Result<String> {
     let identity = authorize_read(env, now, req).await?;
-    let (ReadIdentity::Token { login } | ReadIdentity::Session { login }) = identity;
+    // why: a workflow run is never an admin. The admins list names human
+    // GitHub logins, and a run's login is its repository owner, so an
+    // OIDC credential could otherwise be admitted by an org whose slug
+    // happened to match a listed name.
+    let (ReadIdentity::Token { login } | ReadIdentity::Session { login }) = identity else {
+        return Err(ClientError::ForbiddenAdmin);
+    };
     if admins(env).iter().any(|admin| admin == &login) {
         Ok(login)
     } else {
@@ -524,10 +554,10 @@ async fn resolve_issued_token_memoized(
 ) -> Result<ReadIdentity> {
     let identity = resolve_issued_token(env, now, digest_hex).await;
     match &identity {
-        Ok(ReadIdentity::Token { login }) => memo_write(
+        Ok(identity) => memo_write(
             digest_hex,
             MemoDecision::Member {
-                login: login.clone(),
+                identity: identity.clone(),
             },
             now.as_u64() + MEMO_ALLOW_TTL_MS,
             now,

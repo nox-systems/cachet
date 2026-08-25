@@ -71,6 +71,7 @@ fn the_error_code_table_is_locked() {
         ClientError::OauthStateUnknown,
         ClientError::ForbiddenAdmin,
         ClientError::MalformedProbe,
+        ClientError::MalformedQuery,
     ];
     let body = table
         .iter()
@@ -104,6 +105,7 @@ fn the_error_code_table_is_locked() {
     oauth_state_unknown 401
     forbidden_admin 403
     malformed_probe 400
+    malformed_query 400
  ");
 }
 
