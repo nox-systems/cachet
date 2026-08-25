@@ -257,6 +257,14 @@ async function check(name, fn) {
 // follows, which is what licenses the negative matches after it. A
 // marker that never arrives is the test's own failure, on the clock of
 // the system under test instead of a guessed interval.
+// Wait for one marker to appear, or fail with the stream's tail.
+//
+// This is the lane's only synchronization primitive, and every assertion
+// about what the worker did is built on it the same way: wait for an
+// event the request under test is guaranteed to emit, and only then
+// assert what must NOT have happened. Reading the stream without that
+// wait samples it, because the worker answers the client before wrangler
+// flushes the line, and a sample is not an assertion.
 async function untilEvent(events, marker) {
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
@@ -582,20 +590,27 @@ await scenario(
     await check(
       "an absence is re-read from the bucket every time",
       async () => {
+        // The mirror of the generation-zero scenario below, which proves
+        // a miss IS cached when the generation reads. Each request is
+        // waited for on its own miss before anything is claimed about
+        // it, so the second request's "no edge hit" is a fact about a
+        // request whose log line has already arrived.
         clearEvents();
-        for (const _attempt of [1, 2]) {
-          const res = await fetch(`${base}/${OTHER_NARINFO}`, {
-            headers: READ_AUTH(),
-          });
-          assert.equal(res.status, 404);
-        }
+        const first = await fetch(`${base}/${OTHER_NARINFO}`, {
+          headers: READ_AUTH(),
+        });
+        assert.equal(first.status, 404);
         await untilEvent(events, '"event":"read.miss"');
-        const misses = events().match(/"event":"read\.miss"/g) ?? [];
-        assert.equal(
-          misses.length,
-          2,
-          "with no readable generation there is no key to cache a miss under",
-        );
+
+        clearEvents();
+        const second = await fetch(`${base}/${OTHER_NARINFO}`, {
+          headers: READ_AUTH(),
+        });
+        assert.equal(second.status, 404);
+        // With no readable generation there is no key to cache a miss
+        // under, so the second request cannot be answered by the first.
+        await untilEvent(events, '"event":"read.miss"');
+        assert.doesNotMatch(events(), /"event":"read\.edge_hit"/);
       },
     );
   },
