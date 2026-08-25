@@ -111,7 +111,7 @@ async fn login(vars: Vec<(String, String)>, cache_url: String) -> Result<(), cac
     let sleep = |ms: u64| -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
         Box::pin(tokio::time::sleep(std::time::Duration::from_millis(ms)))
     };
-    let (token, who) =
+    let (grant, who) =
         cachet_cli::login::run_device_flow(&server, &config.oauth_client_id, &sleep, &mut |line| {
             println!("{line}");
         })
@@ -123,7 +123,7 @@ async fn login(vars: Vec<(String, String)>, cache_url: String) -> Result<(), cac
     // not stored, so its eight-hour lifetime never becomes this
     // machine's problem and the cache never holds anything replayable
     // against github.com.
-    let issued = cachet_cli::login::exchange_for_read_token(&client, &url, &token).await?;
+    let issued = cachet_cli::login::exchange_for_read_token(&client, &url, &grant).await?;
     let dir = config::state_dir(&vars)?;
     config::store_login(&dir, &config.host, &url, &issued.token)?;
     println!("cachet: logged in to {} as {}", config.host, issued.login);

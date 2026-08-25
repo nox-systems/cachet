@@ -29,6 +29,13 @@ pub enum PollAnswer {
     Granted {
         /// The OAuth user token.
         token: String,
+        /// The refresh token, when the OAuth App issues expiring
+        /// tokens. Empty otherwise, which is an app whose tokens never
+        /// expire and so never need renewing.
+        refresh_token: String,
+        /// Seconds the access token lasts, zero when it does not
+        /// expire.
+        expires_in_seconds: u64,
     },
     /// The device code lapsed before the user finished.
     Expired,
@@ -106,6 +113,18 @@ pub async fn fetch_public_config(
         .await
         .map_err(|failure| CliError(format!("{url} did not return a public config: {failure}")))
 }
+/// What GitHub hands back when the flow completes: the access token,
+/// and, where the OAuth App issues expiring tokens, what is needed to
+/// renew it without asking the person again.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GithubGrant {
+    /// The access token.
+    pub token: String,
+    /// The refresh token, empty when the app's tokens do not expire.
+    pub refresh_token: String,
+    /// Seconds the access token lasts, zero when it does not expire.
+    pub expires_in_seconds: u64,
+}
 
 /// Drive one flow: emit the instructions, poll until an outcome, and
 /// identify the human at the end. Answers the token and the login it
@@ -120,7 +139,7 @@ pub async fn run_device_flow<D: DeviceServer>(
     client_id: &str,
     sleep_ms: &Sleeper,
     tell: &mut dyn FnMut(&str),
-) -> Result<(String, String), CliError> {
+) -> Result<(GithubGrant, String), CliError> {
     let session = server.start(client_id, DEVICE_SCOPE).await?;
     tell(&format!(
         "cachet: open {} and enter {}",
@@ -129,7 +148,7 @@ pub async fn run_device_flow<D: DeviceServer>(
     let mut interval_ms = session.interval_secs.max(1) * 1000;
     let mut waited_ms = 0_u64;
     let budget_ms = session.expires_in_secs.max(1) * 1000;
-    let token = loop {
+    let grant = loop {
         sleep_ms(interval_ms).await;
         waited_ms += interval_ms;
         if waited_ms > budget_ms {
@@ -141,7 +160,17 @@ pub async fn run_device_flow<D: DeviceServer>(
         match server.poll(client_id, &session.device_code).await? {
             PollAnswer::Pending => {}
             PollAnswer::SlowDown => interval_ms += 5000,
-            PollAnswer::Granted { token } => break token,
+            PollAnswer::Granted {
+                token,
+                refresh_token,
+                expires_in_seconds,
+            } => {
+                break GithubGrant {
+                    token,
+                    refresh_token,
+                    expires_in_seconds,
+                };
+            }
             PollAnswer::Expired => {
                 return Err(CliError(
                     "the device code expired; run `cachet login` again".to_string(),
@@ -159,8 +188,8 @@ pub async fn run_device_flow<D: DeviceServer>(
             }
         }
     };
-    let login = server.whoami(&token).await?;
-    Ok((token, login))
+    let login = server.whoami(&grant.token).await?;
+    Ok((grant, login))
 }
 
 /// The reqwest-backed server, pointed at the real GitHub hosts.
@@ -196,6 +225,12 @@ struct DeviceCodeAnswer {
 #[derive(Debug, serde::Deserialize)]
 struct TokenAnswer {
     access_token: Option<String>,
+    // Present only when the OAuth App issues expiring tokens; GitHub
+    // omits both for an app whose tokens never expire.
+    #[serde(default)]
+    refresh_token: Option<String>,
+    #[serde(default)]
+    expires_in: Option<u64>,
     error: Option<String>,
     error_description: Option<String>,
 }
@@ -268,7 +303,11 @@ impl DeviceServer for GithubLive<'_> {
             CliError(format!("{url} did not return a token answer: {failure}"))
         })?;
         if let Some(token) = parsed.access_token.filter(|t| !t.is_empty()) {
-            return Ok(PollAnswer::Granted { token });
+            return Ok(PollAnswer::Granted {
+                token,
+                refresh_token: parsed.refresh_token.unwrap_or_default(),
+                expires_in_seconds: parsed.expires_in.unwrap_or(0),
+            });
         }
         Ok(match parsed.error.as_deref().unwrap_or("") {
             "authorization_pending" => PollAnswer::Pending,
@@ -326,13 +365,19 @@ impl DeviceServer for GithubLive<'_> {
 pub async fn exchange_for_read_token(
     client: &reqwest::Client,
     cache_url: &str,
-    github_token: &str,
+    grant: &GithubGrant,
 ) -> Result<cachet_api::ReadTokenIssued, CliError> {
     let url = format!("{}/api/login/exchange", cache_url.trim_end_matches('/'));
+    // The refresh token goes with it, so the deployment can renew the
+    // GitHub credential itself and nobody has to log in again when
+    // GitHub's eight hours are up (ADR 0002).
     let response = client
         .post(&url)
-        .bearer_auth(github_token)
-        .header("content-length", "0")
+        .bearer_auth(&grant.token)
+        .json(&cachet_api::LoginExchangeBody {
+            refresh_token: grant.refresh_token.clone(),
+            expires_in_seconds: grant.expires_in_seconds,
+        })
         .send()
         .await
         .map_err(|failure| CliError(format!("could not reach {url}: {failure}")))?;
@@ -451,16 +496,22 @@ mod tests {
             PollAnswer::Pending,
             PollAnswer::Granted {
                 token: "gho_tok".to_string(),
+                refresh_token: "ghr_tok".to_string(),
+                expires_in_seconds: 28_800,
             },
         ]);
         let sleep = no_sleep();
         let mut lines = Vec::new();
-        let (token, login) = run_device_flow(&server, "the-client-id", &sleep, &mut |line| {
+        let (grant, login) = run_device_flow(&server, "the-client-id", &sleep, &mut |line| {
             lines.push(line.to_string());
         })
         .await
         .expect("flow");
-        assert_eq!(token, "gho_tok");
+        assert_eq!(grant.token, "gho_tok");
+        // The renewal half rides along, so the deployment can keep the
+        // GitHub credential fresh without another login.
+        assert_eq!(grant.refresh_token, "ghr_tok");
+        assert_eq!(grant.expires_in_seconds, 28_800);
         assert_eq!(login, "a-user");
         assert_eq!(
             lines,
@@ -474,12 +525,15 @@ mod tests {
             PollAnswer::SlowDown,
             PollAnswer::Granted {
                 token: "gho_tok".to_string(),
+                refresh_token: "ghr_tok".to_string(),
+                expires_in_seconds: 28_800,
             },
         ]);
         let sleep = no_sleep();
-        let (token, _) = run_device_flow(&server, "the-client-id", &sleep, &mut |_| {})
+        let (grant, _) = run_device_flow(&server, "the-client-id", &sleep, &mut |_| {})
             .await
             .expect("flow");
+        let token = grant.token;
         assert_eq!(token, "gho_tok");
 
         let server = fake_server(vec![PollAnswer::Denied {

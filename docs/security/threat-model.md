@@ -63,28 +63,33 @@ die. The bound differs by credential class, and the laptop's is the
 loose one. A CI job's OIDC token expires in minutes and is re-verified
 against GitHub's JWKS every time. A browser session re-checks membership
 through the verdict cache, 600s for an allow and 60s for a deny, so
-revocation at github.com closes at that bound. A laptop holds a token
-this deployment issued, and nothing re-checks GitHub while it is live,
-because after the exchange nothing holds a GitHub credential with which
-to ask (ADR 0002): that access ends when the token expires at thirty
-days, or when an operator deletes its `readtoken/` record, or when the
-holder runs `cachet logout`. Proven: verdict-caching scenario in the
-workerd lane (hit counts on the stub GitHub API), the issued-token
-scenario's expiry and revocation rows, the TTL constants in
+revocation at github.com closes at that bound. A laptop holds a token this
+deployment issued, which is a pointer to a record holding the GitHub
+credential it stands for, so every read re-checks membership through
+that same cache and closes at the same 600s (ADR 0002). Access also ends
+immediately when an operator deletes the `readtoken/` record or the
+holder runs `cachet logout`, and in any case at the record's thirty-day
+outer bound. Proven: verdict-caching scenario in the workerd lane (hit
+counts on the stub GitHub API), the issued-token scenario's
+membership-lapse and revocation rows, the TTL constants in
 cachet-core.
 
 **A stolen copy of the deployment's own state.** An attacker reads the
-KV namespace or an export of it. Defense: the credentials it holds are
-not presentable. An issued read token is stored as its SHA-256 under
-`readtoken/<digest>`, never in the clear, so the digests found there
-authenticate nothing. No GitHub credential is stored at all: the token
-from a device-flow login is used once, at `POST /api/login/exchange`,
-to check membership, and neither the deployment nor the laptop keeps it
-afterwards. Before that exchange existed the laptop's GitHub token rode
-every substitution as an HTTP Basic password, which left the deployment
-holding live, replayable `read:org` tokens for everyone who had ever
-logged in. Proven: the exchange scenario asserts the stored record is a
-digest and that the answer's token never appears in KV.
+KV namespace or an export of it. What they find: read-token records
+keyed by SHA-256, so the issued credentials themselves are not there and
+the digests authenticate nothing; and, inside those records, the GitHub
+tokens the deployment holds so that membership stays checkable. Those
+last are the real prize, and the honest statement is that KV is where
+they live, alongside the browser sessions it already held (ADR 0003).
+The scope is `read:org`, they belong to members of the deployment's own
+organisation, and a deployment whose OAuth App issues non-expiring
+tokens stores no refresh token at all. What changed with the exchange is
+transit rather than storage: the laptop's GitHub token used to ride
+every substitution as an HTTP Basic password, so it was on the wire
+thousands of times a build and in the netrc of every machine. Now it is
+in one place, at rest. Proven: the exchange scenario asserts the stored
+record is keyed by a digest and that the issued token never appears in
+KV.
 
 **Browser session takeover paths.** Replay of the OAuth `state`, reuse
 of an exchanged `code`, cross-site request forgery against session

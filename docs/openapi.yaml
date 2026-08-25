@@ -914,6 +914,24 @@ components:
           items:
             type: string
           description: The run ids in chronological order.
+    LoginExchangeBody:
+      type: object
+      description: |-
+        The `POST /api/login/exchange` body: what GitHub handed the CLI
+        alongside the access token. Both are optional because an OAuth App
+        that has not opted into expiring tokens issues neither, and its
+        access token then needs no renewing.
+      properties:
+        expiresInSeconds:
+          type: integer
+          format: int64
+          description: Seconds the access token lasts, zero when it does not expire.
+          minimum: 0
+        refreshToken:
+          type: string
+          description: |-
+            The refresh token, so the deployment can renew without the
+            person logging in again.
     ProbeAnswer:
       type: object
       description: |-

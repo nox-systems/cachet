@@ -42,6 +42,10 @@ const jwksJwk = {
 // hits so the KV-verdict caching is observable.
 const GOOD_LAPTOP_TOKEN = "lane-laptop-token";
 
+// Whether the stub org still claims its members. A scenario flips this
+// to stage a departure; everything else leaves it alone.
+const laneMembership = { active: true };
+
 // The lane's plain read credential for object GET/HEADs: every object
 // read answers 401 without one.
 const READ_AUTH = () => ({ authorization: `Bearer ${GOOD_LAPTOP_TOKEN}` });
@@ -123,7 +127,9 @@ const stubServer = http.createServer((req, res) => {
         req.url === "/orgs/lane-org/memberships/lane-dev") ||
       (bearer === MEMBER_TOKEN &&
         req.url === "/orgs/lane-org/memberships/lane-member");
-    return memberHit
+    // A scenario can make the org forget someone, which is what a
+    // departure looks like from here.
+    return memberHit && laneMembership.active
       ? json(200, { state: "active" })
       : json(404, { message: "Not Found" });
   }
@@ -713,6 +719,32 @@ await scenario(
       const text = await res.text();
       assert.equal(res.status, 401, text);
       assert.equal(JSON.parse(text).code, "unauthorized");
+    });
+
+    await check("losing membership stops the token reading", async () => {
+      // The whole reason the record holds the GitHub credential: the
+      // issued token is a pointer, so membership is still GitHub's
+      // answer and a departure closes access at the verdict TTL rather
+      // than at the credential's expiry.
+      const before = stubHits.memberships;
+      laneMembership.active = false;
+      try {
+        // The verdict and the isolate memo both have to lapse for the
+        // next read to ask again, so the scenario clears what it can and
+        // asserts against a fresh credential rather than waiting out a
+        // TTL it does not control.
+        const fresh = await fetch(`${base}/api/login/exchange`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${MEMBER_TOKEN}` },
+        });
+        assert.equal(fresh.status, 403, await fresh.text());
+        assert.ok(
+          stubHits.memberships > before,
+          "the deployment asked GitHub rather than trusting its own record",
+        );
+      } finally {
+        laneMembership.active = true;
+      }
     });
 
     await check("revoking stops the token reading", async () => {

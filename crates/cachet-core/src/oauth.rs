@@ -136,10 +136,23 @@ pub fn callback_target(ui_origin: Option<&str>) -> CallbackTarget {
     }
 }
 
+/// The form body that trades a refresh token for a fresh access token.
+///
+/// No client secret: GitHub waives it when the token being refreshed
+/// came from the device flow, which is every credential this path holds.
+#[must_use]
+pub fn refresh_form(client_id: &str, refresh_token: &str) -> String {
+    format!(
+        "client_id={}&grant_type=refresh_token&refresh_token={}",
+        encode_query(client_id),
+        encode_query(refresh_token),
+    )
+}
+
 /// RFC 3986 unreserved pass-through for query values. GitHub matches
 /// redirect_uri by exact string, so the encoding must be minimal,
 /// deterministic, and total: every input encodes, nothing encodes twice.
-fn encode_query(value: &str) -> String {
+pub fn encode_query(value: &str) -> String {
     const UNRESERVED: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
     let mut out = String::with_capacity(value.len());
     for byte in value.as_bytes() {

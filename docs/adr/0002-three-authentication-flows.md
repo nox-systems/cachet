@@ -42,17 +42,29 @@ which is a store of other people's credentials it has no reason to keep.
 2. Laptops authenticate through GitHub's device flow, run by the CLI
    against github.com directly, and then trade the result for a
    credential the deployment issues. `POST /api/login/exchange` takes
-   the GitHub token, checks `/user` and org membership once, and answers
-   an opaque token prefixed `cachet_`. The deployment stores only that
-   token's SHA-256, under `readtoken/<digest>` in KV, against a record
-   naming the login and an expiry. The GitHub token is not stored by
-   either side and never reaches the netrc.
-3. An issued token is accepted for `READ_TOKEN_TTL_MS`, thirty days, and
-   that window is the deployment's revocation control for a laptop.
-   `POST /api/login/revoke` deletes the record and clears the issuing
-   isolate's memo; `cachet logout` calls it. Nothing re-checks GitHub
-   membership while a token is live, because after the exchange nothing
-   holds a GitHub credential with which to ask.
+   the GitHub token and its refresh token, checks `/user` and org
+   membership, and answers an opaque token prefixed `cachet_`. The
+   deployment stores that token's SHA-256, under `readtoken/<digest>` in
+   KV, against a record naming the login and holding the GitHub
+   credentials. The laptop keeps only the issued token, so no GitHub
+   credential ever reaches the netrc or crosses the wire again.
+3. The issued token is a pointer, not a verdict. Every read resolves it
+   to its record and re-checks membership against GitHub through the
+   same verdict cache every other credential uses, 600s for an allow and
+   60s for a deny, so someone who leaves the organisation loses access
+   within that TTL. The GitHub token is consulted only when that cached
+   verdict has lapsed, and only then, if it is near its eight hours, is
+   it renewed from the stored refresh token, which needs no client
+   secret for a device-flow grant. Nobody logs in again for it. The
+   order matters: GitHub rotates a refresh token on use, and nix opens a
+   build with a couple of dozen requests at once, so renewing before
+   checking the verdict would have had them all race and all but one
+   present a spent token. A request that loses that race anyway re-reads
+   the record and uses what the winner wrote.
+   `READ_TOKEN_TTL_MS`, thirty days, is the outer bound that stops an
+   unused credential living forever. `POST /api/login/revoke` deletes
+   the record and clears the issuing isolate's memo; `cachet logout`
+   calls it.
 4. Browsers use the OAuth code flow against the same worker:
    `/_auth/login` stores a one-shot state record, `/_auth/callback`
    exchanges the code server-side, checks org membership, and sets an
@@ -69,23 +81,27 @@ which is a store of other people's credentials it has no reason to keep.
 
 ## Consequences
 
-Each credential is personal and revocable one holder at a time. A laptop
-logs in once a month rather than once a shift, and a machine that sat
-closed for a fortnight opens working. The deployment holds no GitHub
-credentials: the worst a stolen KV export yields is a set of SHA-256
-digests, which cannot be presented anywhere. Reads get cheaper as a side
-effect, because an issued token resolves against one KV record instead
-of two GitHub API calls.
+Each credential is personal and revocable one holder at a time, and all
+three classes now die with their holder's GitHub standing at the same
+bound: one verdict TTL. A laptop that sat closed for a fortnight opens
+working, because the renewal that GitHub's eight-hour token needs
+happens on the deployment's side of the wire.
 
-The revocation window for a laptop widens from one verdict TTL to the
-issued token's lifetime. Someone who leaves the org keeps read access to
-the cache until their token expires or an operator deletes its record.
-That is the price of a credential the daemon can carry, and it is
-written down here rather than discovered: thirty days is the number, and
-an operator who wants sooner deletes the record. It does not apply to
-the other two classes, whose credentials still die with their GitHub
-standing: an OIDC token expires in minutes, and a browser session
-re-checks membership against the verdict cache's 600 seconds.
+Nothing replayable crosses the wire. What the daemon sends a thousand
+times a build authenticates against this deployment and nowhere else,
+and a copy of it is useless anywhere but here.
+
+The trade is where the GitHub credentials rest. They are in the
+deployment's KV rather than on the laptop and in every request: one
+place, at rest, under the deployment's own control, alongside the
+browser sessions KV already holds (ADR 0003). That is a store worth
+naming, and it buys both the revocation window and the absence of
+credentials in transit. An operator who would rather hold nothing can
+run an OAuth App whose tokens do not expire, in which case no refresh
+token exists to store.
+
+A read costs one KV read for the record plus the verdict lookup, which
+the isolate memo answers for free on a warm isolate.
 
 ## Alternatives considered
 
@@ -95,13 +111,18 @@ a refresh only happens when the person runs a cachet command, which
 means the credential is stale exactly when they have not been using it
 and the failure is a silent fall back to building from source.
 
-**Issue the token but keep re-checking membership.** Rejected as
-unbuildable rather than undesirable: re-checking needs a GitHub
-credential for that user, so keeping the ability means keeping the
-token, which is the thing being removed. An org-installed GitHub App
-could list members without one, but that replaces the OAuth App every
-deployment already creates and is a larger change than the window it
-narrows.
+**Issue the token and keep nothing, accepting a thirty-day revocation
+window.** Rejected: shipped briefly and withdrawn. A month of access
+after someone leaves is not a window an operator can be asked to accept,
+and the reasoning that led there confused "the laptop must not hold a
+GitHub credential" with "nobody may". Holding it server-side satisfies
+the first and keeps membership checkable.
+
+**A revocation denylist rebuilt on a schedule.** Rejected: it answers
+the wrong question. Checking whether a token was revoked at github.com
+is not checking whether its holder is still in the organisation, and
+those come apart exactly when it matters, because leaving an org does
+not revoke a personal access token.
 
 **A shared token** (the old design): fails per-person revocation;
 rejected. **Fine-grained PATs distributed by the operator**: same
