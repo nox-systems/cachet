@@ -1,0 +1,44 @@
+{
+  "cli_version": "0.10.2",
+  "checkpoint_id": "01M0VWG48YQ2GWTSS3JRDM7SYA",
+  "strategy": "manual-commit",
+  "branch": "fix/everything-we-found",
+  "checkpoints_count": 4,
+  "files_touched": [
+    "Cargo.lock",
+    "README.md",
+    "crates/cachet-api/src/lib.rs",
+    "crates/cachet-api/src/routes.rs",
+    "crates/cachet-cli/Cargo.toml",
+    "crates/cachet-cli/src/config.rs",
+    "crates/cachet-cli/src/doctor.rs",
+    "crates/cachet-cli/src/login.rs",
+    "crates/cachet-cli/src/main.rs",
+    "crates/cachet-core/src/constants.rs",
+    "crates/cachet-core/src/lib.rs",
+    "crates/cachet-core/src/read_token.rs",
+    "crates/cachet-worker/src/api.rs",
+    "crates/cachet-worker/src/lib.rs",
+    "crates/cachet-worker/src/verdict.rs",
+    "docs/adr/0002-three-authentication-flows.md",
+    "docs/openapi.yaml",
+    "docs/security/threat-model.md",
+    "workerd/check.mjs"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 108,
+    "cache_creation_tokens": 59167,
+    "cache_read_tokens": 42641466,
+    "output_tokens": 38839,
+    "api_call_count": 54
+  }
+}
