@@ -65,26 +65,27 @@ module_name_repetitions = "allow"
 # bug class, not on every function by default.
 must_use_candidate = "allow"
 
-# The worker's profile, because worker-build compiles the wasm in release
-# and the stock release settings leave cross-crate inlining off. The hot
-# path is SHA-256 over every uploaded byte and a zstd decode over every
-# decompressed one, both of which live in other crates; fat LTO and a
-# single codegen unit let those inline into the streaming loop, and
-# aborting on panic drops unwinding tables from a bundle that has no
-# unwinder. Together with wasm SIMD (.cargo/config.toml) this takes the
-# bundle from 1,368,413 bytes to 1,252,428.
-[profile.release]
+# The worker bundle's own profile, named so it reaches nothing else
+# (`just wasm` passes `--profile worker`). The stock release settings
+# leave cross-crate inlining off, and the worker's hot path is SHA-256
+# over every uploaded byte and a zstd decode over every decompressed one,
+# both of which live in other crates: fat LTO and a single codegen unit
+# let those inline into the streaming loop, and aborting on panic drops
+# unwinding tables from a bundle that has no unwinder. Together with wasm
+# SIMD (.cargo/config.toml) this takes the bundle from 1,368,413 bytes to
+# 1,252,428.
+#
+# why: its own profile rather than release. Every test lane builds with
+# `--release`, so tuning that profile for one wasm artifact spent about
+# three and a half minutes of extra compilation per lane to shrink
+# something no lane builds.
+[profile.worker]
+inherits = "release"
 lto = "fat"
 codegen-units = 1
 panic = "abort"
 
-# The profile that 'dist' will build with. It inherits release, so the
-# settings above would otherwise follow the shipped CLI binaries: the two
-# restated here are the ones that would change what those binaries do or
-# how long a release takes to build, and neither buys a command-line tool
-# anything. A panicking CLI should unwind and report, not abort.
+# The profile that 'dist' will build with
 [profile.dist]
 inherits = "release"
 lto = "thin"
-codegen-units = 16
-panic = "unwind"
