@@ -136,7 +136,27 @@ deploy stage:
     if [ ! -t 0 ]; then
         approve=(--yes)
     fi
-    bun run deploy --stage "{{ stage }}" "${approve[@]}"
+    # why: the output is inspected, not just the exit status. alchemy
+    # answers its own refusal with a zero exit, so a deploy that printed
+    # its plan and applied none of it reported success: staging went green
+    # for days while running whatever it had before, and the integration
+    # lane behind it tested that stale worker and passed. A deploy that
+    # deploys nothing has to be red.
+    log="$(mktemp)"
+    trap 'rm -f "${log}"' EXIT
+    set +e
+    bun run deploy --stage "{{ stage }}" "${approve[@]}" 2>&1 | tee "${log}"
+    status=${PIPESTATUS[0]}
+    set -e
+    if [ "${status}" -ne 0 ]; then
+        exit "${status}"
+    fi
+    if grep -q "Non-interactive terminal detected" "${log}"; then
+        echo "cachet: alchemy printed its plan and applied none of it." >&2
+        echo "  The deployment is unchanged. Nothing here can answer its prompt," >&2
+        echo "  so this run cannot deploy; it must not report that it did." >&2
+        exit 1
+    fi
 
 # tear one stage down; alchemy confirms before deleting anything
 destroy stage:
