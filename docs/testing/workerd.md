@@ -53,7 +53,13 @@ decision memo, proven by deleting the KV verdict between reads and
 watching the repeat in both directions answer with no GitHub API hit and
 an `auth.memo_hit` event; lease renewal bound to the token's own claims with
 forbidden_ref and forbidden_project refusals; the project listing; the
-public config document; and the browser login flow, from the login
+public config document; the bulk probe (`POST /api/probe`): the sorted,
+deduplicated held-subset answer derived from the bucket enumeration
+itself, with NAR and lease objects proven never to leak in, the answer
+answering equally for laptop and OIDC credentials, and its rejection
+rows (unauthorized, forbidden_org, malformed_probe from bad JSON, bad
+hashes, and over-cap entry lists, and the byte cap's body_too_large);
+and the browser login flow, from the login
 redirect's exact parameters through state consumption (a replayed state
 never reaches the exchange), the outsider's forbidden_org refusal, the
 session cookie's attributes, and logout's session deletion. The served

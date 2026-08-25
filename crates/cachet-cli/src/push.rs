@@ -22,8 +22,6 @@ pub struct PushEnv {
     pub project: String,
     /// Whitespace-split flake installables.
     pub installables: Vec<String>,
-    /// The upstream filter target.
-    pub upstream_url: String,
     /// GITHUB_REF == CACHET_DEFAULT_BRANCH_REF, both nonempty.
     pub is_default_branch: bool,
     /// RUNNER_TEMP, where the snapshot between main and post lives.
@@ -41,8 +39,6 @@ pub enum EnvResolution {
     Missing(Vec<String>),
 }
 
-/// The default upstream filter, when the job does not say.
-const UPSTREAM_DEFAULT: &str = "https://cache.nixos.org";
 /// The default renewal ref, when the job does not say.
 const DEFAULT_BRANCH_REF: &str = "refs/heads/main";
 
@@ -74,7 +70,6 @@ pub fn resolve_env(vars: &[(String, String)]) -> EnvResolution {
     let (Some(cache_url), Some(audience), Some(project)) = (cache_url, audience, project) else {
         return EnvResolution::Missing(missing);
     };
-    let upstream_url = value("CACHET_UPSTREAM_URL").unwrap_or_else(|| UPSTREAM_DEFAULT.to_string());
     let default_ref =
         value("CACHET_DEFAULT_BRANCH_REF").unwrap_or_else(|| DEFAULT_BRANCH_REF.to_string());
     let github_ref = value("GITHUB_REF");
@@ -91,7 +86,6 @@ pub fn resolve_env(vars: &[(String, String)]) -> EnvResolution {
         audience,
         project,
         installables,
-        upstream_url,
         is_default_branch,
         runner_temp,
     })
@@ -121,21 +115,18 @@ pub fn render_event(event: &PushEvent) -> String {
         PushEvent::InstallableUnresolved { installable } => {
             format!("cachet: could not resolve {installable}; it will not be a lease root")
         }
-        PushEvent::UpstreamTally {
-            to_push,
-            upstream_hits,
-            probe_failures,
-        } => tally_line(
-            &format!("{to_push} not upstream, {upstream_hits} already upstream"),
-            *probe_failures,
-        ),
+        PushEvent::ProbeBulkFailed { message } => {
+            format!(
+                "cachet: the presence probe failed, so every candidate pushes as absent: {message}"
+            )
+        }
         PushEvent::CacheTally {
             to_upload,
             cache_hits,
-            probe_failures,
+            unparseable_paths,
         } => tally_line(
             &format!("{to_upload} new to cachet, {cache_hits} already cached"),
-            *probe_failures,
+            *unparseable_paths,
         ),
         PushEvent::UploadedObjects { count } => format!("cachet: uploaded {count} objects"),
         PushEvent::LeaseSkippedNotDefaultBranch => {
@@ -145,11 +136,11 @@ pub fn render_event(event: &PushEvent) -> String {
     }
 }
 
-fn tally_line(base: &str, probe_failures: usize) -> String {
-    if probe_failures == 0 {
+fn tally_line(base: &str, unparseable_paths: usize) -> String {
+    if unparseable_paths == 0 {
         format!("cachet: {base}")
     } else {
-        format!("cachet: {base}, {probe_failures} probes failed (kept)")
+        format!("cachet: {base}, {unparseable_paths} unparseable (kept)")
     }
 }
 
@@ -243,7 +234,6 @@ async fn run_pipeline_inner(
         audience: env.audience,
         project: env.project,
         installables: env.installables,
-        upstream_url: env.upstream_url,
         is_default_branch: env.is_default_branch,
     };
     let mut sink = |event: PushEvent| tell(&render_event(&event));
@@ -290,7 +280,6 @@ mod tests {
         ]));
         match resolved {
             EnvResolution::Ready(env) => {
-                assert_eq!(env.upstream_url, UPSTREAM_DEFAULT);
                 assert!(env.is_default_branch, "main matches the default ref");
                 assert_eq!(env.installables, vec![".#a", ".#b", ".#c"]);
             }
@@ -335,20 +324,18 @@ mod tests {
             "cachet: the job added nothing to the store"
         );
         assert_eq!(
-            render_event(&PushEvent::UpstreamTally {
-                to_push: 4,
-                upstream_hits: 9,
-                probe_failures: 0,
-            }),
-            "cachet: 4 not upstream, 9 already upstream"
-        );
-        assert_eq!(
             render_event(&PushEvent::CacheTally {
                 to_upload: 3,
                 cache_hits: 1,
-                probe_failures: 2,
+                unparseable_paths: 2,
             }),
-            "cachet: 3 new to cachet, 1 already cached, 2 probes failed (kept)"
+            "cachet: 3 new to cachet, 1 already cached, 2 unparseable (kept)"
+        );
+        assert_eq!(
+            render_event(&PushEvent::ProbeBulkFailed {
+                message: "connection reset".to_string(),
+            }),
+            "cachet: the presence probe failed, so every candidate pushes as absent: connection reset"
         );
         assert_eq!(
             render_event(&PushEvent::UploadedObjects { count: 7 }),

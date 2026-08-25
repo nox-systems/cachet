@@ -1651,6 +1651,117 @@ await scenario(
   },
 );
 
+// The bulk probe: one authorized POST answers presence for a run's whole
+// candidate set, derived from a bucket enumeration (delimiter-collapsed,
+// suffix-filtered), so the answer is bucket truth the same way the
+// collector's inventory is. The wire facts below: the answer is the held
+// subset sorted and deduplicated, a NAR object never leaks into it, and
+// the rejection rows complete the malformed_probe coverage the error
+// table demands.
+await scenario(
+  "the bulk probe answers presence from the bucket",
+  async () => [
+    [`${"q".repeat(32)}.narinfo`, "the probe never reads this body\n"],
+    [`${"z".repeat(32)}.narinfo`, "nor this one\n"],
+    [`nar/${"n".repeat(52)}.nar.zst`, "a NAR is not a narinfo\n"],
+    ["roots/lane-org-lane-repo", "a lease is not a narinfo\n"],
+  ],
+  async ({ base }) => {
+    const post = (body, headers = READ_AUTH()) =>
+      fetch(`${base}/api/probe`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...headers },
+        body,
+      });
+
+    await check(
+      "the answer is the held subset, sorted and unique",
+      async () => {
+        const res = await post(
+          JSON.stringify({
+            paths: [
+              "z".repeat(32),
+              "0".repeat(32),
+              "q".repeat(32),
+              "q".repeat(32),
+            ],
+          }),
+        );
+        const answer = await res.json();
+        assert.equal(res.status, 200, JSON.stringify(answer));
+        assert.equal(res.headers.get("cache-control"), "no-store");
+        assert.deepEqual(answer, {
+          present: ["q".repeat(32), "z".repeat(32)],
+        });
+      },
+    );
+
+    await check(
+      "an OIDC token answers reads, so it answers the probe",
+      async () => {
+        const res = await post(JSON.stringify({ paths: ["q".repeat(32)] }), {
+          authorization: `Bearer ${mint()}`,
+        });
+        const answer = await res.json();
+        assert.equal(res.status, 200, JSON.stringify(answer));
+        assert.deepEqual(answer, { present: ["q".repeat(32)] });
+      },
+    );
+
+    await check("a probe without a credential is 401", async () => {
+      const res = await fetch(`${base}/api/probe`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ paths: [] }),
+      });
+      assert.equal(res.status, 401);
+      assert.equal((await res.json()).code, "unauthorized");
+    });
+
+    await check("an outsider's OIDC token is 403 forbidden_org", async () => {
+      const res = await post(JSON.stringify({ paths: [] }), {
+        authorization: `Bearer ${mint({ repository_owner: "not-lane-org" })}`,
+      });
+      assert.equal(res.status, 403);
+      assert.equal((await res.json()).code, "forbidden_org");
+    });
+
+    await check("an unparseable body is 400 malformed_probe", async () => {
+      const res = await post("this is not json");
+      assert.equal(res.status, 400);
+      assert.equal((await res.json()).code, "malformed_probe");
+    });
+
+    await check(
+      "a hash outside the grammar is 400 malformed_probe",
+      async () => {
+        const res = await post(JSON.stringify({ paths: ["not-a-hash"] }));
+        assert.equal(res.status, 400);
+        assert.equal((await res.json()).code, "malformed_probe");
+      },
+    );
+
+    await check(
+      "an entry list over the cap is 400 malformed_probe",
+      async () => {
+        const res = await post(
+          JSON.stringify({ paths: Array(16_385).fill("a".repeat(32)) }),
+        );
+        assert.equal(res.status, 400);
+        assert.equal((await res.json()).code, "malformed_probe");
+      },
+    );
+
+    await check("a body over the byte cap is 413 body_too_large", async () => {
+      const res = await post(
+        JSON.stringify({ paths: ["a".repeat(1_100_000)] }),
+      );
+      assert.equal(res.status, 413);
+      assert.equal((await res.json()).code, "body_too_large");
+    });
+  },
+);
+
 // The write path's other half is the CLI itself (crates/cachet-push): its
 // unit fakes answer over a scripted wire, so this scenario runs the real
 // pipeline — real nix-store, real staging tree, real token mints against

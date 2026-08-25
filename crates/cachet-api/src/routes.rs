@@ -6,8 +6,8 @@
 //! the worker would not answer fails review in the workerd lane first.
 
 use crate::{
-    GcRunList, ProblemBody, ProjectList, PublicConfig, RenewalBody, StatsBody, UploadCreated,
-    UploadedPartBody,
+    GcRunList, ProbeAnswer, ProbeBody, ProblemBody, ProjectList, PublicConfig, RenewalBody,
+    StatsBody, UploadCreated, UploadedPartBody,
 };
 
 /// `GET /nix-cache-info`: the nix handshake. Immutable per deployment
@@ -148,6 +148,32 @@ pub fn public_config_get() {}
     )
 )]
 pub fn openapi_get() {}
+
+/// `POST /api/probe`: which of the named store-path hashes the cache
+/// holds. One authorized request per run replaces the per-path narinfo
+/// HEADs a push would otherwise price one round trip at a time; the
+/// worker answers from a bucket enumeration, so the answer is bucket
+/// truth rather than a secondary index's claim. Requires a read
+/// credential.
+#[utoipa::path(
+    post,
+    path = "/api/probe",
+    request_body(
+        description = "The store-path hashes to ask about, capped at the push pipeline's closure cap",
+        content_type = "application/json",
+        content = ProbeBody,
+    ),
+    responses(
+        (status = 200, description = "The hashes with a narinfo stored, ascending", body = ProbeAnswer),
+        (status = 400, description = "problem+json; code=malformed_probe", body = ProblemBody, content_type = "application/problem+json"),
+        (status = 401, description = "problem+json; code=unauthorized", body = ProblemBody, content_type = "application/problem+json"),
+        (status = 403, description = "problem+json; code=forbidden_org", body = ProblemBody, content_type = "application/problem+json"),
+        (status = 411, description = "problem+json; code=length_required", body = ProblemBody, content_type = "application/problem+json"),
+        (status = 413, description = "problem+json; code=body_too_large", body = ProblemBody, content_type = "application/problem+json"),
+        (status = 503, description = "problem+json; code=auth_unavailable or storage_unavailable", body = ProblemBody, content_type = "application/problem+json"),
+    )
+)]
+pub fn probe_post() {}
 
 /// `GET /roots`: the projects holding leases. Requires a read credential.
 #[utoipa::path(

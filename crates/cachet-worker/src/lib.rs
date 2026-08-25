@@ -13,6 +13,7 @@ mod error;
 mod gc;
 mod log;
 mod oauth;
+mod probe;
 mod read;
 mod roots;
 mod verdict;
@@ -89,6 +90,10 @@ async fn fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
 
     if path == "/logout" && method == Method::Post {
         return oauth::logout(&env, &req).await;
+    }
+
+    if path == "/api/probe" && method == Method::Post {
+        return probe::answer_probe(&env, now, req).await;
     }
 
     if path.ends_with(NARINFO_KEY_SUFFIX) && method == Method::Put {

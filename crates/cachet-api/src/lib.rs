@@ -119,6 +119,24 @@ pub struct StatsBody {
     pub finished_at_ms: u64,
 }
 
+/// The `POST /api/probe` body: the store-path hashes one run asks about,
+/// as 32-character nix base32. One authorized answer per run replaces
+/// per-path narinfo HEADs.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct ProbeBody {
+    /// The store-path hash halves, without names or the store directory.
+    pub paths: Vec<String>,
+}
+
+/// The `POST /api/probe` answer: the hashes with a narinfo stored,
+/// ascending. A narinfo present implies its NAR (never-dangle), so one
+/// list is the whole answer.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct ProbeAnswer {
+    /// The hashes the bucket holds, sorted.
+    pub present: Vec<String>,
+}
+
 /// The RFC 9457 problem document every non-2xx answer carries. Described
 /// here rather than serialized from it: the worker emits cachet-core's
 /// problem writer, whose byte shape is golden-locked, and this type is
@@ -155,6 +173,7 @@ pub struct ProblemBody {
         routes::nar_head,
         routes::public_config_get,
         routes::openapi_get,
+        routes::probe_post,
         routes::projects_list,
         routes::lease_get,
         routes::lease_renew,
@@ -171,7 +190,7 @@ pub struct ProblemBody {
         routes::gc_run_get,
         routes::stats_get,
     ),
-    components(schemas(PublicConfig, ProjectList, RenewalBody, ProblemBody, UploadCreated, UploadedPartBody, GcRunList, StatsBody))
+    components(schemas(PublicConfig, ProjectList, RenewalBody, ProbeBody, ProbeAnswer, ProblemBody, UploadCreated, UploadedPartBody, GcRunList, StatsBody))
 )]
 pub struct ApiDoc;
 

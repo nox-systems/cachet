@@ -136,14 +136,6 @@ struct FakeHttp {
 }
 
 impl FakeHttp {
-    fn head(&self, url: &str, status: u16) {
-        self.head_answers
-            .lock()
-            .expect("answers")
-            .entry(url.to_string())
-            .or_default()
-            .push_back(status);
-    }
     fn post(&self, url: &str, status: u16, body: &str) {
         self.post_answers
             .lock()
@@ -168,6 +160,16 @@ impl FakeHttp {
     }
     fn fail_put(&self, url: &str, message: &str) {
         self.put_answers
+            .lock()
+            .expect("answers")
+            .entry(url.to_string())
+            .or_default()
+            .push_back(Err(PushError::Detail {
+                message: message.to_string(),
+            }));
+    }
+    fn fail_post(&self, url: &str, message: &str) {
+        self.post_answers
             .lock()
             .expect("answers")
             .entry(url.to_string())
@@ -303,10 +305,24 @@ const ROOTED: &str = "/nix/store/rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr-leafroot";
 /// The fixture narinfo's key: the built path's hash half names it.
 const NARINFO_KEY: &str = "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq.narinfo";
 
-/// Both presence probes miss for the fixture narinfo.
-fn stub_probes_miss(http: &FakeHttp) {
-    http.head(&format!("https://upstream.test/{NARINFO_KEY}"), 404);
-    http.head(&format!("https://cachet.test/{NARINFO_KEY}"), 404);
+/// The bulk probe's answer: one scripted POST body naming the held hash
+/// halves, replacing the per-path HEAD scripts of the old two-pass world.
+fn stub_probe(http: &FakeHttp, present: &[&str]) {
+    let hashes = present
+        .iter()
+        .map(|hash| format!("\"{hash}\""))
+        .collect::<Vec<_>>()
+        .join(",");
+    http.post(
+        "https://cachet.test/api/probe",
+        200,
+        &format!("{{\"present\":[{hashes}]}}"),
+    );
+}
+
+/// The bulk probe answers an empty bucket.
+fn stub_probe_absent(http: &FakeHttp) {
+    stub_probe(http, &[]);
 }
 
 /// The scripted survivor's own narinfo body: parseable and naming the
@@ -382,7 +398,6 @@ fn inputs(is_default_branch: bool) -> PushInputs {
         audience: "cachet-test".to_string(),
         project: "lane-org-lane-repo".to_string(),
         installables: vec![".#leafroot".to_string()],
-        upstream_url: "https://upstream.test".to_string(),
         is_default_branch,
     }
 }
@@ -403,21 +418,10 @@ async fn the_happy_path_uploads_and_renews_in_order() {
         &nar_key,
         vec![b'y'; 2_000],
     );
-    // Root kept unprobed upstream and cached at cachet; BUILT absent
-    // upstream AND absent at cachet.
+    // The root is held; BUILT is absent. One bulk answer carries both
+    // verdicts.
     let http = FakeHttp::default();
-    http.head(
-        "https://upstream.test/qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq.narinfo",
-        404,
-    );
-    http.head(
-        "https://cachet.test/qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq.narinfo",
-        404,
-    );
-    http.head(
-        "https://cachet.test/rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr.narinfo",
-        200,
-    );
+    stub_probe(&http, &["rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr"]);
     http.put(
         &format!("https://cachet.test/nar/{}.nar.zst", "n".repeat(52)),
         204,
@@ -488,6 +492,40 @@ async fn the_happy_path_uploads_and_renews_in_order() {
         events.iter().any(|e| e.starts_with("LeaseRenewed")),
         "{events:?}"
     );
+    assert_one_probe_to_one_place(&calls);
+}
+
+/// The presence question is one bulk request naming both candidates, and
+/// nothing ever leaves for a foreign cache again. Factored out so the
+/// happy path stays under the lint's line budget.
+fn assert_one_probe_to_one_place(calls: &[Call]) {
+    let probes: Vec<&Call> = calls
+        .iter()
+        .filter(|call| call.url == "https://cachet.test/api/probe")
+        .collect();
+    assert_eq!(probes.len(), 1, "exactly one bulk probe: {calls:?}");
+    let probe_body: serde_json::Value =
+        serde_json::from_slice(&probes[0].body).expect("the probe body parses");
+    let asked: Vec<&str> = probe_body["paths"]
+        .as_array()
+        .expect("paths is an array")
+        .iter()
+        .map(|v| v.as_str().expect("a hash"))
+        .collect();
+    assert_eq!(
+        asked,
+        vec![
+            "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+            "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr"
+        ],
+        "the probe names both candidate hashes"
+    );
+    assert!(
+        calls
+            .iter()
+            .all(|call| call.url.starts_with("https://cachet.test/")),
+        "every request goes to cachet and nowhere else: {calls:?}",
+    );
 }
 
 #[tokio::test]
@@ -502,7 +540,7 @@ async fn mints_once_across_a_happy_run() {
         vec![b'y'; 2_000],
     );
     let http = FakeHttp::default();
-    stub_probes_miss(&http);
+    stub_probe_absent(&http);
     http.put(&format!("https://cachet.test/{nar_key}"), 204, "");
     http.put(&format!("https://cachet.test/{NARINFO_KEY}"), 204, "");
     http.post("https://cachet.test/roots/lane-org-lane-repo", 204, "");
@@ -544,7 +582,7 @@ async fn a_401_remints_for_the_next_attempt() {
         vec![b'y'; 2_000],
     );
     let http = FakeHttp::default();
-    stub_probes_miss(&http);
+    stub_probe_absent(&http);
     http.put(&format!("https://cachet.test/{nar_key}"), 204, "");
     http.put(&format!("https://cachet.test/{NARINFO_KEY}"), 401, "");
     http.put(&format!("https://cachet.test/{NARINFO_KEY}"), 204, "");
@@ -628,7 +666,7 @@ async fn closure_inflation_uploads_survivor_pairs_only() {
         (nar_key.clone(), vec![b'z'; 160]),
     ]);
     let http = FakeHttp::default();
-    stub_probes_miss(&http);
+    stub_probe_absent(&http);
     http.put(&format!("https://cachet.test/{nar_key}"), 204, "");
     http.put(&format!("https://cachet.test/{NARINFO_KEY}"), 204, "");
     http.post("https://cachet.test/roots/lane-org-lane-repo", 204, "");
@@ -675,10 +713,7 @@ async fn closure_inflation_uploads_survivor_pairs_only() {
 async fn a_fully_cached_rebuild_renews_without_uploading() {
     let commands = FakeCommands::with_store(&format!("{BUILT}\n"));
     let http = FakeHttp::default();
-    http.head(
-        "https://cachet.test/qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq.narinfo",
-        200,
-    );
+    stub_probe(&http, &["qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"]);
     http.post("https://cachet.test/roots/lane-org-lane-repo", 204, "");
     let tokens = FakeTokens::default();
     let sleep = no_sleep();
@@ -700,12 +735,14 @@ async fn a_fully_cached_rebuild_renews_without_uploading() {
     .expect("answers");
     assert_eq!(outcome.uploaded_objects, 0);
     assert!(outcome.lease_renewed, "a fully-cached rebuild still renews");
-    assert!(
-        !http
-            .calls()
+    let calls = http.calls();
+    assert_eq!(
+        calls
             .iter()
-            .any(|call| call.url.contains("upstream.test")),
-        "a fully-cached rerun never probes upstream",
+            .filter(|call| call.url == "https://cachet.test/api/probe")
+            .count(),
+        1,
+        "the rerun asked its one bulk question: {calls:?}",
     );
 }
 
@@ -726,7 +763,7 @@ async fn the_multipart_quartet_carries_the_contract() {
         .expect("files")
         .insert(NARINFO_KEY.to_string(), narinfo_body.into_bytes());
     let http = FakeHttp::default();
-    stub_probes_miss(&http);
+    stub_probe_absent(&http);
     stub_quartet_ok(&http, &nar_key, 3);
     http.put(&format!("https://cachet.test/{NARINFO_KEY}"), 204, "");
     http.post("https://cachet.test/roots/lane-org-lane-repo", 204, "");
@@ -806,9 +843,7 @@ async fn nars_finish_before_any_narinfo_under_fanout() {
         vec![b'b'; 1_000],
     );
     let http = FakeHttp::default();
-    stub_probes_miss(&http);
-    http.head(&format!("https://cachet.test/{OTHER_KEY}"), 404);
-    http.head(&format!("https://upstream.test/{OTHER_KEY}"), 404);
+    stub_probe_absent(&http);
     http.put(&format!("https://cachet.test/{nar_key}"), 204, "");
     http.put(&format!("https://cachet.test/{other_nar_key}"), 204, "");
     http.put(&format!("https://cachet.test/{NARINFO_KEY}"), 204, "");
@@ -859,6 +894,7 @@ async fn a_failed_nar_wave_blocks_the_next_wave() {
         .collect();
     let commands = FakeCommands::with_store(&format!("{}\n", paths.join("\n")));
     let http = FakeHttp::default();
+    stub_probe_absent(&http);
     for (i, path) in paths.iter().enumerate() {
         let narinfo_key = format!("{i:0>31}p.narinfo");
         let nar_key = format!("nar/{i:0>51}n.nar.zst");
@@ -869,8 +905,6 @@ async fn a_failed_nar_wave_blocks_the_next_wave() {
             &nar_key,
             vec![b'x'; 100],
         );
-        http.head(&format!("https://cachet.test/{narinfo_key}"), 404);
-        http.head(&format!("https://upstream.test/{narinfo_key}"), 404);
         if i == 2 {
             for _ in 0..3 {
                 http.fail_put(&format!("https://cachet.test/{nar_key}"), "boom");
@@ -927,7 +961,7 @@ async fn a_dying_part_aborts_best_effort() {
         .expect("files")
         .insert(NARINFO_KEY.to_string(), narinfo_body.into_bytes());
     let http = FakeHttp::default();
-    stub_probes_miss(&http);
+    stub_probe_absent(&http);
     http.post(
         &format!("https://cachet.test/{nar_key}?uploads"),
         200,
@@ -986,10 +1020,7 @@ async fn a_dying_part_aborts_best_effort() {
 async fn off_the_default_branch_the_lease_sleeps() {
     let commands = FakeCommands::with_store(&format!("{BUILT}\n"));
     let http = FakeHttp::default();
-    http.head(
-        "https://cachet.test/qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq.narinfo",
-        200,
-    );
+    stub_probe(&http, &["qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"]);
     let tokens = FakeTokens::default();
     let sleep = no_sleep();
     let a = Adapters {
@@ -1013,31 +1044,35 @@ async fn off_the_default_branch_the_lease_sleeps() {
         !http.calls().iter().any(|call| call.url.contains("/roots/")),
         "no renewal attempted",
     );
-    assert!(
-        !http
-            .calls()
-            .iter()
-            .any(|call| call.url.contains("upstream.test")),
-        "a fully-cached rerun never probes upstream",
-    );
 }
 
 const OTHER: &str = "/nix/store/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-built-2";
 const OTHER_KEY: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.narinfo";
 
 #[tokio::test]
-async fn upstream_probes_cover_only_cachet_misses() {
-    // BUILT is held by the cachet pass (nothing upstream is asked about
-    // it); OTHER misses at cachet and is priced upstream, where it turns
-    // out covered and drops out of the push set.
+async fn the_probe_answers_the_upload_set() {
+    // BUILT is held, OTHER is absent: one bulk answer decides both fates.
     let commands = FakeCommands::with_store(&format!("{BUILT}\n{OTHER}\n"));
-    let http = FakeHttp::default();
-    http.head(
-        "https://cachet.test/qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq.narinfo",
-        200,
+    let nar_key = format!("nar/{}.nar.zst", "n".repeat(52));
+    let other_nar_key = format!("nar/{}.nar.zst", "m".repeat(52));
+    seed_pair(
+        &commands,
+        NARINFO_KEY,
+        survivor_body(BUILT, &nar_key),
+        &nar_key,
+        vec![b'a'; 1_000],
     );
-    http.head(&format!("https://cachet.test/{OTHER_KEY}"), 404);
-    http.head(&format!("https://upstream.test/{OTHER_KEY}"), 200);
+    seed_pair(
+        &commands,
+        OTHER_KEY,
+        survivor_body(OTHER, &other_nar_key),
+        &other_nar_key,
+        vec![b'b'; 1_000],
+    );
+    let http = FakeHttp::default();
+    stub_probe(&http, &["qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"]);
+    http.put(&format!("https://cachet.test/{other_nar_key}"), 204, "");
+    http.put(&format!("https://cachet.test/{OTHER_KEY}"), 204, "");
     http.post("https://cachet.test/roots/lane-org-lane-repo", 204, "");
     let tokens = FakeTokens::default();
     let sleep = no_sleep();
@@ -1048,11 +1083,9 @@ async fn upstream_probes_cover_only_cachet_misses() {
         sleep: &sleep,
     };
     let (_events, mut sink) = collect_events();
-    let mut no_installables = inputs(true);
-    no_installables.installables.clear();
     let outcome = push(
         &a,
-        &no_installables,
+        &inputs(true),
         "",
         std::path::Path::new("/staging"),
         &mut sink,
@@ -1060,37 +1093,69 @@ async fn upstream_probes_cover_only_cachet_misses() {
     .await
     .expect("answers");
 
-    assert_eq!(outcome.uploaded_objects, 0);
     assert_eq!(outcome.cache_hits, 1);
-    assert_eq!(outcome.upstream_hits, 1);
+    assert_eq!(outcome.uploaded_objects, 2, "exactly OTHER's pair");
     let calls = http.calls();
-    let heads: Vec<&str> = calls
+    let puts: Vec<&str> = calls
         .iter()
-        .filter(|call| call.method == "HEAD")
+        .filter(|call| call.method == "PUT")
         .map(|call| call.url.as_str())
         .collect();
-    assert!(
-        heads
-            .iter()
-            .any(|url| url.starts_with("https://cachet.test/")
-                && url.ends_with(&NARINFO_KEY.to_string())),
-        "BUILT probes at cachet: {heads:?}",
+    assert_eq!(
+        puts,
+        vec![
+            format!("https://cachet.test/{other_nar_key}"),
+            format!("https://cachet.test/{OTHER_KEY}"),
+        ],
+        "the held path's pair never ships: {puts:?}",
     );
-    assert!(
-        !heads
-            .iter()
-            .any(|url| url.starts_with("https://upstream.test/")
-                && url.ends_with(&NARINFO_KEY.to_string())),
-        "BUILT never reaches upstream: {heads:?}",
+}
+
+#[tokio::test]
+async fn a_failed_probe_treats_everything_as_absent() {
+    // The probe dies all three attempts: the run pushes the world anyway,
+    // because re-uploading re-signs identical bytes while a false "held"
+    // would strand clients on a 404. The event says so.
+    let commands = FakeCommands::with_store(&format!("{BUILT}\n"));
+    let nar_key = format!("nar/{}.nar.zst", "n".repeat(52));
+    seed_pair(
+        &commands,
+        NARINFO_KEY,
+        survivor_body(BUILT, &nar_key),
+        &nar_key,
+        vec![b'y'; 2_000],
     );
+    let http = FakeHttp::default();
+    for _ in 0..3 {
+        http.fail_post("https://cachet.test/api/probe", "connection reset");
+    }
+    http.put(&format!("https://cachet.test/{nar_key}"), 204, "");
+    http.put(&format!("https://cachet.test/{NARINFO_KEY}"), 204, "");
+    http.post("https://cachet.test/roots/lane-org-lane-repo", 204, "");
+    let tokens = FakeTokens::default();
+    let sleep = no_sleep();
+    let a = Adapters {
+        commands: &commands,
+        http: &http,
+        tokens: &tokens,
+        sleep: &sleep,
+    };
+    let (event_log, mut sink) = collect_events();
+    let outcome = push(
+        &a,
+        &inputs(true),
+        "",
+        std::path::Path::new("/staging"),
+        &mut sink,
+    )
+    .await
+    .expect("the fallback pushes");
+
+    assert_eq!(outcome.cache_hits, 0);
+    assert_eq!(outcome.uploaded_objects, 2);
+    let events = event_log.lock().expect("events").clone();
     assert!(
-        heads
-            .iter()
-            .any(|url| url == &format!("https://upstream.test/{OTHER_KEY}")),
-        "OTHER answers upstream: {heads:?}",
-    );
-    assert!(
-        !calls.iter().any(|call| call.method == "PUT"),
-        "nothing uploads: {calls:?}",
+        events.iter().any(|e| e.starts_with("ProbeBulkFailed")),
+        "the run names its fallback: {events:?}",
     );
 }
