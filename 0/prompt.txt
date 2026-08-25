@@ -1,0 +1,34 @@
+Crap I merged lmao
+
+---
+
+<task-notification>
+<task-id>bs2znb4e1</task-id>
+<summary>Monitor event: "main CI, staging deploy, and the integration lane"</summary>
+<event>main/ci [32806784160]: failure
+main/deploy [32807225201]: skipped
+main/deploy [32807532234]: skipped</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bm0bfp45w</task-id>
+<summary>Monitor event: "CI checks on PR #19 (worker profile)"</summary>
+<event>deny: pass
+doc-manifest: pass
+fmt: pass
+lane-manifest: pass</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bs2znb4e1</task-id>
+<summary>Monitor event: "main CI, staging deploy, and the integration lane"</summary>
+<event>main/ci [32813959637]: failure
+main/deploy [32814246760]: skipped</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
