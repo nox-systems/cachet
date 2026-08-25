@@ -52,9 +52,15 @@ which is a store of other people's credentials it has no reason to keep.
    to its record and re-checks membership against GitHub through the
    same verdict cache every other credential uses, 600s for an allow and
    60s for a deny, so someone who leaves the organisation loses access
-   within that TTL. When GitHub's access token nears its eight hours the
-   worker renews it from the stored refresh token, which needs no client
-   secret for a device-flow grant, so nobody logs in again for it.
+   within that TTL. The GitHub token is consulted only when that cached
+   verdict has lapsed, and only then, if it is near its eight hours, is
+   it renewed from the stored refresh token, which needs no client
+   secret for a device-flow grant. Nobody logs in again for it. The
+   order matters: GitHub rotates a refresh token on use, and nix opens a
+   build with a couple of dozen requests at once, so renewing before
+   checking the verdict would have had them all race and all but one
+   present a spent token. A request that loses that race anyway re-reads
+   the record and uses what the winner wrote.
    `READ_TOKEN_TTL_MS`, thirty days, is the outer bound that stops an
    unused credential living forever. `POST /api/login/revoke` deletes
    the record and clears the issuing isolate's memo; `cachet logout`
