@@ -28,6 +28,12 @@ cachet doctor
 `setup` edits the daemon's netrc and `/etc/nix/nix.custom.conf` and
 restarts the daemon. `doctor` probes the wiring and prints what holds.
 
+Both nix installs work. On a machine running Determinate Nix, `setup`
+registers the credential the way Determinate's daemon reads it and
+restarts through `determinate-nixd`; on plain nix it writes `netrc-file`
+and restarts through systemd or launchd. It detects which one the machine
+has and names it in its output, so you do not have to know beforehand.
+
 ## For CI
 
 In a workflow of any repo in the served org:
