@@ -1,0 +1,169 @@
+<task-notification>
+<task-id>b19pwkmao</task-id>
+<summary>Monitor event: "CI checks on PR #19 after the flake fix"</summary>
+<event>announce: skipping
+build-global-artifacts: skipping
+build-local-artifacts (${{ join(matrix.targets, ', ') }}): skipping
+host: skipping
+plan: pass</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>b19pwkmao</task-id>
+<summary>Monitor event: "CI checks on PR #19 after the flake fix"</summary>
+<event>actionlint: pass
+deny: pass
+doc-manifest: pass
+fmt: pass
+lane-manifest: pass
+openapi: pass
+scripts: pass</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+merged into main.
+
+---
+
+Let's cut a new release?
+
+---
+
+<task-notification>
+<task-id>b19pwkmao</task-id>
+<summary>Monitor event: "CI checks on PR #19 after the flake fix"</summary>
+<event>unit: pass</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>b19pwkmao</task-id>
+<summary>Monitor event: "CI checks on PR #19 after the flake fix"</summary>
+<event>clippy: pass
+golden: pass
+property: pass
+workerd: pass
+PR19 ALL CHECKS COMPLETE</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>b19pwkmao</task-id>
+<tool-use-id>toolu_014wnXDF44EbnZDbCquJFkCm</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-shivanshvij-Development-nox-cachet/5fc1018a-6e02-430c-8419-8f2100730cb5/tasks/b19pwkmao.output</output-file>
+<status>completed</status>
+<summary>Monitor "CI checks on PR #19 after the flake fix" stream ended</summary>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bs2znb4e1</task-id>
+<summary>Monitor event: "main CI, staging deploy, and the integration lane"</summary>
+<event>main/ci [32814907594]: success</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>b6ncm7rlj</task-id>
+<summary>Monitor event: "the v0.0.7 release build"</summary>
+<event>release[32814138517] perf/worker-profile: completed/success
+release[32814767673] perf/worker-profile: completed/success
+release[32815272485] v0.0.7: in_progress/</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>b6ncm7rlj</task-id>
+<summary>Monitor event: "the v0.0.7 release build"</summary>
+<event>release[32815272485] v0.0.7: queued/</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>b6ncm7rlj</task-id>
+<summary>Monitor event: "the v0.0.7 release build"</summary>
+<event>release[32815272485] v0.0.7: in_progress/</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+Once `v0.0.7` is released, pushed, etc. can we please handle:
+```
+actionlint
+FlakeHub Login failure: The process '/usr/local/bin/determinate-nixd' failed with exit code 1
+deny
+FlakeHub Login failure: The process '/usr/local/bin/determinate-nixd' failed with exit code 1
+lane-manifest
+FlakeHub Login failure: The process '/usr/local/bin/determinate-nixd' failed with exit code 1
+scripts
+FlakeHub Login failure: The process '/usr/local/bin/determinate-nixd' failed with exit code 1
+doc-manifest
+FlakeHub Login failure: The process '/usr/local/bin/determinate-nixd' failed with exit code 1
+openapi
+FlakeHub Login failure: The process '/usr/local/bin/determinate-nixd' failed with exit code 1
+fmt
+FlakeHub Login failure: The process '/usr/local/bin/determinate-nixd' failed with exit code 1
+kani
+FlakeHub Login failure: The process '/usr/local/bin/determinate-nixd' failed with exit code 1
+wasm-hygiene
+FlakeHub Login failure: The process '/usr/local/bin/determinate-nixd' failed with exit code 1
+wasm
+FlakeHub Login failure: The process '/usr/local/bin/determinate-nixd' failed with exit code 1
+workerd
+FlakeHub Login failure: The process '/usr/local/bin/determinate-nixd' failed with exit code 1
+golden
+FlakeHub Login failure: The process '/usr/local/bin/determinate-nixd' failed with exit code 1
+clippy
+FlakeHub Login failure: The process '/usr/local/bin/determinate-nixd' failed with exit code 1
+property
+FlakeHub Login failure: The process '/usr/local/bin/determinate-nixd' failed with exit code 1
+unit
+FlakeHub Login failure: The process '/usr/local/bin/determinate-nixd' failed with exit code 1
+```
+In our GH action (because end users will also see this warning and that sucks)
+
+As well as:
+```error[E0433]: cannot find module or crate `getrandom` in this scope
+  --> crates/cachet-worker/src/gc.rs:99:5
+   |
+99 |     getrandom::getrandom(&mut entropy).expect("getrandom cannot fail on workers");
+   |     ^^^^^^^^^ use of unresolved module or unlinked crate `getrandom`
+   |
+   = help: if you wanted to use a crate named `getrandom`, use `cargo add getrandom` to add it to your `Cargo.toml`
+
+error[E0433]: cannot find module or crate `getrandom` in this scope
+  --> crates/cachet-worker/src/oauth.rs:70:5
+   |
+70 |     getrandom::getrandom(&mut random).expect("getrandom cannot fail on workers");
+   |     ^^^^^^^^^ use of unresolved module or unlinked crate `getrandom`
+   |
+   = help: if you wanted to use a crate named `getrandom`, use `cargo add getrandom` to add it to your `Cargo.toml`
+
+For more information about this error, try `rustc --explain E0433`.
+error: could not compile `cachet-worker` (lib) due to 2 previous errors
+warning: build failed, waiting for other jobs to finish...
+  × failed to find bin cachet for path+file:///home/runner/work/cachet/cachet/crates/cachet-cli#0.0.7
+  help: did the above build fail?
+```
+https://github.com/nox-systems/cachet/actions/runs/32815272485/job/97702260675
+
+---
+
+How does @../../cachet-action do it

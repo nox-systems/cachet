@@ -1,0 +1,33 @@
+{
+  "cli_version": "0.10.2",
+  "checkpoint_id": "01M0VS29VRSNXAFCFM57J0XNK6",
+  "strategy": "manual-commit",
+  "branch": "fix/dist-builds-only-what-it-ships",
+  "checkpoints_count": 12,
+  "files_touched": [
+    "dist-workspace.toml"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 116,
+    "cache_creation_tokens": 62818,
+    "cache_read_tokens": 33750930,
+    "output_tokens": 35337,
+    "api_call_count": 58,
+    "subagent_tokens": {
+      "input_tokens": 118,
+      "cache_creation_tokens": 720841,
+      "cache_read_tokens": 4132904,
+      "output_tokens": 66231,
+      "api_call_count": 59
+    }
+  }
+}
