@@ -1,0 +1,1 @@
+we should name that the cachet cli is compatible with dterminate nix
