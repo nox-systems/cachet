@@ -6,8 +6,8 @@
 //! the worker would not answer fails review in the workerd lane first.
 
 use crate::{
-    GcRunList, ProbeAnswer, ProbeBody, ProblemBody, ProjectList, PublicConfig, RenewalBody,
-    StatsBody, UploadCreated, UploadedPartBody,
+    GcRunList, ProbeAnswer, ProbeBody, ProblemBody, ProjectList, PublicConfig, ReadTokenIssued,
+    RenewalBody, StatsBody, UploadCreated, UploadedPartBody,
 };
 
 /// `GET /nix-cache-info`: the nix handshake. Immutable per deployment
@@ -148,6 +148,38 @@ pub fn public_config_get() {}
     )
 )]
 pub fn openapi_get() {}
+
+/// `POST /api/login/exchange`: trade a GitHub identity for this
+/// deployment's own read credential. The GitHub token is checked for org
+/// membership once, here, and neither side keeps it: what the caller
+/// keeps is the answer's token, which is what the nix daemon carries
+/// afterwards (ADR 0002). The deployment stores only the token's
+/// SHA-256.
+#[utoipa::path(
+    post,
+    path = "/api/login/exchange",
+    responses(
+        (status = 200, description = "The issued credential, its holder, and its expiry", body = ReadTokenIssued, content_type = "application/json"),
+        (status = 401, description = "problem+json; code=unauthorized", body = ProblemBody, content_type = "application/problem+json"),
+        (status = 403, description = "problem+json; code=forbidden_org", body = ProblemBody, content_type = "application/problem+json"),
+        (status = 503, description = "problem+json; code=auth_unavailable", body = ProblemBody, content_type = "application/problem+json"),
+    )
+)]
+pub fn login_exchange() {}
+
+/// `POST /api/login/revoke`: forget the presented credential. The holder
+/// proves they hold it by presenting it, and nobody else can name the
+/// record, because it is keyed by the token's own hash.
+#[utoipa::path(
+    post,
+    path = "/api/login/revoke",
+    responses(
+        (status = 204, description = "Forgotten; the credential no longer authenticates"),
+        (status = 401, description = "problem+json; code=unauthorized", body = ProblemBody, content_type = "application/problem+json"),
+        (status = 503, description = "problem+json; code=auth_unavailable", body = ProblemBody, content_type = "application/problem+json"),
+    )
+)]
+pub fn login_revoke() {}
 
 /// `POST /api/probe`: which of the named store-path hashes the cache
 /// holds. One authorized request per run replaces the per-path narinfo

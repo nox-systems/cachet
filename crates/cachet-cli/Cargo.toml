@@ -45,3 +45,8 @@ getrandom = "0.2"
 # exactly one run; hand-rolled uniqueness is an entropy bug waiting to
 # happen.
 tempfile = "3"
+# why: the deployment answers a credential's expiry in epoch
+# milliseconds, and a person reading it wants a date. Formatting one by
+# hand is calendar arithmetic nobody should write twice, and chrono is
+# already in the tree through the worker.
+chrono = { version = "0.4", default-features = false, features = ["std", "now"] }

@@ -74,6 +74,31 @@ pub const PROBE_BODY_BYTES_MAX: u64 = 1_048_576;
 /// The collector enumerates at most this many project leases per run.
 pub const ROOTS_PROJECTS_MAX: usize = 256;
 
+/// The prefix every read credential this deployment issues carries. It
+/// is what lets the read path tell an issued token from an OIDC token
+/// and from a GitHub token without trying each verifier in turn.
+pub const READ_TOKEN_PREFIX: &str = "cachet_";
+
+/// The body after the prefix: 32 random bytes, base64url without
+/// padding. 256 bits is past guessing, and a fixed length makes the
+/// grammar a length check rather than a parse.
+pub const READ_TOKEN_BODY_LENGTH: usize = 43;
+
+/// Issued read tokens live under this KV prefix, keyed by the token's
+/// SHA-256 so the stored form cannot be presented.
+pub const READ_TOKEN_KEY_PREFIX: &str = "readtoken/";
+
+/// How long an issued read token is accepted.
+///
+/// This is the deployment's revocation window for a laptop, and it
+/// replaces the verdict cache's 600 seconds for that credential class:
+/// nothing re-checks org membership while a token is live, because
+/// nothing holds a GitHub credential with which to ask. Thirty days is
+/// short enough that a departure is not indefinite and long enough that
+/// a laptop shut for a fortnight still works when it opens. Revoking
+/// sooner is deleting the record.
+pub const READ_TOKEN_TTL_MS: u64 = 30 * MILLIS_PER_DAY;
+
 /// An Authorization header longer than this is refused as malformed_auth:
 /// JWTs run a few kilobytes, so 8 KiB is generous room while still a hard
 /// guard in front of the parsers.

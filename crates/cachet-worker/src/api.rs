@@ -79,6 +79,16 @@ fn self_headers() -> worker::Result<worker::Headers> {
     Ok(headers)
 }
 
+/// A JSON body no cache may keep: every credential answer wears this.
+///
+/// # Errors
+///
+/// Propagates a header or body failure as the worker's generic 500.
+pub fn json_no_store<B: serde::Serialize>(body: &B) -> worker::Result<Response> {
+    let text = serde_json::to_string(body).expect("typed bodies serialize");
+    Ok(Response::ok(text)?.with_headers(self_headers()?))
+}
+
 /// `GET /api/self/gc-runs`: one page of run ids, oldest first. Pagination
 /// follows the bucket's own cursor, so a deep history page-turns cheaply.
 pub async fn gc_runs_list(env: &Env, now: UnixMillis, req: &Request) -> worker::Result<Response> {

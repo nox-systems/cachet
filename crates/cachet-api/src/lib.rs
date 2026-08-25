@@ -128,6 +128,19 @@ pub struct ProbeBody {
     pub paths: Vec<String>,
 }
 
+/// The answer to a read-credential exchange: the token the caller keeps,
+/// who it speaks for, and when it stops working.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct ReadTokenIssued {
+    /// The credential. Shown once; the deployment stores only its hash.
+    pub token: String,
+    /// The GitHub login it speaks for.
+    pub login: String,
+    /// When it stops being accepted, epoch milliseconds.
+    #[serde(rename = "expiresAtMs")]
+    pub expires_at_ms: u64,
+}
+
 /// The `POST /api/probe` answer: the hashes with a narinfo stored,
 /// ascending. A narinfo present implies its NAR (never-dangle), so one
 /// list is the whole answer.
@@ -162,7 +175,7 @@ pub struct ProblemBody {
     info(
         title = "cachet",
         version = env!("CARGO_PKG_VERSION"),
-        description = "A self-hostable nix binary cache on Cloudflare Workers. Writes carry GitHub OIDC credentials; reads carry a GitHub token or the browser session cookie; the public handshake route is unauthenticated. Every route that reads a credential can additionally answer 400 with code=malformed_auth when the Authorization header itself is undecodable.",
+        description = "A self-hostable nix binary cache on Cloudflare Workers. Writes carry GitHub OIDC credentials; reads carry a credential this deployment issued, a CI job's OIDC token, or the browser session cookie; the public handshake route is unauthenticated. Every route that reads a credential can additionally answer 400 with code=malformed_auth when the Authorization header itself is undecodable.",
     ),
     paths(
         routes::cache_info_get,
@@ -174,6 +187,8 @@ pub struct ProblemBody {
         routes::public_config_get,
         routes::openapi_get,
         routes::probe_post,
+        routes::login_exchange,
+        routes::login_revoke,
         routes::projects_list,
         routes::lease_get,
         routes::lease_renew,
@@ -190,7 +205,7 @@ pub struct ProblemBody {
         routes::gc_run_get,
         routes::stats_get,
     ),
-    components(schemas(PublicConfig, ProjectList, RenewalBody, ProbeBody, ProbeAnswer, ProblemBody, UploadCreated, UploadedPartBody, GcRunList, StatsBody))
+    components(schemas(PublicConfig, ProjectList, RenewalBody, ProbeBody, ProbeAnswer, ProblemBody, UploadCreated, UploadedPartBody, GcRunList, StatsBody, ReadTokenIssued))
 )]
 pub struct ApiDoc;
 

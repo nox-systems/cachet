@@ -13,7 +13,8 @@ byte-verification habits the rest of this file describes.
 The signing key, held as a Workers secret binding. The bucket's object
 integrity: what a client substitutes must be what CI's build produced.
 The org boundary: nobody outside the configured orgs authenticates for
-anything. The OAuth client secret and browser sessions. The action
+anything. The OAuth client secret, browser sessions, and the read
+credentials the deployment issues to laptops. The action
 users' CI jobs, from cachet's own release artifacts. GC's correctness:
 live paths (leases and their closures) are never swept.
 
@@ -57,12 +58,33 @@ expired, wrong audience, wrong org, cold JWKS answering 503) and the
 claim policy's tests for the rows that need no wire (the unknown-kid
 one-refetch rule, the audience array, mistyped claims).
 
-**Ex-member's token.** A person leaves the org; their laptop's cached
-login should die promptly. Defense: verdicts cache in KV for 600s
-(allow) / 60s (deny); GitHub is the source of truth, cached for at
-most the TTL. Token revocation at github.com closes at the same bound.
-Proven: verdict-caching scenario in the workerd lane (hit counts on
-the stub GitHub API), the TTL constants in cachet-core.
+**Ex-member's token.** A person leaves the org; their access should
+die. The bound differs by credential class, and the laptop's is the
+loose one. A CI job's OIDC token expires in minutes and is re-verified
+against GitHub's JWKS every time. A browser session re-checks membership
+through the verdict cache, 600s for an allow and 60s for a deny, so
+revocation at github.com closes at that bound. A laptop holds a token
+this deployment issued, and nothing re-checks GitHub while it is live,
+because after the exchange nothing holds a GitHub credential with which
+to ask (ADR 0002): that access ends when the token expires at thirty
+days, or when an operator deletes its `readtoken/` record, or when the
+holder runs `cachet logout`. Proven: verdict-caching scenario in the
+workerd lane (hit counts on the stub GitHub API), the issued-token
+scenario's expiry and revocation rows, the TTL constants in
+cachet-core.
+
+**A stolen copy of the deployment's own state.** An attacker reads the
+KV namespace or an export of it. Defense: the credentials it holds are
+not presentable. An issued read token is stored as its SHA-256 under
+`readtoken/<digest>`, never in the clear, so the digests found there
+authenticate nothing. No GitHub credential is stored at all: the token
+from a device-flow login is used once, at `POST /api/login/exchange`,
+to check membership, and neither the deployment nor the laptop keeps it
+afterwards. Before that exchange existed the laptop's GitHub token rode
+every substitution as an HTTP Basic password, which left the deployment
+holding live, replayable `read:org` tokens for everyone who had ever
+logged in. Proven: the exchange scenario asserts the stored record is a
+digest and that the answer's token never appears in KV.
 
 **Browser session takeover paths.** Replay of the OAuth `state`, reuse
 of an exchanged `code`, cross-site request forgery against session

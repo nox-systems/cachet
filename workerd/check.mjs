@@ -617,6 +617,121 @@ await scenario(
 );
 
 await scenario(
+  "a login trades a GitHub identity for the deployment's own credential",
+  async () => {
+    const narinfo = await readFile(path.join(fixturesDir, NARINFO_KEY));
+    return [[NARINFO_KEY, narinfo]];
+  },
+  async ({ base, persist }) => {
+    let issued = null;
+
+    await check("a GitHub identity exchanges for a read token", async () => {
+      const res = await fetch(`${base}/api/login/exchange`, {
+        method: "POST",
+        headers: READ_AUTH(),
+      });
+      const text = await res.text();
+      assert.equal(res.status, 200, text);
+      assert.equal(res.headers.get("cache-control"), "no-store");
+      issued = JSON.parse(text);
+      assert.match(
+        issued.token,
+        /^cachet_[A-Za-z0-9_-]{43}$/,
+        "the grammar the read path tells credential shapes apart by",
+      );
+      assert.equal(issued.login, "lane-dev");
+      assert.ok(issued.expiresAtMs > Date.now(), "it outlives its issue");
+    });
+
+    await check(
+      "the issued token reads, and the GitHub one still does",
+      async () => {
+        // Both work during a migration: a laptop that has not run the new
+        // login yet is not locked out by one that has.
+        for (const headers of [
+          { authorization: `Bearer ${issued.token}` },
+          READ_AUTH(),
+        ]) {
+          const res = await fetch(`${base}/${NARINFO_KEY}`, { headers });
+          assert.equal(res.status, 200, await res.text());
+        }
+      },
+    );
+
+    await check("netrc basic auth carries it too", async () => {
+      // The daemon sends it as an HTTP Basic password, which is the
+      // whole point of issuing it.
+      const basic = Buffer.from(`cachet:${issued.token}`).toString("base64");
+      const res = await fetch(`${base}/${NARINFO_KEY}`, {
+        headers: { authorization: `Basic ${basic}` },
+      });
+      assert.equal(res.status, 200, await res.text());
+    });
+
+    await check("the deployment stores a digest, never the token", async () => {
+      // A reader of the deployment's own state finds nothing they can
+      // present. This is the property the threat model rests on.
+      const dump = spawnSync(
+        "wrangler",
+        [
+          "kv",
+          "key",
+          "list",
+          "--binding",
+          "CACHET_KV",
+          "--local",
+          "--persist-to",
+          persist,
+          "--config",
+          configPath,
+        ],
+        { encoding: "utf8" },
+      );
+      assert.equal(dump.status, 0, dump.stderr);
+      assert.ok(
+        !dump.stdout.includes(issued.token),
+        "the token itself is not a key",
+      );
+      const keys = JSON.parse(dump.stdout).map((entry) => entry.name);
+      const record = keys.find((name) => name.startsWith("readtoken/"));
+      assert.ok(record, `no readtoken record among ${keys.join(", ")}`);
+      assert.match(record, /^readtoken\/[0-9a-f]{64}$/, "keyed by SHA-256");
+    });
+
+    await check("an outsider cannot exchange", async () => {
+      const res = await fetch(`${base}/api/login/exchange`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${OUTSIDER_TOKEN}` },
+      });
+      const text = await res.text();
+      assert.equal(res.status, 403, text);
+      assert.equal(JSON.parse(text).code, "forbidden_org");
+    });
+
+    await check("an anonymous exchange is refused", async () => {
+      const res = await fetch(`${base}/api/login/exchange`, { method: "POST" });
+      const text = await res.text();
+      assert.equal(res.status, 401, text);
+      assert.equal(JSON.parse(text).code, "unauthorized");
+    });
+
+    await check("revoking stops the token reading", async () => {
+      const gone = await fetch(`${base}/api/login/revoke`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${issued.token}` },
+      });
+      assert.equal(gone.status, 204, await gone.text());
+      const after = await fetch(`${base}/${NARINFO_KEY}`, {
+        headers: { authorization: `Bearer ${issued.token}` },
+      });
+      // why: the isolate memo would otherwise keep answering for this
+      // token, which would make a logout the holder can watch fail.
+      assert.equal(after.status, 401, await after.text());
+    });
+  },
+);
+
+await scenario(
   "a fresh bucket runs generation zero",
   async () => [],
   async ({ base, events, clearEvents }) => {

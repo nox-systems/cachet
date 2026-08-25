@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: cachet
-  description: A self-hostable nix binary cache on Cloudflare Workers. Writes carry GitHub OIDC credentials; reads carry a GitHub token or the browser session cookie; the public handshake route is unauthenticated. Every route that reads a credential can additionally answer 400 with code=malformed_auth when the Authorization header itself is undecodable.
+  description: A self-hostable nix binary cache on Cloudflare Workers. Writes carry GitHub OIDC credentials; reads carry a credential this deployment issued, a CI job's OIDC token, or the browser session cookie; the public handshake route is unauthenticated. Every route that reads a credential can additionally answer 400 with code=malformed_auth when the Authorization header itself is undecodable.
   license:
     name: Apache-2.0
     identifier: Apache-2.0
@@ -56,6 +56,67 @@ paths:
       responses:
         '302':
           description: 'Location: the GitHub authorize URL; cache-control no-store'
+        '503':
+          description: problem+json; code=auth_unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+  /api/login/exchange:
+    post:
+      tags:
+      - routes
+      summary: |-
+        `POST /api/login/exchange`: trade a GitHub identity for this
+        deployment's own read credential. The GitHub token is checked for org
+        membership once, here, and neither side keeps it: what the caller
+        keeps is the answer's token, which is what the nix daemon carries
+        afterwards (ADR 0002). The deployment stores only the token's
+        SHA-256.
+      operationId: login_exchange
+      responses:
+        '200':
+          description: The issued credential, its holder, and its expiry
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadTokenIssued'
+        '401':
+          description: problem+json; code=unauthorized
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '403':
+          description: problem+json; code=forbidden_org
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '503':
+          description: problem+json; code=auth_unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+  /api/login/revoke:
+    post:
+      tags:
+      - routes
+      summary: |-
+        `POST /api/login/revoke`: forget the presented credential. The holder
+        proves they hold it by presenting it, and nobody else can name the
+        record, because it is keyed by the token's own hash.
+      operationId: login_revoke
+      responses:
+        '204':
+          description: Forgotten; the credential no longer authenticates
+        '401':
+          description: problem+json; code=unauthorized
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
         '503':
           description: problem+json; code=auth_unavailable
           content:
@@ -946,6 +1007,27 @@ components:
         publicKey:
           type: string
           description: The deployment's ed25519 public key in nix's `name:base64` form.
+    ReadTokenIssued:
+      type: object
+      description: |-
+        The answer to a read-credential exchange: the token the caller keeps,
+        who it speaks for, and when it stops working.
+      required:
+      - token
+      - login
+      - expiresAtMs
+      properties:
+        expiresAtMs:
+          type: integer
+          format: int64
+          description: When it stops being accepted, epoch milliseconds.
+          minimum: 0
+        login:
+          type: string
+          description: The GitHub login it speaks for.
+        token:
+          type: string
+          description: The credential. Shown once; the deployment stores only its hash.
     RenewalBody:
       type: object
       description: |-
