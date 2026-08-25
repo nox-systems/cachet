@@ -1,0 +1,52 @@
+<task-notification>
+<task-id>bddc557xz</task-id>
+<summary>Monitor event: "CI on PR #23 after the ordering fix"</summary>
+<event>announce: skipping
+build-global-artifacts: skipping
+build-local-artifacts (${{ join(matrix.targets, ', ') }}): skipping
+host: skipping
+plan: pass</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bddc557xz</task-id>
+<summary>Monitor event: "CI on PR #23 after the ordering fix"</summary>
+<event>actionlint: pass
+deny: pass
+doc-manifest: pass
+fmt: pass
+lane-manifest: pass
+scripts: pass</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bddc557xz</task-id>
+<summary>Monitor event: "CI on PR #23 after the ordering fix"</summary>
+<event>clippy: pass
+golden: pass
+kani: pass
+openapi: pass
+property: pass</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bddc557xz</task-id>
+<summary>Monitor event: "CI on PR #23 after the ordering fix"</summary>
+<event>unit: pass
+wasm-hygiene: pass
+wasm: pass</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+Squash merged. Cut the new version / release, then go back into your analytics work after rebasing
