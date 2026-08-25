@@ -1,0 +1,14 @@
+<task-notification>
+<task-id>bs2znb4e1</task-id>
+<summary>Monitor event: "main CI, staging deploy, and the integration lane"</summary>
+<event>main/deploy [32817552692]: success</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+it's fine lol
+
+---
+
+it's fine lol We'll fix it after 0.0.8 is all done and released as a new PR
