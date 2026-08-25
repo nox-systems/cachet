@@ -56,7 +56,7 @@ inputs:
   cachet-version:
     description: The cachet release to download and run.
     required: false
-    default: 0.0.8
+    default: 0.0.9
 
 runs:
   using: composite
