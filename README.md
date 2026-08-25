@@ -25,8 +25,18 @@ cachet setup
 cachet doctor
 ```
 
-`setup` edits the daemon's netrc and `/etc/nix/nix.custom.conf` and
-restarts the daemon. `doctor` probes the wiring and prints what holds.
+`login` signs in through GitHub and trades that identity for a
+credential the deployment issues, good for thirty days; run it again to
+renew, and `cachet logout` to revoke it. `setup` edits the daemon's
+netrc and `/etc/nix/nix.custom.conf` and restarts the daemon. `doctor`
+probes the wiring and prints what holds.
+
+Several caches work at once. Tokens are kept per host, the netrc keeps
+one block per host, and the substituter list accumulates, so logging in
+and setting up against a second deployment leaves the first alone. Pass
+`--cache-url` to name which one a command means; without it, commands
+use the one you logged into last. Different deployments can be different
+GitHub accounts.
 
 Both nix installs work. On a machine running Determinate Nix, `setup`
 registers the credential the way Determinate's daemon reads it and

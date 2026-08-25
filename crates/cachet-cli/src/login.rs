@@ -310,6 +310,93 @@ impl DeviceServer for GithubLive<'_> {
     }
 }
 
+/// Trade a proven GitHub identity for the deployment's own read
+/// credential.
+///
+/// The GitHub token goes over the wire once, here. What comes back is
+/// what this machine keeps and what the nix daemon carries, so GitHub's
+/// eight-hour token lifetime never reaches the daemon's netrc and the
+/// deployment is never left holding a credential replayable against
+/// github.com (ADR 0002).
+///
+/// # Errors
+///
+/// [`CliError`] when the deployment refuses the identity or cannot be
+/// reached, with the deployment's own reason where it gave one.
+pub async fn exchange_for_read_token(
+    client: &reqwest::Client,
+    cache_url: &str,
+    github_token: &str,
+) -> Result<cachet_api::ReadTokenIssued, CliError> {
+    let url = format!("{}/api/login/exchange", cache_url.trim_end_matches('/'));
+    let response = client
+        .post(&url)
+        .bearer_auth(github_token)
+        .header("content-length", "0")
+        .send()
+        .await
+        .map_err(|failure| CliError(format!("could not reach {url}: {failure}")))?;
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    if status == reqwest::StatusCode::FORBIDDEN {
+        return Err(CliError(format!(
+            "{cache_url} serves an organization this account is not a member of"
+        )));
+    }
+    if !status.is_success() {
+        return Err(CliError(format!(
+            "{cache_url} refused the login ({status}): {}",
+            body.trim()
+        )));
+    }
+    serde_json::from_str(&body).map_err(|failure| {
+        CliError(format!(
+            "{cache_url} answered an unreadable login: {failure}"
+        ))
+    })
+}
+
+/// Ask the deployment to forget one credential.
+///
+/// # Errors
+///
+/// [`CliError`] when the deployment cannot be reached or refuses.
+pub async fn revoke_read_token(
+    client: &reqwest::Client,
+    cache_url: &str,
+    token: &str,
+) -> Result<(), CliError> {
+    let url = format!("{}/api/login/revoke", cache_url.trim_end_matches('/'));
+    let response = client
+        .post(&url)
+        .bearer_auth(token)
+        .header("content-length", "0")
+        .send()
+        .await
+        .map_err(|failure| CliError(format!("could not reach {url}: {failure}")))?;
+    if response.status().is_success() {
+        Ok(())
+    } else {
+        Err(CliError(format!(
+            "{cache_url} answered {}",
+            response.status()
+        )))
+    }
+}
+
+/// An expiry as a person reads it: the date, in UTC, no clock time.
+///
+/// The exact second a credential dies is nobody's business; what a
+/// reader wants is whether it outlasts the trip they are packing for.
+#[must_use]
+pub fn render_expiry(expires_at_ms: u64) -> String {
+    let seconds = i64::try_from(expires_at_ms / 1_000).unwrap_or(0);
+    chrono::DateTime::from_timestamp(seconds, 0).map_or_else(
+        || "at a time this build cannot read".to_string(),
+        |when| when.format("on %Y-%m-%d (UTC)").to_string(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

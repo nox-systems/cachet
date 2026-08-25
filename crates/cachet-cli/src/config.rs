@@ -78,6 +78,29 @@ pub fn store_login(dir: &Path, host: &str, base_url: &str, token: &str) -> Resul
 /// # Errors
 ///
 /// [`CliError`] on a read failure other than absence.
+/// Forget one deployment's stored credential. An absent file is the
+/// outcome the caller asked for, not a failure.
+///
+/// # Errors
+///
+/// [`CliError`] when the file exists and cannot be removed.
+pub fn forget_login(dir: &Path, host: &str) -> Result<(), CliError> {
+    let path = token_path(dir, host);
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(failure) if failure.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(failure) => Err(CliError(format!(
+            "could not remove {}: {failure}",
+            path.display()
+        ))),
+    }
+}
+
+/// The stored credential for one deployment, if this machine has one.
+///
+/// # Errors
+///
+/// [`CliError`] when the file exists and cannot be read.
 pub fn read_token(dir: &Path, host: &str) -> Result<Option<String>, CliError> {
     match std::fs::read_to_string(token_path(dir, host)) {
         Ok(text) => Ok(text

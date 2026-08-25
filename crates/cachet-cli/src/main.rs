@@ -33,6 +33,13 @@ enum Command {
         #[arg(long)]
         cache_url: Option<String>,
     },
+    /// Revoke this machine's credential at the deployment and remove the
+    /// local copy.
+    Logout {
+        /// The cache's base URL; defaults to the one logged into.
+        #[arg(long)]
+        cache_url: Option<String>,
+    },
     /// Probe the read wiring against a deployment and report what holds.
     Doctor {
         /// The cache's base URL; defaults to the one logged into.
@@ -66,6 +73,7 @@ async fn main() -> ExitCode {
     match cli.command {
         Command::Login { cache_url } => run(&login(vars, cache_url).await),
         Command::Setup { cache_url } => run(&setup(vars, cache_url).await),
+        Command::Logout { cache_url } => run(&logout(vars, cache_url).await),
         Command::Doctor { cache_url } => doctor(vars, cache_url).await,
         Command::Keygen { name, out_dir } => run(&keygen(&name, out_dir.as_deref())),
         Command::Push { snapshot_only } => {
@@ -108,10 +116,57 @@ async fn login(vars: Vec<(String, String)>, cache_url: String) -> Result<(), cac
             println!("{line}");
         })
         .await?;
+    // The GitHub token's whole job is done here: it proves who you are
+    // to the deployment once, and the deployment answers with a
+    // credential of its own. What this machine keeps, and what the nix
+    // daemon ends up carrying, is that one (ADR 0002). GitHub's token is
+    // not stored, so its eight-hour lifetime never becomes this
+    // machine's problem and the cache never holds anything replayable
+    // against github.com.
+    let issued = cachet_cli::login::exchange_for_read_token(&client, &url, &token).await?;
     let dir = config::state_dir(&vars)?;
-    config::store_login(&dir, &config.host, &url, &token)?;
-    println!("cachet: logged in to {} as {who}", config.host);
+    config::store_login(&dir, &config.host, &url, &issued.token)?;
+    println!("cachet: logged in to {} as {}", config.host, issued.login);
+    println!(
+        "cachet: this machine's credential expires {}; `cachet login` again renews it",
+        cachet_cli::login::render_expiry(issued.expires_at_ms)
+    );
     println!("cachet: run `cachet setup` to wire this machine's nix");
+    debug_assert_eq!(who, issued.login, "the deployment names the same person");
+    Ok(())
+}
+
+/// Logging out: the deployment forgets this machine's credential, then
+/// the machine forgets it too. The order matters, because a local file
+/// removed first would leave a credential nobody can name to revoke.
+async fn logout(
+    vars: Vec<(String, String)>,
+    cache_url: Option<String>,
+) -> Result<(), cachet_cli::CliError> {
+    let dir = config::state_dir(&vars)?;
+    let url = config::resolve_cache_url(cache_url.as_deref(), &dir)?;
+    let client = cachet_cli::http_client()?;
+    let config = cachet_cli::login::fetch_public_config(&client, &url).await?;
+    let Some(token) = config::read_token(&dir, &config.host)? else {
+        println!("cachet: no stored login for {}", config.host);
+        return Ok(());
+    };
+    match cachet_cli::login::revoke_read_token(&client, &url, &token).await {
+        Ok(()) => println!("cachet: {} revoked this machine's credential", config.host),
+        // why: the local copy goes either way. A deployment that cannot
+        // be reached must not leave a credential sitting on the disk of
+        // someone who asked to be logged out, and the credential expires
+        // on its own regardless.
+        Err(failure) => {
+            eprintln!(
+                "cachet: could not reach {} to revoke: {failure}",
+                config.host
+            );
+            eprintln!("  the local copy is removed anyway; it expires on its own.");
+        }
+    }
+    config::forget_login(&dir, &config.host)?;
+    println!("cachet: run `cachet setup` to drop it from this machine's nix");
     Ok(())
 }
 

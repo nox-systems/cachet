@@ -80,6 +80,15 @@ fn memo_write(key: &str, decision: MemoDecision, expires_at_ms: u64, now: UnixMi
     });
 }
 
+/// Drop one decision. A revoked credential that the memo keeps answering
+/// for is a logout the holder can watch fail, so revocation clears the
+/// isolate that served it.
+fn memo_forget(key: &str) {
+    READ_DECISION_MEMO.with(|memo| {
+        memo.borrow_mut().remove(key);
+    });
+}
+
 /// The read-time identity: who the request authenticates as, and how.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReadIdentity {
@@ -242,18 +251,34 @@ async fn cache_verdict(kv: &worker::kv::KvStore, digest_hex: &str, verdict: &Ver
 /// credential they push with, and the claim check is the org gate either
 /// way. Sessions never ride the memo: logout revokes by KV deletion, and
 /// an isolate entry would outlive that promise.
+/// What this isolate already decided about a credential, if anything.
+/// A hit costs no I/O at all, which is what makes a hot laptop's reads
+/// free after the first.
+fn memoized_answer(digest_hex: &str, now: UnixMillis) -> Option<Result<ReadIdentity>> {
+    let decision = memo_read(digest_hex, now)?;
+    let kind = match &decision {
+        MemoDecision::Member { .. } => "allow",
+        MemoDecision::Deny => "deny",
+    };
+    log::event("info", "auth.memo_hit", &[("kind", kind.to_string())]);
+    Some(match decision {
+        MemoDecision::Member { login } => Ok(ReadIdentity::Token { login }),
+        MemoDecision::Deny => Err(ClientError::Unauthorized),
+    })
+}
+
 async fn resolve_token(env: &Env, now: UnixMillis, token: &str) -> Result<ReadIdentity> {
     let digest_hex = hex_digest(&sha256(token.as_bytes()));
-    if let Some(decision) = memo_read(&digest_hex, now) {
-        let kind = match &decision {
-            MemoDecision::Member { .. } => "allow",
-            MemoDecision::Deny => "deny",
-        };
-        log::event("info", "auth.memo_hit", &[("kind", kind.to_string())]);
-        return match decision {
-            MemoDecision::Member { login } => Ok(ReadIdentity::Token { login }),
-            MemoDecision::Deny => Err(ClientError::Unauthorized),
-        };
+    if let Some(answer) = memoized_answer(&digest_hex, now) {
+        return answer;
+    }
+    // A credential this deployment issued answers from its own record:
+    // no GitHub call, because nothing here holds a GitHub credential to
+    // make one with. The record's lifetime is the revocation window
+    // (ADR 0002), and it is checked here rather than left to KV's
+    // eventual expiry.
+    if cachet_core::read_token::looks_like_read_token(token) {
+        return resolve_issued_token_memoized(env, now, &digest_hex).await;
     }
     if cachet_core::auth::looks_like_oidc_token(token) {
         let identity =
@@ -470,4 +495,189 @@ fn basic_password(header: &str) -> Option<String> {
     text.split_once(':')
         .map(|(_, password)| password.to_string())
         .filter(|password| !password.is_empty())
+}
+
+/// The credential a request presents, from either scheme. The exchange
+/// and revoke routes take it the same way every read does, so a caller
+/// that can already talk to this cache needs no new plumbing.
+#[must_use]
+pub fn presented_token(req: &Request) -> Option<String> {
+    let header = req.headers().get("authorization").ok()??;
+    if header.len() > cachet_core::constants::AUTH_HEADER_BYTES_MAX {
+        return None;
+    }
+    header
+        .strip_prefix("Bearer ")
+        .map(ToString::to_string)
+        .or_else(|| basic_password(&header))
+}
+
+/// Resolve an issued token and remember the answer for this isolate.
+///
+/// The memo bounds the KV reads a hot laptop costs: a warm isolate
+/// answers a repeat read with no I/O at all. Revocation clears it, so a
+/// logout is not something the holder can watch fail.
+async fn resolve_issued_token_memoized(
+    env: &Env,
+    now: UnixMillis,
+    digest_hex: &str,
+) -> Result<ReadIdentity> {
+    let identity = resolve_issued_token(env, now, digest_hex).await;
+    match &identity {
+        Ok(ReadIdentity::Token { login }) => memo_write(
+            digest_hex,
+            MemoDecision::Member {
+                login: login.clone(),
+            },
+            now.as_u64() + MEMO_ALLOW_TTL_MS,
+            now,
+        ),
+        Err(ClientError::Unauthorized) => memo_write(
+            digest_hex,
+            MemoDecision::Deny,
+            now.as_u64() + MEMO_DENY_TTL_MS,
+            now,
+        ),
+        // An outage is not a verdict: nothing is remembered, so the next
+        // request asks again rather than inheriting a backend's bad
+        // minute.
+        _ => {}
+    }
+    identity
+}
+
+/// Look one issued read token up by its digest.
+///
+/// An absent, unreadable, or expired record all answer the same
+/// refusal: a credential this deployment does not recognize is not
+/// something to explain.
+async fn resolve_issued_token(
+    env: &Env,
+    now: UnixMillis,
+    digest_hex: &str,
+) -> Result<ReadIdentity> {
+    let kv = env
+        .kv(KV_BINDING)
+        .map_err(|_| ClientError::AuthUnavailable)?;
+    let key = cachet_core::read_token::read_token_key(digest_hex);
+    let stored = kv
+        .get(&key)
+        .text()
+        .await
+        .map_err(|_| ClientError::AuthUnavailable)?;
+    let Some(text) = stored else {
+        return Err(ClientError::Unauthorized);
+    };
+    let Ok(record) = cachet_core::read_token::ReadTokenRecord::parse(&text) else {
+        // The worker wrote this; an unreadable one is a storage fault,
+        // and refusing is still the only safe answer to the caller.
+        log::event("error", "auth.read_token_corrupt", &[]);
+        return Err(ClientError::Unauthorized);
+    };
+    if !record.is_live(now) {
+        log::event("info", "auth.read_token_expired", &[]);
+        return Err(ClientError::Unauthorized);
+    }
+    Ok(ReadIdentity::Token {
+        login: record.login,
+    })
+}
+
+/// Issue a read credential to a caller who proved a GitHub identity.
+///
+/// The GitHub token is used here and nowhere else: it is checked for org
+/// membership exactly once, and what the caller keeps afterwards is this
+/// deployment's own token. That is the whole point (ADR 0002). A caller
+/// whose membership does not hold gets the same refusal the read path
+/// would have given them.
+///
+/// # Errors
+///
+/// [`ClientError::Unauthorized`] for a missing or unusable GitHub
+/// credential, [`ClientError::ForbiddenOrg`] for a valid one outside the
+/// deployment's orgs, [`ClientError::AuthUnavailable`] when a backend
+/// cannot answer.
+pub async fn issue_read_token(
+    env: &Env,
+    now: UnixMillis,
+    github_token: &str,
+    body: &str,
+) -> Result<cachet_api::ReadTokenIssued> {
+    let verdict = check_github_token(env, now, github_token).await?;
+    if verdict.login.is_empty() {
+        return Err(ClientError::Unauthorized);
+    }
+    if !verdict.org_member {
+        log::event(
+            "info",
+            "auth.exchange_refused",
+            &[("login", verdict.login.clone())],
+        );
+        return Err(ClientError::ForbiddenOrg);
+    }
+    let token = cachet_core::read_token::format_read_token(&sample_token_body());
+    let digest_hex = hex_digest(&sha256(token.as_bytes()));
+    let expires_at_ms = now
+        .as_u64()
+        .saturating_add(cachet_core::constants::READ_TOKEN_TTL_MS);
+    let record = cachet_core::read_token::ReadTokenRecord {
+        login: verdict.login.clone(),
+        issued_at_ms: now.as_u64(),
+        expires_at_ms,
+    };
+    let kv = env
+        .kv(KV_BINDING)
+        .map_err(|_| ClientError::AuthUnavailable)?;
+    let ttl_seconds = cachet_core::constants::READ_TOKEN_TTL_MS / 1_000;
+    let key = cachet_core::read_token::read_token_key(&digest_hex);
+    let builder = kv
+        .put(&key, record.serialize())
+        .map(|builder| builder.expiration_ttl(ttl_seconds))
+        .map_err(|_| ClientError::AuthUnavailable)?;
+    builder
+        .execute()
+        .await
+        .map_err(|_| ClientError::AuthUnavailable)?;
+    log::event(
+        "info",
+        "auth.read_token_issued",
+        &[
+            ("login", verdict.login.clone()),
+            ("label", body.to_string()),
+        ],
+    );
+    Ok(cachet_api::ReadTokenIssued {
+        token,
+        login: verdict.login,
+        expires_at_ms,
+    })
+}
+
+/// Delete one issued token, by the token itself. Logging out is the
+/// holder proving they hold it; nobody else can name the record.
+///
+/// # Errors
+///
+/// [`ClientError::AuthUnavailable`] when KV cannot answer.
+pub async fn revoke_read_token(env: &Env, token: &str) -> Result<()> {
+    let digest_hex = hex_digest(&sha256(token.as_bytes()));
+    let kv = env
+        .kv(KV_BINDING)
+        .map_err(|_| ClientError::AuthUnavailable)?;
+    kv.delete(&cachet_core::read_token::read_token_key(&digest_hex))
+        .await
+        .map_err(|_| ClientError::AuthUnavailable)?;
+    // The isolate memo would otherwise keep answering for this token for
+    // up to its own TTL, which would make a logout look ignored.
+    memo_forget(&digest_hex);
+    log::event("info", "auth.read_token_revoked", &[]);
+    Ok(())
+}
+
+/// The entropy seam (CLAUDE.md §3): sampled at the edge, formatted by
+/// the core.
+fn sample_token_body() -> String {
+    let mut random = [0_u8; 32];
+    getrandom::getrandom(&mut random).expect("getrandom cannot fail on workers");
+    <base64ct::Base64UrlUnpadded as base64ct::Encoding>::encode_string(&random)
 }

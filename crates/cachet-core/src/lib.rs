@@ -21,6 +21,7 @@ pub mod narinfo;
 pub mod oauth;
 pub mod problem;
 pub mod read;
+pub mod read_token;
 pub mod roots;
 pub mod roots_payload;
 pub mod types;

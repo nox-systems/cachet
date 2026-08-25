@@ -137,6 +137,7 @@ dependencies = [
  "cachet-core",
  "cachet-crypto",
  "cachet-push",
+ "chrono",
  "clap",
  "getrandom 0.2.17",
  "reqwest",

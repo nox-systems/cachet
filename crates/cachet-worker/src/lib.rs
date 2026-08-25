@@ -96,6 +96,32 @@ async fn fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
         return probe::answer_probe(&env, now, req).await;
     }
 
+    // The credential exchange: a GitHub token in, this deployment's own
+    // read token out. The GitHub token is checked once, here, and never
+    // reaches the bucket, the netrc, or any later request (ADR 0002).
+    if path == "/api/login/exchange" && method == Method::Post {
+        let Some(github_token) = verdict::presented_token(&req) else {
+            return error::problem_response(ClientError::Unauthorized);
+        };
+        return match verdict::issue_read_token(&env, now, &github_token, "cachet login").await {
+            Ok(issued) => api::json_no_store(&issued),
+            Err(code) => error::problem_response(code),
+        };
+    }
+
+    // Logging out: the holder presents the token, and the deployment
+    // forgets it. Nobody else can name the record, because it is keyed
+    // by the token's own hash.
+    if path == "/api/login/revoke" && method == Method::Post {
+        let Some(token) = verdict::presented_token(&req) else {
+            return error::problem_response(ClientError::Unauthorized);
+        };
+        return match verdict::revoke_read_token(&env, &token).await {
+            Ok(()) => Response::empty().map(|response| response.with_status(204)),
+            Err(code) => error::problem_response(code),
+        };
+    }
+
     if path.ends_with(NARINFO_KEY_SUFFIX) && method == Method::Put {
         let hash = match parse_narinfo_request_path(&path) {
             Ok(hash) => hash,

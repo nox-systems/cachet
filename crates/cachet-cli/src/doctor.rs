@@ -164,7 +164,7 @@ async fn probe_narinfo(
                 )
             } else {
                 format!(
-                    "answered {}: re-run `cachet login`; if that holds, the token's org membership lapsed",
+                    "answered {}: this machine's credential expired or was revoked; run `cachet login` again, then `cachet setup`",
                     answer.status().as_u16()
                 )
             },
@@ -198,7 +198,7 @@ async fn probe_identity(client: &reqwest::Client, api_base: &str, token: &str) -
         Ok(answer) => Probe::fail(
             NAME,
             format!(
-                "GitHub answered {}: the token is revoked or expired; run `cachet login` again",
+                "GitHub answered {}: the credential is revoked or expired; run `cachet login` again",
                 answer.status().as_u16()
             ),
         ),

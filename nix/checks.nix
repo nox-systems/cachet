@@ -15,15 +15,6 @@
       ...
     }:
     {
-      # why: the dependency build, exposed so CI can run it as its own job
-      # before the lanes start. Every lane's derivation restores this one's
-      # target directory, and the lanes all begin at once, so none of them
-      # can substitute it: on any change to Cargo.toml or Cargo.lock the
-      # 278-crate dependency build ran once per lane, in parallel, and only
-      # then did one of them win the race to publish it. Building it once
-      # up front turns that into one build the rest substitute.
-      packages.deps = cargoArtifacts;
-
       checks = {
         # why: crane appends its own --release --locked; pass neither again.
         # cachet-worker is wasm32-only and excluded from the host closure.
