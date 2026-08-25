@@ -67,14 +67,17 @@ deploy, approves automatically, because there is nobody there to ask and
 the alternative is a deploy that stops at the prompt. Tearing a
 deployment down always asks, terminal or not.
 
-The worker deploys with observability on, Smart Placement, and a CPU
-ceiling of five minutes. Observability is what makes a slow read
-diagnosable: the worker's own events say whether a read answered from
-the edge, from the bucket, or not at all, and without it those events go
-nowhere. Smart Placement moves the isolate next to R2 and KV, which is
-what almost every request waits on. The CPU ceiling covers the one
-request whose cost scales with the object, a multipart completion
-measuring the NAR its parts assembled.
+The worker deploys with observability on and a CPU ceiling of five
+minutes, and with no placement pin. Observability is what makes a slow
+read diagnosable: the worker's own events say whether a read answered
+from the edge, from the bucket, or not at all, and without it those
+events go nowhere. The CPU ceiling covers the one request whose cost
+scales with the object, a multipart completion measuring the NAR its
+parts assembled. Placement stays unpinned because the hot path is an
+edge-cache hit, which touches no backend for a placement to be near: the
+Cache API answers at the colo the worker runs in, so pinning the isolate
+next to R2 puts the client's round trip to that colo on every cached
+read.
 
 ## The configuration contract
 

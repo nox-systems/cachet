@@ -99,11 +99,15 @@ export default Alchemy.Stack(
       // is five minutes, and a NAR large enough to need multipart deserves
       // the headroom rather than a killed request the client retries.
       limits: { cpuMs: 300_000 },
-      // R2 and KV are what almost every request waits on, so the isolate
-      // belongs near them rather than near the client. Streaming a NAR
-      // body is unaffected either way, and the cold read path's several
-      // sequential round trips are not.
-      placement: { mode: "smart" },
+      // why: no placement pin. Smart Placement moves the isolate next to
+      // R2 and KV, which is right for a worker whose every request makes
+      // backend round trips and wrong for this one: the hot path is an
+      // edge-cache hit, which touches no backend at all, and the Cache
+      // API answers at the colo the worker runs in. Pinning it therefore
+      // added the client's round trip to the placed colo onto every
+      // cached read. Measured from Vancouver against a warm narinfo:
+      // 39ms without it, ~150ms with, where cache.nixos.org from the
+      // same laptop answers in 31ms.
       // Only the custom domain serves: no workers.dev URL, no per-version
       // preview URLs. A cache answers on one name, and that name is the
       // signing key's identity.
