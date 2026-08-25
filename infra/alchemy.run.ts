@@ -57,6 +57,19 @@ export default Alchemy.Stack(
         CACHE_BUCKET: bucket,
         CACHET_KV: kv,
         CACHET_EVENTS: events,
+        // The dataset's own name, so the counter route can query the
+        // one it writes to without a second place to keep it in step.
+        CACHET_STATS_DATASET: resourceName.replaceAll("-", "_"),
+        // why: reading a dataset is Cloudflare's SQL API, which takes an
+        // account token; a worker cannot read what it writes here. The
+        // token is scoped to reading account analytics and nothing else,
+        // so a compromised worker gains a view of counters the operator
+        // already owns and no power over R2, KV, or the worker itself.
+        // Optional: a deployment without it counts normally and simply
+        // cannot report.
+        ...(cfg.statsToken === undefined
+          ? {}
+          : { CACHET_STATS_TOKEN: Config.redacted("CACHET_STATS_TOKEN") }),
         CACHET_ORGS: cfg.orgs,
         CACHET_AUDIENCE: cfg.audience,
         CACHET_DEFAULT_BRANCH_REF: cfg.defaultBranchRef,

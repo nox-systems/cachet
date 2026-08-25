@@ -176,6 +176,9 @@ async fn fixed_get_routes(
     if let Some(run_id) = path.strip_prefix("/api/self/gc-runs/") {
         return Some(api::gc_run_read(env, now, req, run_id).await);
     }
+    if path == "/api/self/events" {
+        return Some(api::stats_events(env, now, req).await);
+    }
     if path == "/api/self/stats" {
         return Some(api::stats(env, now, req).await);
     }

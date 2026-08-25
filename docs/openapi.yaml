@@ -219,6 +219,70 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/ProblemBody'
+  /api/self/events:
+    get:
+      tags:
+      - routes
+      summary: '`GET /api/self/events`: the deployment''s own counters, grouped.'
+      description: |-
+        The caller chooses a question rather than composing one: `subject` is
+        one of `reads`, `writes`, `probes`; `by` names one of the six
+        dimensions the writers fill; `window` is `day`, `week`, or `month`.
+        Anything else is refused. The worker builds the SQL from those
+        choices and runs it against Cloudflare with a token scoped to reading
+        analytics and nothing else, so no caller text reaches a statement.
+        Requires an admin credential.
+      operationId: stats_events
+      parameters:
+      - name: subject
+        in: query
+        description: reads | writes | probes
+        required: true
+        schema:
+          type: string
+      - name: by
+        in: query
+        description: kind | outcome | actor | repository | reference | project
+        required: false
+        schema:
+          type: string
+      - name: window
+        in: query
+        description: day | week | month; day when unstated
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: The totals, largest first
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatsEvents'
+        '400':
+          description: problem+json; code=malformed_query
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '401':
+          description: problem+json; code=unauthorized
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '403':
+          description: problem+json; code=forbidden_admin
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '503':
+          description: problem+json; code=storage_unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
   /api/self/gc-runs:
     get:
       tags:
@@ -1111,6 +1175,48 @@ components:
           format: int64
           description: NAR objects its sweep deleted.
           minimum: 0
+    StatsEvents:
+      type: object
+      description: 'The `GET /api/self/events` answer: what the chosen question totalled.'
+      required:
+      - subject
+      - dimension
+      - window
+      - rows
+      properties:
+        dimension:
+          type: string
+          description: What it was grouped by.
+        rows:
+          type: array
+          items:
+            $ref: '#/components/schemas/StatsRow'
+          description: The rows, largest first.
+        subject:
+          type: string
+          description: 'What was counted: `reads`, `writes`, or `probes`.'
+        window:
+          type: string
+          description: How far back the answer looks.
+    StatsRow:
+      type: object
+      description: 'One row of a counter answer: a dimension''s value and its totals.'
+      required:
+      - dimension
+      - count
+      - bytes
+      properties:
+        bytes:
+          type: number
+          format: double
+          description: Bytes, where the answer is bytes.
+        count:
+          type: number
+          format: double
+          description: How many things it counts, sample-corrected.
+        dimension:
+          type: string
+          description: The grouped value, empty where the dimension did not apply.
     UploadCreated:
       type: object
       description: |-

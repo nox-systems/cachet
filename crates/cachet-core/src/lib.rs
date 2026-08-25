@@ -25,6 +25,7 @@ pub mod read_token;
 pub mod roots;
 pub mod roots_payload;
 pub mod stats;
+pub mod stats_query;
 pub mod types;
 pub mod upload_record;
 pub mod write;

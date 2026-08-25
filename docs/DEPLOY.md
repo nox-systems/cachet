@@ -94,6 +94,7 @@ equivalents). These variables define the deployment:
 | `CACHET_DEPLOY_GC_GRACE_MS` | no | Grace override; default 14 days. Set 0 for throwaway test deployments. |
 | `CACHET_SIGNING_KEY` | yes | The `<host>-1:<base64>` secret from bootstrap. |
 | `CACHET_OAUTH_CLIENT_SECRET` | yes | The OAuth App's client secret. |
+| `CACHET_DEPLOY_STATS_TOKEN` | no | A Cloudflare API token scoped to Account Analytics:Read. Without it the deployment counts but cannot report. |
 
 The deploy also reads `CLOUDFLARE_API_TOKEN` and
 `CLOUDFLARE_ACCOUNT_ID`, unprefixed by choice: they are wrangler and
@@ -159,7 +160,29 @@ most questions:
 | `double1` | How many things the point counts. |
 | `double2` | Bytes, where the answer is bytes. |
 
-The hit rate, split by what was being read:
+An admin reads them through the deployment rather than through
+Cloudflare: `GET /api/self/events` takes `subject` (`reads`, `writes`,
+`probes`), `by` (one of the six dimensions, `outcome` when unstated),
+and `window` (`day`, `week`, `month`), and answers the totals largest
+first.
+
+```
+curl -sS --netrc-file ~/.netrc \
+  "https://<host>/api/self/events?subject=reads&by=actor&window=week"
+```
+
+The caller chooses a question; it never sends one. The worker composes
+the SQL from those three choices, every part of it a literal or an enum
+value, because the credential behind the route is a Cloudflare API
+token and a caller who could compose SQL would be composing it with that
+token's authority. A choice the deployment does not offer answers 400
+`malformed_query` rather than falling back to a different question. The
+route requires an admin: an org member outside `CACHET_ADMINS` answers
+403, an anonymous request 401.
+
+Querying Cloudflare directly is the operator's path, and needs their own
+token rather than the deployment's. The hit rate, split by what was
+being read:
 
 ```sql
 SELECT blob1 AS kind, blob2 AS outcome, SUM(_sample_interval * double1) AS reads

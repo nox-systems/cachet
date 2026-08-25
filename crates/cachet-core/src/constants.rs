@@ -74,6 +74,21 @@ pub const PROBE_BODY_BYTES_MAX: u64 = 1_048_576;
 /// The collector enumerates at most this many project leases per run.
 pub const ROOTS_PROJECTS_MAX: usize = 256;
 
+/// The Workers secret holding the Cloudflare API token the counter
+/// route reads with.
+///
+/// Scoped to reading account analytics and nothing else: it cannot
+/// touch R2, KV, Workers, or DNS. A deployment without it counts
+/// normally and simply cannot report, because collecting and reporting
+/// are separate powers and only one of them needs a credential.
+pub const STATS_TOKEN_SECRET: &str = "CACHET_STATS_TOKEN";
+
+/// The account the counter route queries under.
+pub const ACCOUNT_ID_VAR: &str = "CLOUDFLARE_ACCOUNT_ID";
+
+/// The dataset name the deployment writes to and reads back.
+pub const STATS_DATASET_VAR: &str = "CACHET_STATS_DATASET";
+
 /// The binding name of the dataset every counted thing is written to.
 pub const STATS_BINDING: &str = "CACHET_EVENTS";
 
