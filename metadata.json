@@ -1,0 +1,63 @@
+{
+  "cli_version": "0.10.2",
+  "checkpoint_id": "01M0VPD99V2YHPGJW8SZ2RMNEQ",
+  "strategy": "manual-commit",
+  "branch": "perf/unfuck-throughput",
+  "checkpoints_count": 1,
+  "files_touched": [
+    ".cargo/config.toml",
+    "Cargo.lock",
+    "Cargo.toml",
+    "action/action.yml",
+    "crates/cachet-cli/src/push.rs",
+    "crates/cachet-core/src/constants.rs",
+    "crates/cachet-core/src/generation.rs",
+    "crates/cachet-core/src/lib.rs",
+    "crates/cachet-core/src/multipart.rs",
+    "crates/cachet-core/src/nar_facts.rs",
+    "crates/cachet-core/src/narinfo.rs",
+    "crates/cachet-core/src/upload_record.rs",
+    "crates/cachet-core/src/write.rs",
+    "crates/cachet-push/Cargo.toml",
+    "crates/cachet-push/src/adapters.rs",
+    "crates/cachet-push/src/lib.rs",
+    "crates/cachet-push/src/pipeflow.rs",
+    "crates/cachet-push/src/pipeline.rs",
+    "crates/cachet-push/src/plan.rs",
+    "crates/cachet-push/src/real.rs",
+    "crates/cachet-push/src/retry.rs",
+    "crates/cachet-push/src/stage.rs",
+    "crates/cachet-worker/src/error.rs",
+    "crates/cachet-worker/src/gc.rs",
+    "crates/cachet-worker/src/probe.rs",
+    "crates/cachet-worker/src/read.rs",
+    "crates/cachet-worker/src/write.rs",
+    "deny.toml",
+    "docs/DEPLOY.md",
+    "docs/adr/0012-measure-the-nar-when-it-lands.md",
+    "docs/adr/0013-edge-keys-outlive-sweeps.md",
+    "docs/adr/README.md",
+    "docs/openapi.yaml",
+    "docs/security/threat-model.md",
+    "docs/testing/workerd.md",
+    "infra/alchemy.run.ts",
+    "scripts/check-wasm-hygiene.sh",
+    "workerd/check.mjs"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 446,
+    "cache_creation_tokens": 569770,
+    "cache_read_tokens": 73752856,
+    "output_tokens": 204659,
+    "api_call_count": 223
+  }
+}
