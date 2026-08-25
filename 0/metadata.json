@@ -1,0 +1,49 @@
+{
+  "cli_version": "0.10.2",
+  "checkpoint_id": "01M0W1AWVBAQPJFBDWDX26CQ84",
+  "session_id": "5fc1018a-6e02-430c-8419-8f2100730cb5",
+  "strategy": "manual-commit",
+  "created_at": "2026-08-25T08:42:08.045534Z",
+  "branch": "feat/analytics",
+  "checkpoints_count": 5,
+  "files_touched": [
+    "crates/cachet-core/src/constants.rs",
+    "crates/cachet-core/src/lib.rs",
+    "crates/cachet-core/src/stats.rs",
+    "crates/cachet-worker/src/lib.rs",
+    "crates/cachet-worker/src/probe.rs",
+    "crates/cachet-worker/src/read.rs",
+    "crates/cachet-worker/src/stats.rs",
+    "crates/cachet-worker/src/verdict.rs",
+    "docs/DEPLOY.md",
+    "infra/alchemy.run.ts"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-opus-5[1m]",
+  "turn_id": "d5e9fa1e5c79",
+  "checkpoint_transcript_start": 3774,
+  "transcript_lines_at_start": 3774,
+  "compact_transcript_start": 681,
+  "token_usage": {
+    "input_tokens": 38,
+    "cache_creation_tokens": 15130,
+    "cache_read_tokens": 17281828,
+    "output_tokens": 10708,
+    "api_call_count": 19
+  },
+  "session_metrics": {
+    "turn_count": 44
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-08-25T08:42:07.859504Z",
+    "agent_lines": 618,
+    "agent_removed": 18,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 618,
+    "total_lines_changed": 636,
+    "agent_percentage": 100,
+    "metric_version": 2
+  }
+}
