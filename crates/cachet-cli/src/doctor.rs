@@ -46,7 +46,6 @@ pub async fn run_doctor(
     client: &reqwest::Client,
     cache_url: &str,
     token: Option<&str>,
-    api_base: &str,
 ) -> Vec<Probe> {
     let mut probes = vec![probe_cache_info(client, cache_url).await];
     let (config_probe, config) = probe_config(client, cache_url).await;
@@ -64,10 +63,14 @@ pub async fn run_doctor(
         "the state directory holds a token".to_string(),
     ));
     probes.push(probe_narinfo(client, cache_url, Some(token), false).await);
-    probes.push(probe_identity(client, api_base, token).await);
-    if let Some(config) = config {
-        probes.push(probe_memberships(client, api_base, token, &config.orgs).await);
-    }
+    // why: no probe asks GitHub about this credential. The deployment
+    // issued it, so GitHub has never seen it and answers 401 to any
+    // question about it; a doctor that asked reported a revoked
+    // credential on a machine whose reads were working. The read probe
+    // above is the honest test, and it is a stronger one: it is the
+    // deployment answering about the credential it issued, which is the
+    // same check every real read makes.
+    let _ = &config;
     probes
 }
 
@@ -170,74 +173,6 @@ async fn probe_narinfo(
             },
         ),
         Err(failure) => Probe::fail(name, format!("no answer: {failure}")),
-    }
-}
-
-/// Who the token says the human is: a sanity check that the flow's
-/// answer still works, and the handle the summary prints.
-async fn probe_identity(client: &reqwest::Client, api_base: &str, token: &str) -> Probe {
-    const NAME: &str = "the token identifies";
-    match client
-        .get(format!("{api_base}/user"))
-        .bearer_auth(token)
-        .send()
-        .await
-    {
-        Ok(answer) if answer.status().is_success() => {
-            #[derive(serde::Deserialize)]
-            struct User {
-                login: Option<String>,
-            }
-            match answer.json::<User>().await {
-                Ok(User { login: Some(login) }) => {
-                    Probe::pass(NAME, format!("authenticates as {login}"))
-                }
-                _ => Probe::fail(NAME, "GitHub answered without a login".to_string()),
-            }
-        }
-        Ok(answer) => Probe::fail(
-            NAME,
-            format!(
-                "GitHub answered {}: the credential is revoked or expired; run `cachet login` again",
-                answer.status().as_u16()
-            ),
-        ),
-        Err(failure) => Probe::fail(NAME, format!("no answer: {failure}")),
-    }
-}
-
-/// The worker's admission test, checked from the outside: membership in
-/// at least one served org.
-async fn probe_memberships(
-    client: &reqwest::Client,
-    api_base: &str,
-    token: &str,
-    orgs: &[String],
-) -> Probe {
-    const NAME: &str = "org membership holds";
-    let mut memberships = 0_usize;
-    for org in orgs {
-        let url = format!("{api_base}/user/memberships/orgs/{org}");
-        if matches!(
-            client.get(&url).bearer_auth(token).send().await,
-            Ok(answer) if answer.status().is_success()
-        ) {
-            memberships += 1;
-        }
-    }
-    if memberships > 0 {
-        Probe::pass(
-            NAME,
-            format!("a member of {memberships} of {} served org(s)", orgs.len()),
-        )
-    } else {
-        Probe::fail(
-            NAME,
-            format!(
-                "a member of none of [{}]: the worker will refuse every read",
-                orgs.join(", ")
-            ),
-        )
     }
 }
 
