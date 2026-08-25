@@ -1,0 +1,40 @@
+{
+  "cli_version": "0.10.2",
+  "checkpoint_id": "01M0W2B3DX6GV6Y2TWVKKCSAJP",
+  "strategy": "manual-commit",
+  "branch": "feat/analytics",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "crates/cachet-api/src/lib.rs",
+    "crates/cachet-api/src/routes.rs",
+    "crates/cachet-core/src/constants.rs",
+    "crates/cachet-core/src/error.rs",
+    "crates/cachet-core/src/lib.rs",
+    "crates/cachet-core/src/stats_query.rs",
+    "crates/cachet-core/tests/golden.rs",
+    "crates/cachet-worker/src/api.rs",
+    "crates/cachet-worker/src/lib.rs",
+    "docs/DEPLOY.md",
+    "docs/openapi.yaml",
+    "docs/security/threat-model.md",
+    "infra/alchemy.run.ts",
+    "infra/src/config.ts",
+    "workerd/check.mjs"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 72,
+    "cache_creation_tokens": 28771,
+    "cache_read_tokens": 33590482,
+    "output_tokens": 22880,
+    "api_call_count": 36
+  }
+}
