@@ -49,7 +49,13 @@ fn default_url_path(dir: &Path) -> PathBuf {
 /// # Errors
 ///
 /// [`CliError`] on any write or permission failure.
-pub fn store_login(dir: &Path, host: &str, base_url: &str, token: &str) -> Result<(), CliError> {
+pub fn store_login(
+    dir: &Path,
+    host: &str,
+    base_url: &str,
+    token: &str,
+    login: &str,
+) -> Result<(), CliError> {
     let tokens = dir.join("tokens");
     std::fs::create_dir_all(&tokens)
         .map_err(|failure| CliError(format!("could not create {}: {failure}", tokens.display())))?;
@@ -63,6 +69,18 @@ pub fn store_login(dir: &Path, host: &str, base_url: &str, token: &str) -> Resul
             |failure| CliError(format!("could not chmod {}: {failure}", path.display())),
         )?;
     }
+    // why: the login is remembered rather than looked up. The credential
+    // is this deployment's, so GitHub cannot say who holds it, and the
+    // deployment already said at the exchange. A diagnostic that named
+    // the account by asking GitHub about a token GitHub never issued
+    // reported a revoked credential on a perfectly working machine.
+    let login_path = tokens.join(format!("{host}.login"));
+    std::fs::write(&login_path, format!("{login}\n")).map_err(|failure| {
+        CliError(format!(
+            "could not write {}: {failure}",
+            login_path.display()
+        ))
+    })?;
     std::fs::write(default_url_path(dir), format!("{base_url}\n")).map_err(|failure| {
         CliError(format!(
             "could not write {}: {failure}",
@@ -72,19 +90,26 @@ pub fn store_login(dir: &Path, host: &str, base_url: &str, token: &str) -> Resul
     Ok(())
 }
 
-/// The stored token for a deployment, trimmed. Absence is an answer, not
-/// a failure: `Ok(None)` means login has not happened here.
+/// Who this deployment said the stored credential belongs to.
 ///
 /// # Errors
 ///
-/// [`CliError`] on a read failure other than absence.
-/// Forget one deployment's stored credential. An absent file is the
-/// outcome the caller asked for, not a failure.
-///
-/// # Errors
-///
-/// [`CliError`] when the file exists and cannot be removed.
+/// [`CliError`] when the file exists and cannot be read.
+pub fn read_login(dir: &Path, host: &str) -> Result<Option<String>, CliError> {
+    let path = dir.join("tokens").join(format!("{host}.login"));
+    match std::fs::read_to_string(&path) {
+        Ok(text) => Ok(Some(text.trim().to_string()).filter(|text| !text.is_empty())),
+        Err(failure) if failure.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(failure) => Err(CliError(format!(
+            "could not read {}: {failure}",
+            path.display()
+        ))),
+    }
+}
+
+/// Forget one deployment's stored credential and the login beside it.
 pub fn forget_login(dir: &Path, host: &str) -> Result<(), CliError> {
+    let _ = std::fs::remove_file(dir.join("tokens").join(format!("{host}.login")));
     let path = token_path(dir, host);
     match std::fs::remove_file(&path) {
         Ok(()) => Ok(()),
@@ -202,12 +227,20 @@ mod tests {
             dir.path(),
             "cache.example.com",
             "https://cache.example.com",
-            "gho_secret",
+            "cachet_secret",
+            "octocat",
         )
         .expect("store");
         assert_eq!(
             read_token(dir.path(), "cache.example.com").expect("read"),
-            Some("gho_secret".to_string())
+            Some("cachet_secret".to_string())
+        );
+        // The account comes back without asking anyone: the deployment
+        // named it at login, and nobody else can say who holds a
+        // credential the deployment issued.
+        assert_eq!(
+            read_login(dir.path(), "cache.example.com").expect("read"),
+            Some("octocat".to_string())
         );
         assert_eq!(
             read_default_url(dir.path()),

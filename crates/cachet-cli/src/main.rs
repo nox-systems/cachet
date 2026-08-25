@@ -125,7 +125,7 @@ async fn login(vars: Vec<(String, String)>, cache_url: String) -> Result<(), cac
     // against github.com.
     let issued = cachet_cli::login::exchange_for_read_token(&client, &url, &grant).await?;
     let dir = config::state_dir(&vars)?;
-    config::store_login(&dir, &config.host, &url, &issued.token)?;
+    config::store_login(&dir, &config.host, &url, &issued.token, &issued.login)?;
     println!("cachet: logged in to {} as {}", config.host, issued.login);
     println!(
         "cachet: this machine's credential expires {}; `cachet login` again renews it",
@@ -384,21 +384,21 @@ async fn doctor(vars: Vec<(String, String)>, cache_url: Option<String>) -> ExitC
         let host = config::host_of(&url)?;
         let client = cachet_cli::http_client()?;
         let token = config::read_token(&dir, &host)?;
-        Ok::<_, cachet_cli::CliError>((url, client, token))
+        // The account is a fact this machine already holds, not a
+        // question for anyone: the deployment named it at login.
+        let login = config::read_login(&dir, &host).unwrap_or_default();
+        Ok::<_, cachet_cli::CliError>((url, client, token, login))
     }
     .await;
     match outcome {
-        Ok((url, client, token)) => {
-            let probes = cachet_cli::doctor::run_doctor(
-                &client,
-                &url,
-                token.as_deref(),
-                cachet_cli::login::GITHUB_API_BASE,
-            )
-            .await;
+        Ok((url, client, token, login)) => {
+            let probes = cachet_cli::doctor::run_doctor(&client, &url, token.as_deref()).await;
             let (lines, all_ok) = cachet_cli::doctor::render(&probes);
             for line in lines {
                 println!("{line}");
+            }
+            if let Some(login) = login {
+                println!("cachet: this machine's credential belongs to {login}");
             }
             if all_ok {
                 ExitCode::SUCCESS
