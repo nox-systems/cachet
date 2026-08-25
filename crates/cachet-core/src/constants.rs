@@ -65,6 +65,12 @@ pub const ROOTS_BODY_BYTES_MAX: u64 = 524_288;
 /// matching the push pipeline's closure cap.
 pub const ROOTS_PATHS_MAX: usize = 4_096;
 
+/// A probe payload is at most this many bytes: `PUSH_PATHS_MAX` hashes
+/// serialize to ~600 KB, so 1 MiB is headroom, and the byte cap answers
+/// before the parser runs. The entry cap itself is `PUSH_PATHS_MAX`
+/// shared with the push pipeline: one number, one truth, both sides.
+pub const PROBE_BODY_BYTES_MAX: u64 = 1_048_576;
+
 /// The collector enumerates at most this many project leases per run.
 pub const ROOTS_PROJECTS_MAX: usize = 256;
 

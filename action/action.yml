@@ -36,7 +36,11 @@ inputs:
     required: false
     default: ""
   upstream-url:
-    description: The upstream cache to filter against before pushing.
+    description: >-
+      Ignored. The push pipeline no longer filters against an upstream
+      cache: cachet stores what the job pushes. Kept declared so existing
+      workflows that pass it keep parsing; it will be removed in a later
+      major.
     required: false
     default: https://cache.nixos.org
   default-branch-ref:
@@ -212,7 +216,6 @@ runs:
         CACHET_AUDIENCE: ${{ inputs.audience }}
         CACHET_PROJECT: ${{ inputs.project }}
         CACHET_ROOTS: ${{ inputs.roots }}
-        CACHET_UPSTREAM_URL: ${{ inputs.upstream-url }}
         CACHET_DEFAULT_BRANCH_REF: ${{ inputs.default-branch-ref }}
         CACHET_PUSH: ${{ inputs.push }}
       run: |
@@ -248,7 +251,6 @@ runs:
         env_file CACHET_AUDIENCE "${CACHET_AUDIENCE}"
         env_file CACHET_PROJECT "${project}"
         env_file CACHET_ROOTS "${CACHET_ROOTS}"
-        env_file CACHET_UPSTREAM_URL "${CACHET_UPSTREAM_URL}"
         env_file CACHET_DEFAULT_BRANCH_REF "${CACHET_DEFAULT_BRANCH_REF}"
         env_file CACHET_PUSH "${CACHET_PUSH}"
         echo "cachet: configured ${CACHET_CACHE_URL} as a substituter for project ${project}"

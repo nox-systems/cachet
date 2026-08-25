@@ -75,6 +75,68 @@ paths:
           description: The generated OpenAPI document, byte-identical to the committed docs/openapi.yaml
           content:
             application/yaml: {}
+  /api/probe:
+    post:
+      tags:
+      - routes
+      summary: |-
+        `POST /api/probe`: which of the named store-path hashes the cache
+        holds. One authorized request per run replaces the per-path narinfo
+        HEADs a push would otherwise price one round trip at a time; the
+        worker answers from a bucket enumeration, so the answer is bucket
+        truth rather than a secondary index's claim. Requires a read
+        credential.
+      operationId: probe_post
+      requestBody:
+        description: The store-path hashes to ask about, capped at the push pipeline's closure cap
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProbeBody'
+        required: true
+      responses:
+        '200':
+          description: The hashes with a narinfo stored, ascending
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProbeAnswer'
+        '400':
+          description: problem+json; code=malformed_probe
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '401':
+          description: problem+json; code=unauthorized
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '403':
+          description: problem+json; code=forbidden_org
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '411':
+          description: problem+json; code=length_required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '413':
+          description: problem+json; code=body_too_large
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '503':
+          description: problem+json; code=auth_unavailable or storage_unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
   /api/public/config:
     get:
       tags:
@@ -791,6 +853,34 @@ components:
           items:
             type: string
           description: The run ids in chronological order.
+    ProbeAnswer:
+      type: object
+      description: |-
+        The `POST /api/probe` answer: the hashes with a narinfo stored,
+        ascending. A narinfo present implies its NAR (never-dangle), so one
+        list is the whole answer.
+      required:
+      - present
+      properties:
+        present:
+          type: array
+          items:
+            type: string
+          description: The hashes the bucket holds, sorted.
+    ProbeBody:
+      type: object
+      description: |-
+        The `POST /api/probe` body: the store-path hashes one run asks about,
+        as 32-character nix base32. One authorized answer per run replaces
+        per-path narinfo HEADs.
+      required:
+      - paths
+      properties:
+        paths:
+          type: array
+          items:
+            type: string
+          description: The store-path hash halves, without names or the store directory.
     ProblemBody:
       type: object
       description: |-

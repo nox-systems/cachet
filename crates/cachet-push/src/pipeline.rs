@@ -3,11 +3,9 @@
 //! compose the decision layer over the adapters; nothing here knows nix
 //! argv or reqwest.
 
-use futures_util::StreamExt as _;
-
 use crate::adapters::{Adapters, Commands, Http, TokenSource, WireAnswer};
 use crate::error::PushError;
-use crate::filter::{drop_already_cached, filter_against_upstream};
+use crate::filter::drop_already_cached;
 use crate::plan::{
     StagedObject, UploadMechanics, object_url, owned_object_keys, plan_mechanics,
     read_staging_layout, upload_order,
@@ -15,12 +13,8 @@ use crate::plan::{
 use crate::retry::{RETRY_MAX, delay_after};
 use crate::snapshot::{bound_candidates, parse_snapshot, store_diff};
 
-/// The probe pool's width: bounded fan-out for presence checks, matching
-/// the previous pipeline's tuning.
-const PROBE_CONCURRENCY: usize = 16;
-
-/// One wave's upper membership: the probe pool's width, carried across
-/// the object uploads.
+/// One wave's upper membership: sixteen object uploads in flight, the
+/// previous pipeline's tuning carried over.
 const UPLOAD_CONCURRENCY: usize = 16;
 
 /// why: the budget bounds resident bodies at four large ones; waves
@@ -46,8 +40,6 @@ pub struct PushInputs {
     pub project: String,
     /// The flake installables whose closures root this push.
     pub installables: Vec<String>,
-    /// The upstream substituter to filter against.
-    pub upstream_url: String,
     /// Whether this run answers for the configured default branch.
     pub is_default_branch: bool,
 }
@@ -59,12 +51,10 @@ pub struct PushOutcome {
     pub added_paths: usize,
     /// Paths kept because the roots named them.
     pub roots_kept: usize,
-    /// Paths the upstream already serves.
-    pub upstream_hits: usize,
     /// Paths cachet already held.
     pub cache_hits: usize,
-    /// Probes that answered nothing.
-    pub probe_failures: usize,
+    /// Candidates that did not parse as store paths; kept for upload.
+    pub unparseable_paths: usize,
     /// Objects (NAR plus narinfo files) uploaded.
     pub uploaded_objects: usize,
     /// Whether the lease renewed on this run.
@@ -88,23 +78,20 @@ pub enum PushEvent {
         /// The installable as given.
         installable: String,
     },
-    /// Pass one's tally.
-    UpstreamTally {
-        /// Paths still bound for pushing.
-        to_push: usize,
-        /// Paths the upstream already serves.
-        upstream_hits: usize,
-        /// Probes with no answer.
-        probe_failures: usize,
-    },
-    /// Pass two's tally.
+    /// The probe's tally.
     CacheTally {
         /// Paths still bound for upload.
         to_upload: usize,
         /// Paths cachet already held.
         cache_hits: usize,
-        /// Probes with no answer.
-        probe_failures: usize,
+        /// Candidates that did not parse as store paths; kept for upload.
+        unparseable_paths: usize,
+    },
+    /// The bulk probe could not answer; every candidate counts as absent,
+    /// because re-uploading is the safe side of the error.
+    ProbeBulkFailed {
+        /// The probe's complaint.
+        message: String,
     },
     /// All surviving objects landed.
     UploadedObjects {
@@ -178,67 +165,51 @@ pub async fn push<C: Commands, H: Http, T: TokenSource>(
         .filter(|path| root_set.contains(*path))
         .count();
 
-    // Pass one: cachet itself. A rerun's candidates mostly revisit here,
-    // so the pass that can end the run asks first; the upstream pass then
-    // prices only what cachet does not hold. A both-present path now lands
-    // in cache_hits rather than upstream_hits. The upload set is the same
-    // either way.
-    let probe_token = a.tokens.mint(&inputs.audience).await?;
-    let cache_answers: std::collections::BTreeMap<String, Option<bool>> =
-        probe_pool(a.http, &inputs.cache_url, Some(&probe_token), &candidates)
-            .await
-            .into_iter()
-            .collect();
-    let cached = drop_already_cached(&candidates, &|path| {
-        cache_answers.get(path).copied().flatten()
-    });
+    // The presence question goes to cachet in one bulk request. There is
+    // no upstream pass: the cache stores what the org pushes, the way
+    // cachix and flakehub do, because a store is its own dedup and a
+    // foreign cache's holdings are none of this pipeline's business. A
+    // probe that cannot answer treats every candidate as absent: re-upload
+    // is re-signed identical bytes, but a false "held" would strand
+    // clients on a 404.
+    let present = match probe_present_set(a, inputs, &candidates).await {
+        Ok(present) => present,
+        Err(failure) => {
+            events(PushEvent::ProbeBulkFailed {
+                message: failure.to_string(),
+            });
+            std::collections::BTreeSet::new()
+        }
+    };
+    let cached = drop_already_cached(&candidates, &present);
     outcome.cache_hits = cached.cache_hits;
-    outcome.probe_failures += cached.probe_failures;
+    outcome.unparseable_paths = cached.unparseable_paths;
     events(PushEvent::CacheTally {
         to_upload: cached.to_upload.len(),
         cache_hits: cached.cache_hits,
-        probe_failures: cached.probe_failures,
+        unparseable_paths: cached.unparseable_paths,
     });
     if cached.to_upload.is_empty() {
-        return finish_with_lease(a, inputs, events, outcome, &resolved_root_paths).await;
-    }
-
-    // Pass two: upstream, only for the misses.
-    let upstream_answers: std::collections::BTreeMap<String, Option<bool>> =
-        probe_pool(a.http, &inputs.upstream_url, None, &cached.to_upload)
-            .await
-            .into_iter()
-            .collect();
-    let upstream = filter_against_upstream(&cached.to_upload, &root_set, &|path| {
-        upstream_answers.get(path).copied().flatten()
-    });
-    outcome.upstream_hits = upstream.upstream_hits;
-    outcome.probe_failures += upstream.probe_failures;
-    events(PushEvent::UpstreamTally {
-        to_push: upstream.kept.len(),
-        upstream_hits: upstream.upstream_hits,
-        probe_failures: upstream.probe_failures,
-    });
-    if upstream.kept.is_empty() {
         return finish_with_lease(a, inputs, events, outcome, &resolved_root_paths).await;
     }
 
     // Stage through nix: the store's own serialization and compression,
     // unsigned — the cache's pipeline verifies, then signs.
     let destination = format!("file://{}?compression=zstd", staging_dir.display());
-    a.commands.copy_to(&destination, &upstream.kept).await?;
+    a.commands.copy_to(&destination, &cached.to_upload).await?;
     let entries = a.commands.read_dir(staging_dir).await?;
     let mut objects = read_staging_layout(&entries)?;
-    // why: `nix copy` stages the survivors' closures, but the probe passes
-    // already priced every path. The wire set is the survivors' own pairs:
-    // their narinfos plus exactly the NARs those narinfos name. Closure
-    // members are upstream-covered or already signed here by construction,
-    // so re-uploading them is the thousands-of-objects-for-a-handful-of-
-    // paths class this filter exists to stop. GC reads are safe by the
-    // same construction: roots are survivors or probed hits, and a deep
-    // reference without a pushed narinfo marks without descent.
+    // why: `nix copy` stages the survivors' closures, but the probe
+    // already priced every path. The wire set is the survivors' own
+    // pairs: their narinfos plus exactly the NARs those narinfos name.
+    // Closure members predate this job — pushed when they entered the
+    // store, or foreign and fetched from the next substituter — so
+    // re-staging them is the thousands-of-objects-for-a-handful-of-paths
+    // class this filter exists to stop. GC reads are safe by the same
+    // construction: a deep reference without a pushed narinfo marks
+    // without descent.
     let mut survivor_bodies = std::collections::BTreeMap::new();
-    for path in &upstream.kept {
+    for path in &cached.to_upload {
         let hash = cachet_core::keys::parse_store_path(path)
             .map_err(|_| PushError::Detail {
                 message: format!("a survivor outside the store-path grammar: {path}"),
@@ -315,40 +286,56 @@ async fn finish_with_lease<C: Commands, H: Http, T: TokenSource>(
     Ok(outcome)
 }
 
-/// The probe pool: ordered answers, sixteen in flight, each one
-/// `Some(present)` / `Some(absent)` / `None` for a request that could not
-/// answer.
-async fn probe_pool<H: Http>(
-    http: &H,
-    base_url: &str,
-    bearer: Option<&str>,
-    paths: &[String],
-) -> Vec<(String, Option<bool>)> {
-    futures_util::stream::iter(paths.iter().map(|path| {
-        let bearer = bearer.map(str::to_string);
+/// The presence set from the bulk probe: one authorized `POST
+/// /api/probe` answers the whole candidate set at once. Candidates that
+/// fail the store-path grammar never join the body; the filter keeps
+/// them for upload the same way the old per-path probes did, fail-toward
+/// rebuild. The mint lives inside the retry closure so a retried attempt
+/// re-reads the memo (and a 401 clears it) rather than replaying a token
+/// seconds old.
+async fn probe_present_set<C: Commands, H: Http, T: TokenSource>(
+    a: &Adapters<'_, C, H, T>,
+    inputs: &PushInputs,
+    candidates: &[String],
+) -> Result<std::collections::BTreeSet<String>, PushError> {
+    let body_bytes = serde_json::to_vec(&cachet_api::ProbeBody {
+        paths: candidates
+            .iter()
+            .filter_map(|path| {
+                cachet_core::keys::parse_store_path(path)
+                    .ok()
+                    .map(|parts| parts.hash.as_str().to_string())
+            })
+            .collect(),
+    })
+    .expect("the probe body serializes");
+    let url = format!("{}/api/probe", inputs.cache_url.trim_end_matches('/'));
+    let answer = with_retries("the presence probe", a.sleep, || {
+        let url = url.clone();
+        let body_bytes = body_bytes.clone();
         async move {
-            let url = probe_url(base_url, path);
-            let answer = match http.head(&url, bearer.as_deref()).await {
-                Ok(404) => Some(false),
-                Ok(status) if (200..300).contains(&status) => Some(true),
-                _ => None,
-            };
-            (path.clone(), answer)
+            let token = a.tokens.mint(&inputs.audience).await?;
+            let answer = a
+                .http
+                .post(
+                    &url,
+                    &token,
+                    body_bytes,
+                    &[("content-type".to_string(), "application/json".to_string())],
+                )
+                .await?;
+            if answer.status == 401 {
+                a.tokens.invalidate(&inputs.audience).await;
+            }
+            require_2xx("the presence probe", answer)
         }
-    }))
-    .buffered(PROBE_CONCURRENCY)
-    .collect()
-    .await
-}
-
-/// The probe URL for one path: its hash half names the narinfo. A path
-/// outside the grammar is unprobeable: its probe answers nothing, and the
-/// filter keeps it, fail-toward-rebuild.
-fn probe_url(base_url: &str, path: &str) -> String {
-    let hash = cachet_core::keys::parse_store_path(path)
-        .map(|parts| parts.hash.as_str().to_string())
-        .unwrap_or_default();
-    object_url(base_url, &format!("{hash}.narinfo"), "")
+    })
+    .await?;
+    let answer: cachet_api::ProbeAnswer =
+        serde_json::from_slice(&answer.body).map_err(|_| PushError::Detail {
+            message: "the probe answered with an undecodable body".to_string(),
+        })?;
+    Ok(std::collections::BTreeSet::from_iter(answer.present))
 }
 
 /// Run an item list through the wave plan: each wave's items join_all,

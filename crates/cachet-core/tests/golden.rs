@@ -7,8 +7,8 @@
 //! file in the same commit.
 
 use cachet_core::constants::{
-    MULTIPART_PARTS_MAX, NARINFO_BYTES_MAX, NIX_BASE32_ALPHABET, NIX_CACHE_INFO, PUSH_PATHS_MAX,
-    UPLOAD_PART_BYTES, UPLOAD_SINGLE_MAX_BYTES,
+    MULTIPART_PARTS_MAX, NARINFO_BYTES_MAX, NIX_BASE32_ALPHABET, NIX_CACHE_INFO,
+    PROBE_BODY_BYTES_MAX, PUSH_PATHS_MAX, UPLOAD_PART_BYTES, UPLOAD_SINGLE_MAX_BYTES,
 };
 use cachet_core::error::ClientError;
 use cachet_core::generation::GenerationDocument;
@@ -23,9 +23,9 @@ fn nix_cache_info_body_is_exact() {
 #[test]
 fn bound_constants_are_the_contract() {
     let snap = format!(
-        "{NARINFO_BYTES_MAX} {UPLOAD_SINGLE_MAX_BYTES} {UPLOAD_PART_BYTES} {MULTIPART_PARTS_MAX} {PUSH_PATHS_MAX}"
+        "{NARINFO_BYTES_MAX} {UPLOAD_SINGLE_MAX_BYTES} {UPLOAD_PART_BYTES} {MULTIPART_PARTS_MAX} {PUSH_PATHS_MAX} {PROBE_BODY_BYTES_MAX}"
     );
-    insta::assert_snapshot!(snap, @"65536 94371800 67108864 1000 16384");
+    insta::assert_snapshot!(snap, @"65536 94371800 67108864 1000 16384 1048576");
 }
 
 #[test]
@@ -70,6 +70,7 @@ fn the_error_code_table_is_locked() {
         ClientError::MalformedOauth,
         ClientError::OauthStateUnknown,
         ClientError::ForbiddenAdmin,
+        ClientError::MalformedProbe,
     ];
     let body = table
         .iter()
@@ -102,7 +103,8 @@ fn the_error_code_table_is_locked() {
     malformed_oauth 400
     oauth_state_unknown 401
     forbidden_admin 403
-    ");
+    malformed_probe 400
+ ");
 }
 
 #[test]
@@ -263,6 +265,10 @@ fn problem_bodies_are_byte_locked() {
     insta::assert_snapshot!(
         cachet_core::problem::problem_body(ClientError::AuthUnavailable),
         @"{\"type\":\"about:blank\",\"status\":503,\"title\":\"authentication backend unavailable\",\"code\":\"auth_unavailable\"}\n"
+    );
+    insta::assert_snapshot!(
+        cachet_core::problem::problem_body(ClientError::MalformedProbe),
+        @"{\"type\":\"about:blank\",\"status\":400,\"title\":\"probe payload did not parse\",\"code\":\"malformed_probe\"}\n"
     );
 }
 

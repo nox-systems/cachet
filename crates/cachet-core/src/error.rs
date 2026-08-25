@@ -78,6 +78,9 @@ pub enum ClientError {
     /// A valid org member outside the configured admins, asking for an
     /// admin route.
     ForbiddenAdmin,
+    /// The probe payload did not parse, carried a hash outside the
+    /// grammar, or outgrew its entry cap.
+    MalformedProbe,
 }
 
 impl ClientError {
@@ -95,7 +98,8 @@ impl ClientError {
             | Self::StorePathMismatch
             | Self::FileHashMismatch
             | Self::NarHashMismatch
-            | Self::MalformedOauth => 400,
+            | Self::MalformedOauth
+            | Self::MalformedProbe => 400,
             Self::Unauthorized | Self::OauthStateUnknown => 401,
             Self::ForbiddenOrg
             | Self::ForbiddenRef
@@ -137,6 +141,7 @@ impl ClientError {
             Self::MalformedOauth => "malformed_oauth",
             Self::OauthStateUnknown => "oauth_state_unknown",
             Self::ForbiddenAdmin => "forbidden_admin",
+            Self::MalformedProbe => "malformed_probe",
         }
     }
 
@@ -170,6 +175,7 @@ impl ClientError {
             Self::MalformedOauth => "oauth request did not parse",
             Self::OauthStateUnknown => "oauth state unknown or expired",
             Self::ForbiddenAdmin => "outside the configured admins",
+            Self::MalformedProbe => "probe payload did not parse",
         }
     }
 }
