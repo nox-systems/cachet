@@ -1,0 +1,45 @@
+{
+  "cli_version": "0.10.2",
+  "checkpoint_id": "01M0W02ZAZVT3XAXTJ4RS2Q10M",
+  "strategy": "manual-commit",
+  "branch": "fix/fast-revocation",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "crates/cachet-api/src/lib.rs",
+    "crates/cachet-cli/src/login.rs",
+    "crates/cachet-cli/src/main.rs",
+    "crates/cachet-core/src/constants.rs",
+    "crates/cachet-core/src/oauth.rs",
+    "crates/cachet-core/src/read_token.rs",
+    "crates/cachet-worker/src/lib.rs",
+    "crates/cachet-worker/src/oauth.rs",
+    "crates/cachet-worker/src/verdict.rs",
+    "docs/adr/0002-three-authentication-flows.md",
+    "docs/openapi.yaml",
+    "docs/security/threat-model.md",
+    "workerd/check.mjs"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 88,
+    "cache_creation_tokens": 50130,
+    "cache_read_tokens": 37082690,
+    "output_tokens": 40281,
+    "api_call_count": 44,
+    "subagent_tokens": {
+      "input_tokens": 0,
+      "cache_creation_tokens": 0,
+      "cache_read_tokens": 0,
+      "output_tokens": 0,
+      "api_call_count": 0
+    }
+  }
+}
