@@ -3042,3 +3042,7 @@ If this event is something the user would act on now, send a PushNotification. R
 ---
 
 all deployed and tagged and pushed broski
+
+---
+
+Want to explain to me why main is suddenly red: https://github.com/nox-systems/cachet/actions/runs/32805815368/job/97677488715
