@@ -1,0 +1,51 @@
+<task-notification>
+<task-id>bk36q8qyk</task-id>
+<summary>Monitor event: "CI checks on PR #20"</summary>
+<event>lane-manifest: pass</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bk36q8qyk</task-id>
+<summary>Monitor event: "CI checks on PR #20"</summary>
+<event>actionlint: pass
+deny: pass
+doc-manifest: pass
+fmt: pass
+openapi: pass
+scripts: pass</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+Relax, relax, relax relax, relax bro. It's okay if hte PR cannot test the action change. It's okay
+
+---
+
+<task-notification>
+<task-id>bk36q8qyk</task-id>
+<summary>Monitor event: "CI checks on PR #20"</summary>
+<event>wasm: pass</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bk36q8qyk</task-id>
+<summary>Monitor event: "CI checks on PR #20"</summary>
+<event>kani: pass
+wasm-hygiene: pass</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+hey why the heck is https://github.com/nox-systems/cachet/actions/runs/32816519999/job/97705874760?pr=20 so slow? I feel like we're not caching as much as we could be in our CI, do you also feel that way?
+
+---
+
+Push the changes to main
