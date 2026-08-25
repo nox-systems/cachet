@@ -128,6 +128,23 @@ pub struct ProbeBody {
     pub paths: Vec<String>,
 }
 
+/// The `POST /api/login/exchange` body: what GitHub handed the CLI
+/// alongside the access token. Both are optional because an OAuth App
+/// that has not opted into expiring tokens issues neither, and its
+/// access token then needs no renewing.
+#[derive(
+    Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
+)]
+pub struct LoginExchangeBody {
+    /// The refresh token, so the deployment can renew without the
+    /// person logging in again.
+    #[serde(rename = "refreshToken", default)]
+    pub refresh_token: String,
+    /// Seconds the access token lasts, zero when it does not expire.
+    #[serde(rename = "expiresInSeconds", default)]
+    pub expires_in_seconds: u64,
+}
+
 /// The answer to a read-credential exchange: the token the caller keeps,
 /// who it speaks for, and when it stops working.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
@@ -205,7 +222,7 @@ pub struct ProblemBody {
         routes::gc_run_get,
         routes::stats_get,
     ),
-    components(schemas(PublicConfig, ProjectList, RenewalBody, ProbeBody, ProbeAnswer, ProblemBody, UploadCreated, UploadedPartBody, GcRunList, StatsBody, ReadTokenIssued))
+    components(schemas(PublicConfig, ProjectList, RenewalBody, ProbeBody, ProbeAnswer, ProblemBody, UploadCreated, UploadedPartBody, GcRunList, StatsBody, ReadTokenIssued, LoginExchangeBody))
 )]
 pub struct ApiDoc;
 

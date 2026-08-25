@@ -88,15 +88,22 @@ pub const READ_TOKEN_BODY_LENGTH: usize = 43;
 /// SHA-256 so the stored form cannot be presented.
 pub const READ_TOKEN_KEY_PREFIX: &str = "readtoken/";
 
+/// How early a stored GitHub token is renewed before it expires.
+///
+/// A token that lapses between the staleness check and the API call it
+/// is about to make would read as a membership failure, which is a
+/// person losing cache access for a reason that has nothing to do with
+/// them. Five minutes is far more than the round trip needs.
+pub const GITHUB_RENEW_SKEW_MS: u64 = 300_000;
+
 /// How long an issued read token is accepted.
 ///
-/// This is the deployment's revocation window for a laptop, and it
-/// replaces the verdict cache's 600 seconds for that credential class:
-/// nothing re-checks org membership while a token is live, because
-/// nothing holds a GitHub credential with which to ask. Thirty days is
-/// short enough that a departure is not indefinite and long enough that
-/// a laptop shut for a fortnight still works when it opens. Revoking
-/// sooner is deleting the record.
+/// This is the outer bound on a laptop credential's life, not the
+/// revocation window. Membership is re-checked against GitHub on the
+/// verdict cache's schedule, so someone who leaves the organisation
+/// loses access within that TTL; this is what stops a credential nobody
+/// has used in a month from living forever. Revoking sooner than either
+/// is deleting the record.
 pub const READ_TOKEN_TTL_MS: u64 = 30 * MILLIS_PER_DAY;
 
 /// An Authorization header longer than this is refused as malformed_auth:

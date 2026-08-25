@@ -304,6 +304,55 @@ struct ExchangeReply {
     access_token: Option<String>,
 }
 
+/// GitHub's whole token reply, for the callers that need more than the
+/// access token: a refresh brings back a new refresh token and a
+/// lifetime, and dropping either would make the next renewal impossible.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct TokenReply {
+    /// The access token, absent when GitHub refused.
+    pub access_token: Option<String>,
+    /// The refresh token, present when the app uses expiring tokens.
+    #[serde(default)]
+    pub refresh_token: Option<String>,
+    /// Seconds the access token lasts, absent when it does not expire.
+    #[serde(default)]
+    pub expires_in: Option<u64>,
+}
+
+/// POST a form to one of GitHub's OAuth endpoints and read the token
+/// reply. Shared by the callback exchange and the refresh path so both
+/// speak to GitHub the same way.
+///
+/// # Errors
+///
+/// [`ClientError::AuthUnavailable`] for a transport failure, a non-200,
+/// or an unparseable answer.
+pub async fn post_token_form(url: &str, body: String) -> cachet_core::error::Result<TokenReply> {
+    let headers = Headers::new();
+    let _ = headers.set("accept", "application/json");
+    let _ = headers.set("content-type", "application/x-www-form-urlencoded");
+    let _ = headers.set(
+        "user-agent",
+        concat!("cachet-worker/", env!("CARGO_PKG_VERSION")),
+    );
+    let mut init = RequestInit::new();
+    init.with_method(Method::Post);
+    init.headers.clone_from(&headers);
+    init.with_body(Some(body.into()));
+    let request = Request::new_with_init(url, &init).map_err(|_| ClientError::AuthUnavailable)?;
+    let mut response = Fetch::Request(request)
+        .send()
+        .await
+        .map_err(|_| ClientError::AuthUnavailable)?;
+    if response.status_code() != 200 {
+        return Err(ClientError::AuthUnavailable);
+    }
+    response
+        .json()
+        .await
+        .map_err(|_| ClientError::AuthUnavailable)
+}
+
 /// Exchange the callback code for a GitHub token. A transport failure or
 /// an unparseable answer is an outage and answers 503; a 200 without a
 /// token is GitHub refusing the code, which is the client's flow to

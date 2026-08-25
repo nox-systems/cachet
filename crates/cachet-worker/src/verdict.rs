@@ -546,11 +546,15 @@ async fn resolve_issued_token_memoized(
     identity
 }
 
-/// Look one issued read token up by its digest.
+/// Look one issued read token up, and check the identity behind it.
 ///
-/// An absent, unreadable, or expired record all answer the same
-/// refusal: a credential this deployment does not recognize is not
-/// something to explain.
+/// The record is a pointer, not a verdict: it names the GitHub token
+/// this credential stands for, and membership is re-checked against
+/// GitHub through the same verdict cache every other credential uses.
+/// That is what keeps the revocation window at one verdict TTL rather
+/// than the credential's whole life (ADR 0002). An absent, unreadable,
+/// or expired record all answer the same refusal, because a credential
+/// this deployment does not recognize is not something to explain.
 async fn resolve_issued_token(
     env: &Env,
     now: UnixMillis,
@@ -568,7 +572,7 @@ async fn resolve_issued_token(
     let Some(text) = stored else {
         return Err(ClientError::Unauthorized);
     };
-    let Ok(record) = cachet_core::read_token::ReadTokenRecord::parse(&text) else {
+    let Ok(mut record) = cachet_core::read_token::ReadTokenRecord::parse(&text) else {
         // The worker wrote this; an unreadable one is a storage fault,
         // and refusing is still the only safe answer to the caller.
         log::event("error", "auth.read_token_corrupt", &[]);
@@ -578,9 +582,123 @@ async fn resolve_issued_token(
         log::event("info", "auth.read_token_expired", &[]);
         return Err(ClientError::Unauthorized);
     }
-    Ok(ReadIdentity::Token {
-        login: record.login,
+
+    // Renew the GitHub token before asking it anything. GitHub's own
+    // tokens last eight hours where the OAuth App uses expiring ones,
+    // and the point of holding the refresh token here is that nobody
+    // logs in again for that.
+    if record.github_token_stale(now) {
+        if !record.can_renew() {
+            log::event("info", "auth.github_token_unrenewable", &[]);
+            return Err(ClientError::Unauthorized);
+        }
+        match renew_github_token(env, now, &record).await {
+            Ok(renewed) => {
+                record = renewed;
+                let ttl = record.expires_at_ms.saturating_sub(now.as_u64()).max(1_000) / 1_000;
+                if let Ok(builder) = kv
+                    .put(&key, record.serialize())
+                    .map(|builder| builder.expiration_ttl(ttl))
+                {
+                    // why: best effort. A renewal that lands in GitHub
+                    // but not in KV costs the next request another
+                    // renewal, which is a round trip, not an outage.
+                    let _ = builder.execute().await;
+                }
+                log::event("info", "auth.github_token_renewed", &[]);
+            }
+            Err(code) => return Err(code),
+        }
+    }
+
+    // The membership question, through the cache every credential class
+    // shares. A departure ends access at that TTL, not at this
+    // credential's expiry.
+    let verdict = verdict_for(env, now, &record.github_token).await?;
+    if verdict.org_member {
+        Ok(ReadIdentity::Token {
+            login: verdict.login,
+        })
+    } else {
+        log::event(
+            "info",
+            "auth.read_token_membership_lapsed",
+            &[("login", record.login)],
+        );
+        Err(ClientError::Unauthorized)
+    }
+}
+
+/// Trade the stored refresh token for a fresh access token.
+///
+/// GitHub waives the client secret for tokens minted through the device
+/// flow, which is every credential this path holds, so the exchange
+/// needs only the client id.
+async fn renew_github_token(
+    env: &Env,
+    now: UnixMillis,
+    record: &cachet_core::read_token::ReadTokenRecord,
+) -> Result<cachet_core::read_token::ReadTokenRecord> {
+    let client_id = env
+        .var("CACHET_OAUTH_CLIENT_ID")
+        .map(|value| value.to_string())
+        .map_err(|_| ClientError::AuthUnavailable)?;
+    let web_base = env.var("CACHET_GITHUB_WEB_URL").map_or_else(
+        |_| "https://github.com".to_string(),
+        |value| value.to_string(),
+    );
+    let reply = crate::oauth::post_token_form(
+        &format!("{web_base}/login/oauth/access_token"),
+        cachet_core::oauth::refresh_form(&client_id, &record.github_refresh_token),
+    )
+    .await?;
+    // GitHub answers a refused refresh as 200 with no token, the same
+    // way it answers a refused code: the absence is the refusal.
+    let access = reply
+        .access_token
+        .filter(|token| !token.is_empty())
+        .ok_or(ClientError::Unauthorized)?;
+    let expires_in = reply.expires_in.unwrap_or(0);
+    Ok(cachet_core::read_token::ReadTokenRecord {
+        github_token: access,
+        // why: a rotated refresh token replaces the old one, and GitHub
+        // rotates on every use. Keeping the old one would make the next
+        // renewal fail.
+        github_refresh_token: reply
+            .refresh_token
+            .filter(|token| !token.is_empty())
+            .unwrap_or_else(|| record.github_refresh_token.clone()),
+        github_expires_at_ms: if expires_in == 0 {
+            0
+        } else {
+            now.as_u64()
+                .saturating_add(expires_in.saturating_mul(1_000))
+        },
+        ..record.clone()
     })
+}
+
+/// The membership question against the shared verdict cache: the memo,
+/// then KV, then GitHub, exactly as a bare GitHub token would take.
+async fn verdict_for(env: &Env, now: UnixMillis, github_token: &str) -> Result<Verdict> {
+    let digest_hex = hex_digest(&sha256(github_token.as_bytes()));
+    let kv = env
+        .kv(KV_BINDING)
+        .map_err(|_| ClientError::AuthUnavailable)?;
+    if let Ok(Some(verdict)) = kv
+        .get(&format!("{VERDICT_KEY_PREFIX}{digest_hex}"))
+        .json::<Verdict>()
+        .await
+    {
+        if now.saturating_ms_since(UnixMillis::new(verdict.checked_at_ms))
+            < verdict_ttl_ms(verdict.org_member)
+        {
+            return Ok(verdict);
+        }
+    }
+    let verdict = check_github_token(env, now, github_token).await?;
+    cache_verdict(&kv, &digest_hex, &verdict).await;
+    Ok(verdict)
 }
 
 /// Issue a read credential to a caller who proved a GitHub identity.
@@ -601,7 +719,7 @@ pub async fn issue_read_token(
     env: &Env,
     now: UnixMillis,
     github_token: &str,
-    body: &str,
+    grant: &cachet_api::LoginExchangeBody,
 ) -> Result<cachet_api::ReadTokenIssued> {
     let verdict = check_github_token(env, now, github_token).await?;
     if verdict.login.is_empty() {
@@ -624,6 +742,17 @@ pub async fn issue_read_token(
         login: verdict.login.clone(),
         issued_at_ms: now.as_u64(),
         expires_at_ms,
+        // The GitHub credentials stay here and only here: this is what
+        // keeps membership checkable without the laptop ever sending
+        // them again (ADR 0002).
+        github_token: github_token.to_string(),
+        github_refresh_token: grant.refresh_token.clone(),
+        github_expires_at_ms: if grant.expires_in_seconds == 0 {
+            0
+        } else {
+            now.as_u64()
+                .saturating_add(grant.expires_in_seconds.saturating_mul(1_000))
+        },
     };
     let kv = env
         .kv(KV_BINDING)
@@ -643,7 +772,7 @@ pub async fn issue_read_token(
         "auth.read_token_issued",
         &[
             ("login", verdict.login.clone()),
-            ("label", body.to_string()),
+            ("renewable", (!grant.refresh_token.is_empty()).to_string()),
         ],
     );
     Ok(cachet_api::ReadTokenIssued {

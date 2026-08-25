@@ -10,10 +10,22 @@
 //! who ever logged in, which is a store of other people's credentials it
 //! has no reason to keep.
 //!
-//! So GitHub proves who you are once, at login, and the deployment
-//! issues its own credential for the daemon to carry. The token is
-//! opaque, it belongs to one person, the deployment can delete it, and
-//! its lifetime is the deployment's decision rather than GitHub's.
+//! So the deployment issues its own credential for the daemon to carry,
+//! and keeps the GitHub tokens itself. The issued token is opaque and
+//! names nothing; it is a pointer to a record holding the GitHub
+//! credentials that back it. Two things follow, and they are the whole
+//! reason for the shape.
+//!
+//! Nothing replayable crosses the wire. What the daemon sends a thousand
+//! times a build authenticates against this deployment and nowhere else.
+//!
+//! And membership stays checkable. The record holds the GitHub token, so
+//! every read still resolves through the verdict cache against GitHub as
+//! the source of truth, and someone who leaves the organisation loses
+//! access within one verdict TTL rather than whenever their credential
+//! happens to expire. The record also holds the refresh token, so when
+//! GitHub's eight-hour access token dies the worker mints another one
+//! itself. Nobody logs in again for that.
 
 use crate::constants::{READ_TOKEN_BODY_LENGTH, READ_TOKEN_PREFIX};
 
@@ -52,9 +64,29 @@ pub struct ReadTokenRecord {
     /// When the deployment issued it, epoch milliseconds.
     #[serde(rename = "issuedAtMs")]
     pub issued_at_ms: u64,
-    /// When it stops being accepted, epoch milliseconds.
+    /// When it stops being accepted, epoch milliseconds. This is the
+    /// outer bound on the credential's life, not the revocation window:
+    /// membership is re-checked against GitHub on the verdict cache's
+    /// own schedule, so leaving the organisation ends access long before
+    /// this.
     #[serde(rename = "expiresAtMs")]
     pub expires_at_ms: u64,
+    /// The GitHub access token this credential stands for. Held here so
+    /// membership stays checkable, and held only here: it never rides a
+    /// request and never reaches the laptop's netrc.
+    #[serde(rename = "githubToken")]
+    pub github_token: String,
+    /// The refresh token GitHub issues alongside it, when the OAuth App
+    /// uses expiring tokens. Empty when it does not, which is a
+    /// deployment whose access tokens never expire and so never need
+    /// renewing.
+    #[serde(rename = "githubRefreshToken", default)]
+    pub github_refresh_token: String,
+    /// When the access token above stops working, epoch milliseconds.
+    /// Zero means GitHub did not say, which it does not for
+    /// non-expiring tokens.
+    #[serde(rename = "githubExpiresAtMs", default)]
+    pub github_expires_at_ms: u64,
 }
 
 impl ReadTokenRecord {
@@ -84,6 +116,29 @@ impl ReadTokenRecord {
     #[must_use]
     pub fn is_live(&self, now: crate::types::UnixMillis) -> bool {
         now.as_u64() < self.expires_at_ms
+    }
+
+    /// Whether the GitHub token behind this record needs renewing before
+    /// it is used again.
+    ///
+    /// A token with no stated expiry never needs it: that is an OAuth
+    /// App which has not opted into short-lived tokens, and its token
+    /// works until someone revokes it. One with an expiry is renewed
+    /// early, because a token that expires between this check and the
+    /// call it is about to make would read as a membership failure.
+    #[must_use]
+    pub fn github_token_stale(&self, now: crate::types::UnixMillis) -> bool {
+        self.github_expires_at_ms != 0
+            && now
+                .as_u64()
+                .saturating_add(crate::constants::GITHUB_RENEW_SKEW_MS)
+                >= self.github_expires_at_ms
+    }
+
+    /// Whether this record can renew its own GitHub token.
+    #[must_use]
+    pub fn can_renew(&self) -> bool {
+        !self.github_refresh_token.is_empty()
     }
 }
 
@@ -128,6 +183,9 @@ mod tests {
             login: "octocat".to_string(),
             issued_at_ms: 1_780_000_000_000,
             expires_at_ms: 1_780_000_600_000,
+            github_token: "gho_live".to_string(),
+            github_refresh_token: "ghr_live".to_string(),
+            github_expires_at_ms: 1_780_000_300_000,
         };
         assert_eq!(
             ReadTokenRecord::parse(&record.serialize()).expect("its own form"),
@@ -141,6 +199,9 @@ mod tests {
             login: "octocat".to_string(),
             issued_at_ms: 1_000,
             expires_at_ms: 2_000,
+            github_token: "gho_live".to_string(),
+            github_refresh_token: String::new(),
+            github_expires_at_ms: 0,
         };
         assert!(record.is_live(UnixMillis::new(1_999)));
         assert!(
