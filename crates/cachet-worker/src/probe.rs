@@ -84,6 +84,19 @@ pub async fn answer_probe(env: &Env, now: UnixMillis, mut req: Request) -> Resul
         ],
     );
 
+    // One point per push, so a UI can show how much a push actually had
+    // to upload: asked against present is the cache's hit rate on the
+    // write side, and pages is what the enumeration cost.
+    crate::stats::emit(
+        env,
+        &cachet_core::stats::StatPoint::new(
+            cachet_core::stats::StatEvent::Probe,
+            "probe",
+            "answered",
+        )
+        .measuring(asked.len() as u64, present.len() as u64),
+    );
+
     let body = serde_json::to_string(&cachet_api::ProbeAnswer { present })
         .map_err(|_| worker::Error::RustError("the probe answer serializes".to_string()))?;
     let headers = worker::Headers::new();

@@ -37,6 +37,16 @@ export default Alchemy.Stack(
     const kv = yield* Cloudflare.KV.Namespace("KV", {
       title: resourceName,
     });
+    // Reads, writes, and probes are counted here, one data point each,
+    // with the dimensions a question gets grouped by: what, how it went,
+    // who asked, and which repository they were pushing for. The worker
+    // can only write to it (the platform allows nothing else), so
+    // reading is Cloudflare's SQL API and the queries live in
+    // docs/DEPLOY.md. A dataset is pure configuration: nothing is
+    // created, and nothing is destroyed when a deployment goes away.
+    const events = yield* Cloudflare.AnalyticsEngine.Dataset("Events", {
+      dataset: resourceName.replaceAll("-", "_"),
+    });
 
     const worker = yield* Cloudflare.Worker("Worker", {
       name: resourceName,
@@ -46,6 +56,7 @@ export default Alchemy.Stack(
       env: {
         CACHE_BUCKET: bucket,
         CACHET_KV: kv,
+        CACHET_EVENTS: events,
         CACHET_ORGS: cfg.orgs,
         CACHET_AUDIENCE: cfg.audience,
         CACHET_DEFAULT_BRANCH_REF: cfg.defaultBranchRef,

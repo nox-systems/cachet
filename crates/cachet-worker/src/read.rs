@@ -12,6 +12,7 @@ use cachet_core::read::{
     NOT_FOUND_BODY, ObjectKind, cache_info_response_headers, generation_response_headers,
     is_edge_cacheable, not_found_response_headers, object_response_headers,
 };
+use cachet_core::stats::{StatCaller, StatEvent, StatPoint};
 use worker::{Cache, Context, Env, Headers, Response, Result};
 
 use crate::{error, log};
@@ -151,6 +152,7 @@ pub async fn serve_object(
     bucket_key: &str,
     kind: ObjectKind,
     generation: Option<u64>,
+    caller: &StatCaller,
 ) -> Result<Response> {
     // Two key spaces, looked up in the order they pay off. A stored
     // object's entry outlives sweeps, so the common warm read answers on
@@ -165,6 +167,7 @@ pub async fn serve_object(
             "read.edge_hit",
             &[("kind", kind.name().to_string())],
         );
+        count_read(env, kind, "edge_hit", caller, 0);
         return Ok(hit);
     }
     if let Some(miss_key) = &miss_key {
@@ -187,6 +190,7 @@ pub async fn serve_object(
         // 404 as "this cache does not have it" and moves to the next
         // substituter, while a 5xx would make it retry us.
         log::event("info", "read.miss", &[("kind", kind.name().to_string())]);
+        count_read(env, kind, "miss", caller, 0);
         let mut missing = miss_response(true)?;
         if let Some(miss_key) = miss_key {
             let cached = missing.cloned()?;
@@ -229,5 +233,20 @@ pub async fn serve_object(
         "read.bucket_hit",
         &[("kind", kind.name().to_string())],
     );
+    count_read(env, kind, "bucket_hit", caller, size);
     Ok(response)
+}
+
+/// Count one served object, with who asked for it.
+///
+/// The caller is the dimension that separates a cache CI hammers from
+/// one people substitute from at their desks, and for a workflow run it
+/// carries the repository too, so a hit rate can be read per repo.
+fn count_read(env: &Env, kind: ObjectKind, outcome: &str, caller: &StatCaller, size_bytes: u64) {
+    crate::stats::emit(
+        env,
+        &StatPoint::new(StatEvent::Read, kind.name(), outcome)
+            .by(caller)
+            .measuring(1, size_bytes),
+    );
 }

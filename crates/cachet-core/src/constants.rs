@@ -74,6 +74,9 @@ pub const PROBE_BODY_BYTES_MAX: u64 = 1_048_576;
 /// The collector enumerates at most this many project leases per run.
 pub const ROOTS_PROJECTS_MAX: usize = 256;
 
+/// The binding name of the dataset every counted thing is written to.
+pub const STATS_BINDING: &str = "CACHET_EVENTS";
+
 /// The prefix every read credential this deployment issues carries. It
 /// is what lets the read path tell an issued token from an OIDC token
 /// and from a GitHub token without trying each verifier in turn.
