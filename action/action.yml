@@ -127,8 +127,8 @@ runs:
         } >> "${GITHUB_ENV}"
         echo "cachet: read credential provisioned before the daemon starts"
 
-    # Determinate's installer, installing plain nix rather than Determinate
-    # Nix.
+    # Determinate's installer, installing plain nix rather than
+    # Determinate Nix.
     #
     # why: `determinate: false`. On a runner granting id-token: write,
     # which this action requires for its own OIDC token, Determinate mints
@@ -141,7 +141,10 @@ runs:
     # `additionalNetrcSources` before start-up so a failed login could not
     # gate the netrc's synthesis. Plain nix reads `netrc-file` from its own
     # config and none of that applies.
-    - uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+    # why: named. The step otherwise renders under the installer's own
+    # name, "Install Determinate Nix", which is what it no longer does.
+    - name: Install nix
+      uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
       with:
         determinate: false
         # The credential, the substituter, and the trusted key all ride
@@ -216,8 +219,14 @@ runs:
         # regression surfaces in the log rather than as a silent rebuild: a
         # 404 means the credential is present and authenticated (the probed
         # path is simply absent), while a 401 means it is not.
+        #
+        # why: under sudo. The probe has to read the same file the daemon
+        # reads, and that file is the credential: 0600 and owned by root.
+        # Running as the workflow user meant curl silently found nothing
+        # to send and the probe reported 401 on a cache that was serving
+        # the daemon perfectly well, which is worse than no probe at all.
         daemon_netrc="$(nix config show netrc-file 2>/dev/null || echo /etc/nix/netrc)"
-        probe_code="$(curl -s -o /dev/null -w '%{http_code}' --netrc-file "${daemon_netrc}" \
+        probe_code="$(sudo curl -s -o /dev/null -w '%{http_code}' --netrc-file "${daemon_netrc}" \
           "${CACHET_CACHE_URL%/}/0000000000000000000000000000000a.narinfo" 2>/dev/null || echo 000)"
         echo "cachet: read auth probe returned ${probe_code} (404 = authenticated, 401 = not)"
 
