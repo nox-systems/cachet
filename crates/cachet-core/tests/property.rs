@@ -196,8 +196,7 @@ fn lease_parse_is_total(tc: TestCase) {
 // (docs/testing/kani.md).
 #[hegel::test(test_cases = 1)]
 fn gc_laws_hold_over_the_exhausted_decision_space(_tc: TestCase) {
-    use cachet_core::constants::{SWEEP_MAX_FRACTION_DENOMINATOR, SWEEP_MAX_FRACTION_NUMERATOR};
-    use cachet_core::gc::{GateTrip, InventoryItem, plan_deletions};
+    use cachet_core::gc::{InventoryItem, plan_deletions};
     use cachet_core::keys::is_reserved_key;
     use cachet_core::types::{StorePathHash, UnixMillis};
     use std::collections::{BTreeMap, BTreeSet};
@@ -276,22 +275,16 @@ fn gc_laws_hold_over_the_exhausted_decision_space(_tc: TestCase) {
                             UnixMillis::new(NOW),
                             GRACE,
                         );
-                        let gate = expected_narinfos.len() * SWEEP_MAX_FRACTION_DENOMINATOR
-                            > 4 * SWEEP_MAX_FRACTION_NUMERATOR;
-                        if gate {
-                            assert!(matches!(
-                                plan.gate,
-                                Some(GateTrip::SweepFractionExceeded { .. })
-                            ));
-                            assert!(plan.narinfo_deletes.is_empty());
-                            assert!(plan.nar_deletes.is_empty());
-                        } else {
-                            expected_nars.sort();
-                            expected_nars.dedup();
-                            assert_eq!(plan.gate, None);
-                            assert_eq!(plan.narinfo_deletes, expected_narinfos);
-                            assert_eq!(plan.nar_deletes, expected_nars);
-                        }
+                        // Every admissible plan is planned. How much one
+                        // run may delete is not bounded: the gate that
+                        // used to bound it could not be satisfied by the
+                        // run after it either, so a deployment with a lot
+                        // of dead paths stopped collecting for good.
+                        expected_nars.sort();
+                        expected_nars.dedup();
+                        assert_eq!(plan.gate, None);
+                        assert_eq!(plan.narinfo_deletes, expected_narinfos);
+                        assert_eq!(plan.nar_deletes, expected_nars);
                         for deleted in plan.narinfo_deletes.iter().chain(&plan.nar_deletes) {
                             assert!(!is_reserved_key(deleted));
                         }

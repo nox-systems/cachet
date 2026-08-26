@@ -266,15 +266,6 @@ pub const LEASE_RETENTION_MS: u64 = 30 * MILLIS_PER_DAY;
 /// settle.
 pub const GRACE_WINDOW_MS: u64 = 14 * MILLIS_PER_DAY;
 
-/// A run that would delete more than this fraction of the inventory is
-/// refused: a cache that empties overnight is worse than a cache that
-/// grows. Kept as an integer ratio (the previous float compared after
-/// lossy casts).
-pub const SWEEP_MAX_FRACTION_NUMERATOR: usize = 1;
-
-/// The denominator half of [`SWEEP_MAX_FRACTION_NUMERATOR`]: 1/4.
-pub const SWEEP_MAX_FRACTION_DENOMINATOR: usize = 4;
-
 /// The closure walk refuses to grow past this many visited paths, which
 /// also bounds narinfo reads per run.
 pub const CLOSURE_WALK_PATHS_MAX: usize = 100_000;

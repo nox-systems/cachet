@@ -21,9 +21,8 @@ classes in force now:
 - GC decision laws. Over a six-key inventory every combination of age
   class and mark is exhausted, computing the expected plan independently
   and comparing it whole: reserved keys are never swept, marked paths
-  are never swept, an upload exactly at the grace boundary is kept, a
-  tripped fraction gate always means an empty plan, and a NAR URL named
-  by any marked narinfo survives.
+  are never swept, an upload exactly at the grace boundary is kept, and a
+  NAR URL named by any marked narinfo survives.
 - The series law. A gap-filled counter answer carries one row per bucket
   its window covers, ascending and contiguous, ending at the bucket the
   request clock falls in, and counts only the buckets the dataset

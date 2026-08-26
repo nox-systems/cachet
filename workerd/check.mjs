@@ -1897,9 +1897,9 @@ await scenario(
     [NARINFO_KEY, await readFile(path.join(fixturesDir, NARINFO_KEY))],
     [NAR_KEY, await readFile(path.join(fixturesDir, NAR_FILE))],
     ["roots/lane-org-lane-repo", LEASE_DOC],
-    // why the roster: the fraction gate refuses a sweep past 25% of the
-    // narinfo inventory, so the happy path needs a cache big enough that
-    // one dead path is a quarter or less of it.
+    // why the roster: a cache with several live paths beside the dead
+    // one, so the sweep is proven to spare what a lease pins rather than
+    // to empty a bucket that held nothing else.
     [
       `${"b".repeat(32)}.narinfo`,
       await deadNarinfoFor("b".repeat(32), "q".repeat(52)),
@@ -2118,7 +2118,7 @@ await scenario(
 );
 
 await scenario(
-  "the fraction gate aborts a wholesale sweep",
+  "a collection that clears the cache clears it",
   async () => [
     [
       `${"d".repeat(32)}.narinfo`,
@@ -2138,30 +2138,32 @@ await scenario(
     ],
   ],
   async ({ base, events, persist }) => {
-    await check(
-      "a run that would empty the cache deletes nothing",
-      async () => {
-        assert.ok(
-          await triggerScheduled(base),
-          "the dev endpoint ran the handler",
-        );
-        const stillThere = await fetch(`${base}/${"d".repeat(32)}.narinfo`, {
-          headers: READ_AUTH(),
-        });
-        assert.equal(stillThere.status, 200, "the gate kept every key");
-        assert.ok(
-          events().includes('"event":"gc.gate_tripped"'),
-          `the trip logged:\n${events().slice(-800)}`,
-        );
-        const runId = captureRunId(events);
-        const report = await r2Get(persist, `gc-reports/${runId}.json`);
-        const body = JSON.parse(report.body);
-        assert.equal(body.gate, "sweep_fraction_exceeded");
-        assert.equal(body.narinfosDeleted, 0);
-        const cursor = await r2Get(persist, "meta/gc-cursor");
-        assert.ok(!cursor.ok, "an aborted run still ends: no parked cursor");
-      },
-    );
+    await check("every dead path goes, however many that is", async () => {
+      // This used to be refused. A gate stopping any sweep past a
+      // quarter of the inventory could not be satisfied by the next run
+      // either: it deleted nothing, so the run after it saw the same
+      // inventory and refused again, and a deployment with a lot of
+      // dead paths stopped collecting permanently (ADR 0017).
+      assert.ok(
+        await triggerScheduled(base),
+        "the dev endpoint ran the handler",
+      );
+      const swept = await fetch(`${base}/${"d".repeat(32)}.narinfo`, {
+        headers: READ_AUTH(),
+      });
+      assert.equal(swept.status, 404, "a dead path is gone");
+      assert.ok(
+        !events().includes('"event":"gc.gate_tripped"'),
+        `nothing refused the sweep:\n${events().slice(-800)}`,
+      );
+      const runId = captureRunId(events);
+      const report = await r2Get(persist, `gc-reports/${runId}.json`);
+      const body = JSON.parse(report.body);
+      assert.equal(body.gate, null);
+      assert.equal(body.narinfosDeleted, 3, report.body);
+      const cursor = await r2Get(persist, "meta/gc-cursor");
+      assert.ok(!cursor.ok, "a finished run parks no cursor");
+    });
   },
 );
 

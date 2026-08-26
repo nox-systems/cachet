@@ -10,9 +10,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use crate::constants::{
-    CLOSURE_WALK_PATHS_MAX, SWEEP_MAX_FRACTION_DENOMINATOR, SWEEP_MAX_FRACTION_NUMERATOR,
-};
+use crate::constants::CLOSURE_WALK_PATHS_MAX;
 use crate::keys::{NarKey, is_reserved_key};
 use crate::narinfo::Narinfo;
 use crate::types::{StorePathHash, UnixMillis};
@@ -42,14 +40,6 @@ pub enum GateTrip {
         /// The number of paths visited when the cap tripped.
         visited: usize,
     },
-    /// Deleting the candidates would remove more than the configured
-    /// fraction of the path universe.
-    SweepFractionExceeded {
-        /// Candidate narinfo count.
-        deletions: usize,
-        /// Total narinfo inventory.
-        inventory: usize,
-    },
     /// The generation document is corrupt: sweeping without a reliable
     /// epoch would leave the edge serving deleted objects.
     GenerationCorrupt,
@@ -65,13 +55,6 @@ impl core::fmt::Display for GateTrip {
             Self::WalkBudgetExhausted { visited } => {
                 write!(f, "walk budget exhausted at {visited} paths")
             }
-            Self::SweepFractionExceeded {
-                deletions,
-                inventory,
-            } => write!(
-                f,
-                "sweep of {deletions}/{inventory} paths exceeds the fraction gate"
-            ),
             Self::GenerationCorrupt => f.write_str("generation document corrupt"),
         }
     }
@@ -87,7 +70,6 @@ impl GateTrip {
             Self::InventoryTruncated => "inventory_truncated",
             Self::LeasesTruncated => "leases_truncated",
             Self::WalkBudgetExhausted { .. } => "walk_budget_exhausted",
-            Self::SweepFractionExceeded { .. } => "sweep_fraction_exceeded",
             Self::GenerationCorrupt => "generation_corrupt",
         }
     }
@@ -340,8 +322,15 @@ pub fn sweep_candidates(
 /// Candidates come from [`sweep_candidates`]. NAR deletions resolve from
 /// the candidate narinfos' own URLs minus every URL a marked narinfo
 /// still names, so a NAR shared between a live and a dead path survives.
-/// The fraction gate compares candidate count against the full narinfo
-/// inventory: a run that would empty the cache is refused outright.
+///
+/// How much one run may delete is not bounded, and used to be. A gate
+/// refusing any sweep past a quarter of the inventory could not be
+/// satisfied by the run after it either: refusing deleted nothing, so the
+/// next run saw the same inventory and the same candidates and refused
+/// again, and a deployment with a lot of genuinely dead paths stopped
+/// collecting permanently. The gates that remain fire when the collector
+/// cannot see the truth, which is the condition worth refusing on
+/// (ADR 0017).
 pub fn plan_deletions(
     inventory: &[InventoryItem],
     marked: &BTreeSet<StorePathHash>,
@@ -352,34 +341,11 @@ pub fn plan_deletions(
 ) -> DeletionPlan {
     let mut plan = DeletionPlan::default();
 
-    let narinfo_inventory = inventory
-        .iter()
-        .filter(|item| {
-            !is_reserved_key(&item.key)
-                && item.key.ends_with(crate::constants::NARINFO_KEY_SUFFIX)
-                && StorePathHash::parse(
-                    &item.key[..item.key.len() - crate::constants::NARINFO_KEY_SUFFIX.len()],
-                )
-                .is_ok()
-        })
-        .count();
     let narinfo_deletes: Vec<String> = sweep_candidates(inventory, marked, now, grace_ms)
         .into_iter()
         .map(|(_, key)| key)
         .collect();
 
-    // why: the fraction gate compares in integers, not floats: usize→f64
-    // casts lose precision at pathological cache sizes, and a safety gate
-    // must never silently widen.
-    if narinfo_deletes.len() * SWEEP_MAX_FRACTION_DENOMINATOR
-        > narinfo_inventory * SWEEP_MAX_FRACTION_NUMERATOR
-    {
-        plan.gate = Some(GateTrip::SweepFractionExceeded {
-            deletions: narinfo_deletes.len(),
-            inventory: narinfo_inventory,
-        });
-        return plan;
-    }
     plan.narinfo_deletes = narinfo_deletes;
 
     let live_urls: BTreeSet<&str> = marked_urls.values().map(NarKey::as_str).collect();
@@ -736,7 +702,7 @@ mod tests {
             nars_deleted: 2,
             bytes_freed: 486_400,
             uploads_aborted: 1,
-            gate: Some("sweep_fraction_exceeded".to_string()),
+            gate: Some("inventory_truncated".to_string()),
         };
         let text = report.serialize();
         assert!(text.ends_with("}\n"));
@@ -846,7 +812,8 @@ mod tests {
         let dead = "d".repeat(32);
         let live_key = format!("{live}.narinfo");
         let dead_key = format!("{dead}.narinfo");
-        // Six fresh paths keep the sweep small against the fraction gate:
+        // Six fresh paths beside the dead one, so the sweep is proven to
+        // spare what a lease pins rather than to empty a bucket:
         // one deletion over nine paths is far below 0.25.
         let fresh_keys: Vec<String> = (0..6)
             .map(|i| format!("{:0>32}.narinfo", 10_007 * i))
@@ -874,18 +841,21 @@ mod tests {
             UnixMillis::new(1_000_000_000_000),
             GRACE_WINDOW_MS,
         );
-        assert!(plan.gate.is_none(), "fraction gate held: {plan:?}");
+        assert!(plan.gate.is_none(), "no gate tripped: {plan:?}");
         assert_eq!(plan.narinfo_deletes, vec![dead_key]);
         assert_eq!(plan.nar_deletes, vec![dead_url.as_str().to_string()]);
         assert!(!plan.narinfo_deletes.contains(&live_key));
     }
 
     #[test]
-    fn the_fraction_gate_aborts() {
-        let hashes: Vec<String> = (0..8)
-            .map(|i| format!("{:0>32}", i * 111_111_111_u64))
+    fn a_wholesale_sweep_is_planned_rather_than_refused() {
+        // The gate that used to refuse this could not be satisfied by the
+        // run after it either: refusing deleted nothing, so the next run
+        // saw the same inventory and refused again. A cache whose problem
+        // is unbounded growth would then never collect again.
+        let keys: Vec<String> = (0..8)
+            .map(|i| format!("{:0>32}.narinfo", i * 111_111_111_u64))
             .collect();
-        let keys: Vec<String> = hashes.iter().map(|h| format!("{h}.narinfo")).collect();
         let inventory = items(
             &keys.iter().map(String::as_str).collect::<Vec<_>>(),
             GRACE_WINDOW_MS * 2,
@@ -898,11 +868,7 @@ mod tests {
             UnixMillis::new(1_000_000_000_000),
             GRACE_WINDOW_MS,
         );
-        assert!(matches!(
-            plan.gate,
-            Some(GateTrip::SweepFractionExceeded { .. })
-        ));
-        assert!(plan.narinfo_deletes.is_empty());
-        assert!(plan.nar_deletes.is_empty());
+        assert!(plan.gate.is_none(), "{plan:?}");
+        assert_eq!(plan.narinfo_deletes.len(), 8);
     }
 }

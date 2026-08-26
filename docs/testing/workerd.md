@@ -102,8 +102,9 @@ invoke the scheduled handler over wrangler's dev endpoint with grace
 zeroed: one proves the collector sweeps a dead path's narinfo and NAR,
 spares the leased path, reaps a stale upload, bumps the generation, and
 lands its report and stage artifacts, with the bucket state read back
-through `wrangler r2 object get`; the other proves the fraction gate
-aborts a wholesale sweep with nothing deleted. The reports the first run
+through `wrangler r2 object get`; the other proves a collection that
+clears the cache clears it, since how much one run may delete is not
+bounded (ADR 0017). The reports the first run
 lands then serve through the admin API: the run list, the report read,
 and the stats derivation answer the admin token, 401 the anonymous
 request, and 403 forbidden_admin the org member outside CACHET_ADMINS.

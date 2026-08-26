@@ -1,6 +1,7 @@
 # ADR 0005: The collector is armed from day one, on the cron
 
-- **Status:** Accepted
+- **Status:** Accepted; point 4's sweep fraction removed by
+  [ADR 0017](0017-the-collector-refuses-on-blindness-not-on-scale.md)
 - **Date:** 2026-08-21
 - **Context doc:** [../../CLAUDE.md](../../CLAUDE.md) §1; [../testing/workerd.md](../testing/workerd.md)
 
@@ -29,14 +30,16 @@ mark phase's inputs are suspect.
 3. Stages recompute at every boundary from bucket truth: inventory and
    leases never persist across ticks; mark/collect/sweep progress does,
    as cursor state.
-4. The gate tripped by an unparseable lease, an unreadable root, a
-   sweep fraction over 25% of inventory, or a truncated enumeration
-   aborts the run and lands a report naming the gate. Nothing is
-   deleted when the inputs are not whole.
+4. The gate tripped by an unparseable lease, an unreadable root, or a
+   truncated enumeration aborts the run and lands a report naming the
+   gate. Nothing is deleted when the inputs are not whole. (This point
+   also named a sweep fraction over 25% of inventory; ADR 0017 removed
+   it, because a gate on how much a run may delete could not be
+   satisfied by the run after it.)
 5. Narinfos delete before their NARs, in batches, so a narinfo never
    dangles a missing NAR at any instant. Orphan NARs (referenced by no
-   narinfo) survive; that is a v2 decision with the fraction gate as
-   its guard.
+   narinfo) survive; that is a v2 decision, guarded now by the grace
+   window rather than by a bound on the sweep's size.
 6. Every run lands a report at `gc-reports/{runId}.json` plus a
    `latest.json`, and the admin API serves the history.
 
@@ -55,5 +58,5 @@ Single-invocation sweeps with no cursor (the old design): fails open at
 scale: the run dies at a platform limit and the next run starts over;
 rejected. Deletion behind a manual flag or an external runner: the old
 failure mode institutionalized; rejected. Sweeping orphan NARs in v1:
-an inventory-level claim the mark phase cannot cheaply prove, so the
-fraction gate would have to stand down; rejected for v1's shape.
+an inventory-level claim the mark phase cannot cheaply prove; rejected
+for v1's shape.

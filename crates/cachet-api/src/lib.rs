@@ -506,7 +506,7 @@ mod mirror_tests {
             nars_deleted: 98,
             bytes_freed: 8_123_456_789,
             uploads_aborted: 2,
-            gate: Some("sweep_fraction_exceeded".to_string()),
+            gate: Some("inventory_truncated".to_string()),
         };
         // why: the bytes, not the fields. A mirror can decode a body
         // correctly and still describe it wrongly, which is exactly what

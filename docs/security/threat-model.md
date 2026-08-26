@@ -121,13 +121,20 @@ with replay and abort, the stale-upload reaper in the GC scenario.
 
 **GC sweeping the living.** A collector bug or a poisoned lease file
 causes mass deletion. Defense: leases pin roots, the mark phase walks
-narinfo references, the sweep requires age past grace, and three gates
-hold: unparseable lease or unreadable root aborts, a truncated
-enumeration aborts, and a sweep fraction over 25% of inventory aborts.
-Narinfos delete before NARs so a client never sees a dangling narinfo.
-Proven: the GC laws in the property lane (reserved keys, marked paths,
-grace boundary, fraction gate, NAR survival) and the two workerd GC
-scenarios.
+narinfo references, the sweep requires age past grace, and the gates
+abort a run whose picture of what is live is incomplete: an unparseable
+lease or unreadable root, a truncated enumeration, an exhausted walk
+budget, a corrupt generation document. Narinfos delete before NARs so a
+client never sees a dangling narinfo.
+
+How much one run may delete is not bounded, and a gate on that was
+removed rather than kept: it could not be satisfied by the run after it
+either, so a deployment with a lot of genuinely dead paths stopped
+collecting permanently (ADR 0017). What bounds a mistake is the grace
+window, in time rather than in count, and the recovery is a push, because
+over-deleting from a cache costs a rebuild rather than data. Proven: the
+GC laws in the property lane (reserved keys, marked paths, grace
+boundary, NAR survival) and the two workerd GC scenarios.
 
 **Credential leaves in artifacts or logs.** The signing key or an OIDC
 token lands in the shipped bundle, a log line, or a committed file.
