@@ -132,6 +132,26 @@ export default Alchemy.Stack(
       // signing key's identity.
       workersDev: false,
       domain: { name: cfg.domain },
+      // The browser console, built by `just web` into web/dist and
+      // uploaded beside the wasm bundle. base mirrors Vite's, so the
+      // manifest holds the paths the worker asks for.
+      //
+      // why: both handling modes are "none", which is the whole safety
+      // argument. The asset layer answers a request that names a file
+      // under /console and never invents an answer for one that does
+      // not: an unmatched request falls through to the worker, which
+      // routes it as it always has. notFoundHandling other than "none"
+      // would eventually answer a cache miss with the console's shell,
+      // and a nix client reads "does this cache hold it" from the status,
+      // so 200 text/html is a wrong answer to a question about a path.
+      // htmlHandling is "none" so /console reaches the router rather than
+      // being redirected by the layer (ADR 0014).
+      assets: {
+        directory: "../web/dist",
+        base: "/console",
+        htmlHandling: "none",
+        notFoundHandling: "none",
+      },
     });
 
     return {

@@ -93,7 +93,7 @@ equivalents). These variables define the deployment:
 | `CACHET_DEPLOY_AUDIENCE` | no | OIDC audience; default `cachet`. |
 | `CACHET_DEPLOY_DEFAULT_BRANCH_REF` | no | The ref allowed to renew leases; default `refs/heads/main`. |
 | `CACHET_DEPLOY_DOMAIN` | no | Custom domain override; defaults to the host. |
-| `CACHET_DEPLOY_UI_ORIGIN` | no | Browser login's redirect target; unset answers 204 instead. |
+| `CACHET_DEPLOY_UI_ORIGIN` | no | Where browser login lands. Unset lands on this deployment's own console; set it to override, or to the empty string for a deployment with no UI. |
 | `CACHET_DEPLOY_FONT_CSS` | no | A stylesheet the console loads for licensed faces. Unset ships the free ones. |
 | `CACHET_DEPLOY_GC_GRACE_MS` | no | Grace override; default 14 days. Set 0 for throwaway test deployments. |
 | `CACHET_SIGNING_KEY` | yes | The `<host>-1:<base64>` secret from bootstrap. |
@@ -268,6 +268,31 @@ A dataset is pure configuration, so it costs nothing until something
 writes to it and nothing is torn down with the deployment. A worker
 older than the binding counts nothing and serves exactly as well;
 nothing here is ever worth failing a request over.
+
+## The console
+
+Every deployment serves a browser console at `https://<host>/console`,
+and its root redirects there. Sign in with GitHub through the same OAuth
+App the CLI uses; an admin sees the collection reports, the counters, and
+the access configuration, and an org member outside `CACHET_ADMINS` sees
+the access screen alone.
+
+It ships as static files uploaded beside the worker, so `just deploy`
+builds it and nothing else needs configuring. The asset layer answers a
+request that names one of those files and never invents an answer for one
+that does not: a request matching no file falls through to the worker,
+which routes it the way it always has. That is what keeps a cache miss a
+cache miss (ADR 0014), and the workerd lane asserts it on every run.
+
+A session authenticates the console and nothing else. It reads the
+counters and the reports, and it answers 401 on the paths that serve
+cache bytes, so a cookie copied out of a browser cannot substitute from
+the cache (ADR 0016).
+
+The console ships free faces. A deployment that holds a licence for
+others points `CACHET_DEPLOY_FONT_CSS` at a stylesheet serving them, and
+the console loads that one stylesheet on top; unset, which is the
+default, it uses what it ships.
 
 ## Verifying a deployment
 

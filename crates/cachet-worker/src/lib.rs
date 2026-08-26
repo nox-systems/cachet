@@ -9,6 +9,7 @@
 
 mod api;
 mod auth;
+mod console;
 mod error;
 mod gc;
 mod log;
@@ -167,6 +168,16 @@ async fn fixed_get_routes(
 ) -> Option<Result<Response>> {
     if path == "/nix-cache-info" {
         return Some(read::serve_cache_info());
+    }
+    // why: ahead of every protocol path, and by exact prefix. The asset
+    // layer answers the console's built files before a request gets
+    // here; what reaches this line is a route inside the console's own
+    // router, which renders the shell (ADR 0014).
+    if console::owns(path) {
+        return Some(console::serve(env, req, path).await);
+    }
+    if path == "/" {
+        return Some(console::redirect_to_console());
     }
     if *method != Method::Get {
         return None;

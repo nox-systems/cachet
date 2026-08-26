@@ -118,21 +118,33 @@ pub fn clear_session_cookie() -> String {
     format!("{SESSION_COOKIE_NAME}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0")
 }
 
-/// Where a successful callback lands: a redirect when the deployment has
-/// a UI origin, an empty 204 when the caller is the browser itself.
+/// Where a successful callback lands.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CallbackTarget {
-    /// 302 to the configured UI origin.
+    /// 302 to the deployment's own console, or to a configured origin.
     Redirect(String),
     /// 204 with the body empty.
     Empty,
 }
 
+/// The console's path on the deployment's own host.
+pub const CONSOLE_PATH: &str = "/console";
+
 /// Pick where the callback lands from the deployment's configuration.
-pub fn callback_target(ui_origin: Option<&str>) -> CallbackTarget {
+///
+/// The default is the deployment's own console, because that is where a
+/// person who just signed in came from and it needs no configuration to
+/// be right. `ui_origin` overrides it for anyone hosting a UI elsewhere,
+/// and a deployment that sets it to the empty string is saying it has no
+/// UI at all, which answers 204 the way every deployment did before the
+/// console existed.
+#[must_use]
+pub fn callback_target(host: &str, ui_origin: Option<&str>) -> CallbackTarget {
     match ui_origin {
-        Some(origin) if !origin.is_empty() => CallbackTarget::Redirect(origin.to_string()),
-        _ => CallbackTarget::Empty,
+        Some("") => CallbackTarget::Empty,
+        Some(origin) => CallbackTarget::Redirect(origin.to_string()),
+        None if host.is_empty() => CallbackTarget::Empty,
+        None => CallbackTarget::Redirect(format!("https://{host}{CONSOLE_PATH}")),
     }
 }
 
@@ -300,12 +312,26 @@ mod tests {
     }
 
     #[test]
-    fn the_callback_target_follows_the_origin() {
+    fn the_callback_target_defaults_to_the_deployment_s_own_console() {
+        // No configuration: a person who signed in lands back on the
+        // console they signed in from.
         assert_eq!(
-            callback_target(Some("https://ui.example.com")),
-            CallbackTarget::Redirect("https://ui.example.com".to_string()),
+            callback_target("cachet.example.com", None),
+            CallbackTarget::Redirect("https://cachet.example.com/console".to_string())
         );
-        assert_eq!(callback_target(Some("")), CallbackTarget::Empty);
-        assert_eq!(callback_target(None), CallbackTarget::Empty);
+        // A UI hosted elsewhere overrides it.
+        assert_eq!(
+            callback_target("cachet.example.com", Some("https://ui.example.com")),
+            CallbackTarget::Redirect("https://ui.example.com".to_string())
+        );
+        // Set empty on purpose means "this deployment has no UI", which
+        // is what every deployment answered before the console existed.
+        assert_eq!(
+            callback_target("cachet.example.com", Some("")),
+            CallbackTarget::Empty
+        );
+        // A deployment that cannot name its own host cannot build a
+        // default, and says nothing rather than redirecting to nowhere.
+        assert_eq!(callback_target("", None), CallbackTarget::Empty);
     }
 }

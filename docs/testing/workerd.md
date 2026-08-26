@@ -120,6 +120,26 @@ answers 400 malformed_query (a hostile string, a filter naming nothing, a
 bucket finer than its window can hold), and that a deployment with no
 token answers 503 rather than pretending to report.
 
+The console has a scenario of its own, and it is the only one that boots
+against an asset directory. Binding one under miniflare puts Cloudflare's
+asset router in front of the worker, and that router has no scheduled
+handler, so the collector's dev endpoint answers "exception" with it
+bound; the driver therefore generates a copy of the lane config with the
+asset block appended and boots that scenario alone against it, rather
+than committing a second config that would drift from the first. The
+assets themselves are a two-file stand-in rather than a real build
+(workerd/fixtures/assets/README.md), because the law under test is which
+paths the layer may answer at all. The rows: the root redirects to
+`/console`; `/console`, `/console/`, and a deep link all render the
+shell; a hashed file is served by its own name and is not the shell; the
+shell needs no credential and grants none, so the API behind it still
+answers 401; the protocol paths answer exactly as they do without assets,
+including a path that merely looks like the console's; and the row the
+whole design exists for, that an absent narinfo and an absent NAR still
+answer the protocol's own miss, 404 `text/plain` with the negative
+caching headers and never the console's shell, while the router's own
+fallback keeps its problem+json shape.
+
 Every code in the error table (cachet-core/src/error.rs) has at least one
 wire-level assertion here. storage_unavailable is asserted through the
 counter route, whose upstream the driver controls: the stub answers 500

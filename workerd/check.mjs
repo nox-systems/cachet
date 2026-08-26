@@ -19,6 +19,36 @@ import path from "node:path";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const configPath = path.join(repoRoot, "workerd", "wrangler.toml");
+
+// The console's config is this one plus an asset directory. It is
+// generated rather than committed because a second checked-in config
+// would drift from the first, and the two must agree on every binding
+// the console scenario exercises. It is separate at all because binding
+// assets puts Cloudflare's asset router in front of the worker under
+// miniflare, and that router has no scheduled handler: with it bound,
+// the collector's dev endpoint answers "exception" rather than running.
+// Production invokes the cron against the worker itself, so this is a
+// local-runner limitation and not a deployment shape.
+const consoleAssetsDir = path.join(repoRoot, "workerd", "fixtures", "assets");
+const consoleConfigPath = path.join(
+  repoRoot,
+  "workerd",
+  ".wrangler-console.toml",
+);
+await writeFile(
+  consoleConfigPath,
+  `${await readFile(configPath, "utf8")}
+[assets]
+directory = ${JSON.stringify(consoleAssetsDir)}
+binding = "ASSETS"
+# Both handling modes off: the layer answers a file that exists under
+# /console and never invents an answer for one that does not, so an
+# unmatched request falls through to the worker and a cache miss is still
+# decided by the router.
+html_handling = "none"
+not_found_handling = "none"
+`,
+);
 const fixturesDir = path.resolve(
   process.argv[2] ?? path.join(repoRoot, "fixtures", "nix-signed"),
 );
@@ -310,7 +340,7 @@ async function untilEvent(events, marker) {
 // race a probe-and-release dance invites cannot exist. The boot's answer
 // is the banner itself; its absence by the deadline is the test's own
 // signal, never retried.
-async function bootWorkerd(persist, vars) {
+async function bootWorkerd(persist, vars, config = configPath) {
   const proc = spawn(
     "wrangler",
     [
@@ -321,7 +351,7 @@ async function bootWorkerd(persist, vars) {
       "--persist-to",
       persist,
       "--config",
-      configPath,
+      config,
       "--var",
       `CACHET_JWKS_URL:${jwksUrl}`,
       "--var",
@@ -368,7 +398,13 @@ async function bootWorkerd(persist, vars) {
 }
 
 // One scenario per persistence directory: fresh R2, fresh edge cache.
-async function scenario(name, seed, assertions, vars = {}) {
+async function scenario(
+  name,
+  seed,
+  assertions,
+  vars = {},
+  config = configPath,
+) {
   const persist = await mkdtemp(path.join(os.tmpdir(), "cachet-lane-"));
   for (const [key, content] of await seed()) {
     const seedFile = path.join(persist, "seed-input");
@@ -398,6 +434,7 @@ async function scenario(name, seed, assertions, vars = {}) {
   const { proc, base, events, clearEvents, fullEvents } = await bootWorkerd(
     persist,
     vars,
+    config,
   );
 
   try {
@@ -1663,7 +1700,12 @@ try {
         const state = await login();
         const res = await callback(LANE_OAUTH_CODE, state);
         assert.equal(res.status, 302);
-        assert.equal(res.headers.get("location"), "https://ui.lane.invalid");
+        // Unset CACHET_UI_ORIGIN, which is what a deployment runs with:
+        // signing in lands back on the console it was started from.
+        assert.equal(
+          res.headers.get("location"),
+          "https://cachet.lane.invalid/console",
+        );
         const cookies = res.headers.getSetCookie();
         assert.equal(cookies.length, 1);
         const cookie = cookies[0];
@@ -2234,6 +2276,110 @@ await scenario(
   },
 );
 
+// The console's routing law. The deployment binds an asset directory and
+// tells Cloudflare to run the worker first, so the Rust router is the
+// only thing deciding which paths reach the asset layer. What that
+// protects is the nix key space: reading a cache means asking about paths
+// that mostly do not exist, and an asset layer answering an unmatched
+// request with an application shell would answer 200 text/html to every
+// substituter that asked.
+await scenario(
+  "the console serves without ever touching the nix key space",
+  async () => [
+    [NARINFO_KEY, await readFile(path.join(fixturesDir, NARINFO_KEY))],
+    [NAR_KEY, await readFile(path.join(fixturesDir, NAR_FILE))],
+  ],
+  async ({ base }) => {
+    await check("the root is the console's front door", async () => {
+      // nix asks for /nix-cache-info and for paths, never for /, so the
+      // root is free for the person who typed the host into a browser.
+      const res = await fetch(`${base}/`, { redirect: "manual" });
+      assert.equal(res.status, 302);
+      assert.equal(res.headers.get("location"), "/console");
+    });
+
+    await check("a console route renders the shell", async () => {
+      for (const route of ["/console", "/console/", "/console/traffic"]) {
+        const res = await fetch(`${base}${route}`);
+        const body = await res.text();
+        assert.equal(res.status, 200, `${route} -> ${res.status}`);
+        assert.ok(body.includes("lane console shell"), `${route} -> ${body}`);
+      }
+    });
+
+    await check("a built file is served by its own name", async () => {
+      const res = await fetch(`${base}/console/assets/lane-a4f31c.js`);
+      const body = await res.text();
+      assert.equal(res.status, 200, body);
+      assert.ok(body.includes('export const lane = "console"'), body);
+      assert.ok(!body.includes("lane console shell"), "not the shell");
+    });
+
+    await check("the console needs no credential and grants none", async () => {
+      // The shell is public: a person has to reach it to sign in. What
+      // it does not do is authenticate anything, so the API behind it
+      // answers a console request exactly as it answers any other.
+      const shell = await fetch(`${base}/console`);
+      assert.equal(shell.status, 200);
+      const api = await fetch(`${base}/api/self/stats`);
+      assert.equal(api.status, 401, "no credential, no answer");
+    });
+
+    await check("a cache miss is still a cache miss", async () => {
+      // The row this whole design exists for. nix reads "does this cache
+      // hold it" from the status, so with an asset directory bound an
+      // absent path must still answer the protocol's own miss: 404, the
+      // negative-caching headers, and the two words nix ignores. What it
+      // must never be is the console's shell with a 200 on it.
+      for (const absent of [
+        `${"b".repeat(32)}.narinfo`,
+        `nar/${"f".repeat(52)}.nar.zst`,
+      ]) {
+        const res = await fetch(`${base}/${absent}`, { headers: READ_AUTH() });
+        const body = await res.text();
+        assert.equal(res.status, 404, `${absent} -> ${res.status} ${body}`);
+        assert.equal(
+          res.headers.get("content-type"),
+          "text/plain; charset=utf-8",
+          absent,
+        );
+        assert.equal(body, "not found\n", absent);
+        assert.ok(!body.includes("console shell"), absent);
+      }
+
+      // The router's own fallback keeps its problem+json shape, which is
+      // the other half: the asset layer rewrites neither answer.
+      const nowhere = await fetch(`${base}/nope`);
+      assert.equal(nowhere.status, 404);
+      assert.equal(
+        nowhere.headers.get("content-type"),
+        "application/problem+json",
+      );
+      assert.equal((await nowhere.json()).code, "not_found");
+    });
+
+    await check("the protocol paths answer as they always did", async () => {
+      const info = await fetch(`${base}/nix-cache-info`);
+      assert.equal(info.status, 200);
+      assert.equal(info.headers.get("content-type"), "text/x-nix-cache-info");
+
+      const narinfo = await fetch(`${base}/${NARINFO_KEY}`, {
+        headers: READ_AUTH(),
+      });
+      assert.equal(narinfo.status, 200, "a held path still serves");
+      assert.equal(narinfo.headers.get("content-type"), "text/x-nix-narinfo");
+
+      // And a path that merely looks like the console's is a narinfo.
+      const lookalike = await fetch(`${base}/consoles.narinfo`, {
+        headers: READ_AUTH(),
+      });
+      assert.equal(lookalike.status, 400, await lookalike.text());
+    });
+  },
+  {},
+  consoleConfigPath,
+);
+
 // The counter route's answering half, which nothing has ever run. Every
 // other counter row in this lane stops at the configuration check,
 // because a deployment without a stats token counts and cannot report;
@@ -2645,5 +2791,6 @@ process.stdout.write("workerd lane green\n");
 // why: the stub server's listen handle (and its keep-alive sockets from the
 // worker's fetches) would hold the event loop open forever; close it so a
 // green lane exits.
+await rm(consoleConfigPath, { force: true });
 stubServer.closeAllConnections();
 stubServer.close();
