@@ -70,6 +70,13 @@ export default Alchemy.Stack(
         ...(cfg.statsToken === undefined
           ? {}
           : { CACHET_STATS_TOKEN: Config.redacted("CACHET_STATS_TOKEN") }),
+        // The account the SQL API runs the query under. A worker cannot
+        // read the dataset it writes to without naming an account, and
+        // this is the same one alchemy is deploying into, so it comes
+        // from the deploy's own environment rather than a second copy.
+        ...(cfg.accountId === undefined
+          ? {}
+          : { CLOUDFLARE_ACCOUNT_ID: cfg.accountId }),
         CACHET_ORGS: cfg.orgs,
         CACHET_AUDIENCE: cfg.audience,
         CACHET_DEFAULT_BRANCH_REF: cfg.defaultBranchRef,

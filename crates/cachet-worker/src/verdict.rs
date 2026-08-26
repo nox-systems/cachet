@@ -112,9 +112,45 @@ pub enum ReadIdentity {
         /// The ref it ran on.
         reference: String,
     },
-    /// A live browser session. The session id is carried for admin routes
-    /// to bind without re-reading it.
-    Session { login: String },
+    /// A live browser session.
+    Session {
+        /// The GitHub login the session was minted for.
+        login: String,
+        /// When the session stops being accepted, so `/api/whoami` can
+        /// answer it without a second KV read.
+        expires_at_ms: u64,
+    },
+}
+
+impl ReadIdentity {
+    /// The login this identity resolved to.
+    pub(crate) fn login(&self) -> &str {
+        match self {
+            Self::Token { login } | Self::Ci { login, .. } | Self::Session { login, .. } => login,
+        }
+    }
+
+    /// Which credential answered, for `/api/whoami` and nothing else.
+    pub(crate) const fn credential(&self) -> &'static str {
+        match self {
+            Self::Token { .. } => "laptop",
+            Self::Ci { .. } => "ci",
+            Self::Session { .. } => "browser",
+        }
+    }
+
+    /// Whether this credential may read cache objects.
+    ///
+    /// A browser session may not. It is minted by the OAuth flow for a
+    /// console that shows a deployment's counters and reports, and it
+    /// rides a cookie that a person's browser sends automatically and
+    /// keeps for a fortnight without re-checking org membership. Nix
+    /// never sends a cookie, so nothing that substitutes loses a
+    /// credential here; what it stops is a copied cookie substituting
+    /// from the cache long after its holder left the organisation.
+    pub(crate) const fn reads_cache_objects(&self) -> bool {
+        !matches!(self, Self::Session { .. })
+    }
 }
 
 /// A GitHub API answer for one membership query.
@@ -417,6 +453,9 @@ async fn resolve_session(env: &Env, now: UnixMillis, session_id: &str) -> Result
     }
     Ok(ReadIdentity::Session {
         login: record.login,
+        expires_at_ms: record
+            .created_at_ms
+            .saturating_add(cachet_core::constants::SESSION_TTL_MS),
     })
 }
 
@@ -504,7 +543,7 @@ pub(crate) async fn require_admin(env: &Env, now: UnixMillis, req: &Request) -> 
     // GitHub logins, and a run's login is its repository owner, so an
     // OIDC credential could otherwise be admitted by an org whose slug
     // happened to match a listed name.
-    let (ReadIdentity::Token { login } | ReadIdentity::Session { login }) = identity else {
+    let (ReadIdentity::Token { login } | ReadIdentity::Session { login, .. }) = identity else {
         return Err(ClientError::ForbiddenAdmin);
     };
     if admins(env).iter().any(|admin| admin == &login) {

@@ -5,7 +5,7 @@
 
 use cachet_core::constants::{
     ACCOUNT_ID_VAR, GC_LATEST_REPORT_KEY, GC_REPORTS_KEY_PREFIX, GC_RUNS_PAGE_LIMIT,
-    STATS_DATASET_VAR, STATS_TOKEN_SECRET,
+    STATS_API_DEFAULT, STATS_API_URL_VAR, STATS_DATASET_VAR, STATS_TOKEN_SECRET,
 };
 use cachet_core::error::ClientError;
 use cachet_core::gc::{GcReport, parse_run_id};
@@ -114,22 +114,8 @@ pub async fn stats_events(env: &Env, now: UnixMillis, req: &Request) -> worker::
             .find(|(key, _)| key == name)
             .map(|(_, value)| value.into_owned())
     };
-    let (Some(subject), Some(dimension), Some(window)) = (
-        pick("subject")
-            .as_deref()
-            .and_then(cachet_core::stats_query::QuerySubject::parse),
-        pick("by")
-            .as_deref()
-            .or(Some("outcome"))
-            .and_then(cachet_core::stats_query::QueryDimension::parse),
-        cachet_core::stats_query::QueryWindow::parse(pick("window").as_deref()),
-    ) else {
+    let Some(query) = compose_query(&pick) else {
         return crate::error::problem_response(ClientError::MalformedQuery);
-    };
-    let query = cachet_core::stats_query::StatsQuery {
-        subject,
-        dimension,
-        window,
     };
 
     let Ok(token) = env.secret(STATS_TOKEN_SECRET) else {
@@ -152,7 +138,12 @@ pub async fn stats_events(env: &Env, now: UnixMillis, req: &Request) -> worker::
         return crate::error::problem_response(ClientError::StorageUnavailable);
     }
 
+    let base = env
+        .var(STATS_API_URL_VAR)
+        .map_or_else(|_| STATS_API_DEFAULT.to_string(), |value| value.to_string());
+
     let rows = match run_stats_sql(
+        &base,
         &account.to_string(),
         &token.to_string(),
         &query.sql(&dataset),
@@ -163,17 +154,127 @@ pub async fn stats_events(env: &Env, now: UnixMillis, req: &Request) -> worker::
         Err(code) => return crate::error::problem_response(code),
     };
     let body = cachet_api::StatsEvents {
-        subject: pick("subject").unwrap_or_default(),
-        dimension: pick("by").unwrap_or_else(|| "outcome".to_string()),
-        window: pick("window").unwrap_or_else(|| "day".to_string()),
-        rows,
+        subject: query.subject.name().to_string(),
+        dimension: query.dimension.name().to_string(),
+        window: query.window.name().to_string(),
+        filters: cachet_api::StatsFilters {
+            kind: query.filters.kind.map(|kind| kind.name().to_string()),
+            outcome: query
+                .filters
+                .outcome
+                .map(|outcome| outcome.render().into_owned()),
+            actor: query.filters.actor.map(|actor| actor.name().to_string()),
+        },
+        rows: shape_rows(&query, now, rows),
     };
     let text = serde_json::to_string(&body).expect("typed bodies serialize");
     Ok(Response::ok(text)?.with_headers(self_headers()?))
 }
 
+/// `GET /api/whoami`: who this request authenticates as.
+///
+/// Any read credential resolves here, admin or not, because the console
+/// asks this before it renders anything and an org member who is not an
+/// admin still gets an answer: their own login, and `admin: false`. The
+/// alternative was a console that learns its standing by provoking a
+/// 403, which makes a refusal a normal part of loading a page and hides
+/// the real ones.
+///
+/// # Errors
+///
+/// Propagates a header or body failure as the worker's generic 500.
+pub async fn whoami(env: &Env, now: UnixMillis, req: &Request) -> worker::Result<Response> {
+    let identity = match verdict::authorize_read(env, now, req).await {
+        Ok(identity) => identity,
+        Err(code) => return crate::error::problem_response(code),
+    };
+    let login = identity.login().to_string();
+    let body = cachet_api::WhoAmI {
+        admin: verdict::admins(env).iter().any(|admin| admin == &login),
+        credential: identity.credential().to_string(),
+        expires_at_ms: match identity {
+            verdict::ReadIdentity::Session { expires_at_ms, .. } => Some(expires_at_ms),
+            _ => None,
+        },
+        login,
+    };
+    let text = serde_json::to_string(&body).expect("typed bodies serialize");
+    Ok(Response::ok(text)?.with_headers(self_headers()?))
+}
+
+/// Turn a caller's choices into one question, or into nothing.
+///
+/// Every parameter parses into a closed enum or fails, and the assembled
+/// pair is checked too: a bucket finer than its window can hold is a
+/// question with no admissible answer rather than a truncated one.
+fn compose_query(
+    pick: &impl Fn(&str) -> Option<String>,
+) -> Option<cachet_core::stats_query::StatsQuery> {
+    use cachet_core::stats::{StatActor, StatKind, StatOutcome};
+    use cachet_core::stats_query::{QueryDimension, QueryFilters, QuerySubject, QueryWindow};
+
+    let subject = QuerySubject::parse(&pick("subject")?)?;
+    let dimension = QueryDimension::parse(&pick("by").unwrap_or_else(|| "outcome".to_string()))?;
+    let window = QueryWindow::parse(pick("window").as_deref())?;
+    // An unstated filter is absent; a stated one that names nothing is a
+    // refusal, so a typo narrows to nothing loudly instead of quietly
+    // answering the unfiltered question.
+    let filters = QueryFilters {
+        kind: match pick("kind") {
+            None => None,
+            Some(text) => Some(StatKind::parse(&text)?),
+        },
+        outcome: match pick("outcome") {
+            None => None,
+            Some(text) => Some(StatOutcome::parse(&text)?),
+        },
+        actor: match pick("actor") {
+            None => None,
+            Some(text) => Some(StatActor::parse(&text)?),
+        },
+    };
+    cachet_core::stats_query::StatsQuery::new(subject, dimension, window, filters)
+}
+
+/// Answer with the rows the question implies.
+///
+/// A dimension list passes through: the statement already ordered and
+/// bounded it. A series is filled to one row per bucket, because
+/// Analytics Engine returns nothing for a bucket nothing happened in and
+/// a line drawn through the holes claims traffic was smooth when it was
+/// absent.
+fn shape_rows(
+    query: &cachet_core::stats_query::StatsQuery,
+    now: UnixMillis,
+    rows: Vec<cachet_api::StatsRow>,
+) -> Vec<cachet_api::StatsRow> {
+    use cachet_core::stats_query::{SeriesPoint, fill_series};
+    if query.bucket_count().is_none() {
+        return rows;
+    }
+    let observed: Vec<SeriesPoint> = rows
+        .iter()
+        .filter_map(|row| {
+            Some(SeriesPoint {
+                start_secs: row.dimension.parse().ok()?,
+                count: row.count,
+                bytes: row.bytes,
+            })
+        })
+        .collect();
+    fill_series(query, now.as_u64(), &observed)
+        .into_iter()
+        .map(|point| cachet_api::StatsRow {
+            dimension: point.start_secs.to_string(),
+            count: point.count,
+            bytes: point.bytes,
+        })
+        .collect()
+}
+
 /// Run one composed statement against Cloudflare's SQL API.
 async fn run_stats_sql(
+    base: &str,
     account: &str,
     token: &str,
     sql: &str,
@@ -186,7 +287,7 @@ async fn run_stats_sql(
     init.headers.clone_from(&headers);
     init.with_body(Some(sql.to_string().into()));
     let request = worker::Request::new_with_init(
-        &format!("https://api.cloudflare.com/client/v4/accounts/{account}/analytics_engine/sql"),
+        &format!("{base}/accounts/{account}/analytics_engine/sql"),
         &init,
     )
     .map_err(|_| ClientError::StorageUnavailable)?;

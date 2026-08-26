@@ -32,6 +32,10 @@ export interface StageConfig {
   // scoped to reading them and nothing else. Absent means the deployment
   // counts but does not report.
   statsToken: string | undefined;
+  /** The Cloudflare account the counter route queries under. Read from
+   *  the deploy's own CLOUDFLARE_ACCOUNT_ID, because the worker needs
+   *  the same account alchemy authenticates against. */
+  accountId: string | undefined;
 }
 
 const REQUIRED = ["HOST", "ORGS", "OAUTH_CLIENT_ID", "ADMINS"] as const;
@@ -93,6 +97,20 @@ export function loadStageConfig(stage: string): StageConfig {
   // worker needs a custom domain; the host is the natural one because it
   // already names the deployment and the signing key.
   const domain = value("DOMAIN") ?? host;
+
+  // why: reporting takes both halves. The token authorises the query and
+  // the account id says which account to run it against, and a worker
+  // holding one without the other answers every counter request with a
+  // 503 that reads like an outage. Refusing here keeps that from being a
+  // thing an operator discovers from a chart that never loads.
+  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim() || undefined;
+  const statsToken = value("STATS_TOKEN");
+  if (statsToken !== undefined && accountId === undefined) {
+    throw new Error(
+      `the ${stage} deployment sets CACHET_DEPLOY_STATS_TOKEN but no CLOUDFLARE_ACCOUNT_ID. ` +
+        `The counter route needs both: the token authorises the query, the account id says where to run it (docs/DEPLOY.md).`,
+    );
+  }
   return {
     stage,
     host,
@@ -104,6 +122,7 @@ export function loadStageConfig(stage: string): StageConfig {
     domain,
     uiOrigin: value("UI_ORIGIN"),
     gcGraceMs: value("GC_GRACE_MS"),
-    statsToken: value("STATS_TOKEN"),
+    statsToken,
+    accountId,
   };
 }

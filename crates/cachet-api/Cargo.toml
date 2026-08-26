@@ -23,6 +23,13 @@ serde_json.workspace = true
 # regenerations (CLAUDE.md §6).
 utoipa = "=5.5.0"
 
+# why: the two verbatim-served bodies are mirrored here so the generated
+# document describes them. The test that keeps the mirrors honest decodes
+# the core type's own bytes, which needs the core type; nothing in the
+# shipped crate depends on it, so the direction in CLAUDE.md §4 holds.
+[dev-dependencies]
+cachet-core = { path = "../cachet-core" }
+
 # why: regenerating the committed document is a maintenance action with its
 # own binary, available only when the yaml-export feature is on.
 [[bin]]

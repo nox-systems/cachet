@@ -226,12 +226,19 @@ paths:
       summary: '`GET /api/self/events`: the deployment''s own counters, grouped.'
       description: |-
         The caller chooses a question rather than composing one: `subject` is
-        one of `reads`, `writes`, `probes`; `by` names one of the six
-        dimensions the writers fill; `window` is `day`, `week`, or `month`.
-        Anything else is refused. The worker builds the SQL from those
-        choices and runs it against Cloudflare with a token scoped to reading
-        analytics and nothing else, so no caller text reaches a statement.
-        Requires an admin credential.
+        one of `reads`, `writes`, `probes`; `by` names a dimension the
+        writers fill or a time bucket; `window` is `day`, `week`, or `month`;
+        and `kind`, `outcome`, and `actor` narrow the answer to one value
+        each. Anything else is refused, including a bucket finer than its
+        window can hold. The worker builds the SQL from those choices and
+        runs it against Cloudflare with a token scoped to reading analytics
+        and nothing else, so no caller text reaches a statement. Requires an
+        admin credential.
+
+        Grouping by `hour` or `day` answers a series: one row per bucket,
+        oldest first, zeros included, each row's `dimension` the bucket's
+        first instant in epoch seconds. Grouping by anything else answers a
+        dimension list, largest first.
       operationId: stats_events
       parameters:
       - name: subject
@@ -242,7 +249,7 @@ paths:
           type: string
       - name: by
         in: query
-        description: kind | outcome | actor | repository | reference | project
+        description: kind | outcome | actor | repository | reference | hour | day; outcome when unstated
         required: false
         schema:
           type: string
@@ -252,9 +259,27 @@ paths:
         required: false
         schema:
           type: string
+      - name: kind
+        in: query
+        description: narinfo | nar | part | begin | complete | abort | probe | unknown
+        required: false
+        schema:
+          type: string
+      - name: outcome
+        in: query
+        description: edge_hit | bucket_hit | miss | stored | answered | an HTTP status
+        required: false
+        schema:
+          type: string
+      - name: actor
+        in: query
+        description: ci | laptop | browser | anonymous
+        required: false
+        schema:
+          type: string
       responses:
         '200':
-          description: The totals, largest first
+          description: 'The totals: largest first, or oldest first when grouped by time'
           content:
             application/json:
               schema:
@@ -340,7 +365,9 @@ paths:
         '200':
           description: The run's report document; cache-control no-store
           content:
-            application/json: {}
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GcReportBody'
         '400':
           description: problem+json; code=malformed_key
           content:
@@ -406,6 +433,36 @@ paths:
                 $ref: '#/components/schemas/ProblemBody'
         '503':
           description: problem+json; code=auth_unavailable or storage_unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+  /api/whoami:
+    get:
+      tags:
+      - routes
+      summary: '`GET /api/whoami`: who this request authenticates as.'
+      description: |-
+        The one identity route outside `/api/self`, because it has to answer
+        for an org member who is not an admin: a console that could only
+        learn its own standing from a 403 would have to provoke one to render
+        its first screen. Any read credential resolves here.
+      operationId: whoami
+      responses:
+        '200':
+          description: The caller's login and standing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WhoAmI'
+        '400':
+          description: problem+json; code=malformed_auth
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '401':
+          description: problem+json; code=unauthorized
           content:
             application/problem+json:
               schema:
@@ -746,7 +803,9 @@ paths:
         '200':
           description: The lease document the renewal stored; cache-control no-store
           content:
-            application/json: {}
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LeaseBody'
         '400':
           description: problem+json; code=malformed_key
           content:
@@ -962,6 +1021,88 @@ paths:
                 $ref: '#/components/schemas/ProblemBody'
 components:
   schemas:
+    GcReportBody:
+      type: object
+      description: |-
+        The `GET /api/self/gc-runs/{runId}` answer: one collection's own
+        record of what it did.
+
+        A mirror of `cachet_core::gc::GcReport`, which the worker streams
+        verbatim from the bucket rather than re-serializing. The mirror
+        exists so the generated document describes the body instead of
+        calling it untyped JSON; a unit test decodes the core type's own
+        bytes into this one, so the two cannot drift apart quietly.
+      required:
+      - runId
+      - startedAtMs
+      - finishedAtMs
+      - inventoryPaths
+      - activeLeases
+      - markedPaths
+      - unreadableDeep
+      - narinfosDeleted
+      - narsDeleted
+      - bytesFreed
+      - uploadsAborted
+      properties:
+        activeLeases:
+          type: integer
+          format: int64
+          description: How many leases pinned roots.
+          minimum: 0
+        bytesFreed:
+          type: integer
+          format: int64
+          description: How many bytes that freed.
+          minimum: 0
+        finishedAtMs:
+          type: integer
+          format: int64
+          description: When it finished.
+          minimum: 0
+        gate:
+          type:
+          - string
+          - 'null'
+          description: Which gate stopped the run, absent on a run that finished.
+        inventoryPaths:
+          type: integer
+          format: int64
+          description: How many paths the inventory held.
+          minimum: 0
+        markedPaths:
+          type: integer
+          format: int64
+          description: How many paths the mark phase reached.
+          minimum: 0
+        narinfosDeleted:
+          type: integer
+          format: int64
+          description: How many narinfos the sweep deleted.
+          minimum: 0
+        narsDeleted:
+          type: integer
+          format: int64
+          description: How many NARs the sweep deleted.
+          minimum: 0
+        runId:
+          type: string
+          description: The run's identifier, `{millis}-{16 hex}`.
+        startedAtMs:
+          type: integer
+          format: int64
+          description: When the run started.
+          minimum: 0
+        unreadableDeep:
+          type: integer
+          format: int64
+          description: How many narinfos the walk could not read.
+          minimum: 0
+        uploadsAborted:
+          type: integer
+          format: int64
+          description: How many abandoned uploads it reaped.
+          minimum: 0
     GcRunList:
       type: object
       description: '`GET /api/self/gc-runs`: one page of run ids, oldest first.'
@@ -978,6 +1119,53 @@ components:
           items:
             type: string
           description: The run ids in chronological order.
+    LeaseBody:
+      type: object
+      description: |-
+        The `GET /roots/{project}` answer: one lease and what it pins.
+
+        A mirror of `cachet_core::lease::LeaseDocument`, served verbatim from
+        the bucket for the same reason and held in step by the same test.
+      required:
+      - project
+      - renewedAtMs
+      - repository
+      - ref
+      - runId
+      - commitSha
+      - installables
+      - storePaths
+      properties:
+        commitSha:
+          type: string
+          description: The commit it built.
+        installables:
+          type: array
+          items:
+            type: string
+          description: What the run asked for.
+        project:
+          type: string
+          description: 'The lease name: the repository with its slash hyphenated.'
+        ref:
+          type: string
+          description: The ref that run was on.
+        renewedAtMs:
+          type: integer
+          format: int64
+          description: When the lease was last renewed.
+          minimum: 0
+        repository:
+          type: string
+          description: '`owner/repo` of the run that renewed it.'
+        runId:
+          type: string
+          description: That run's id.
+        storePaths:
+          type: array
+          items:
+            type: string
+          description: The store paths the lease pins.
     LoginExchangeBody:
       type: object
       description: |-
@@ -1182,22 +1370,50 @@ components:
       - subject
       - dimension
       - window
+      - filters
       - rows
       properties:
         dimension:
           type: string
           description: What it was grouped by.
+        filters:
+          $ref: '#/components/schemas/StatsFilters'
+          description: What the answer was narrowed to.
         rows:
           type: array
           items:
             $ref: '#/components/schemas/StatsRow'
-          description: The rows, largest first.
+          description: |-
+            The rows. A dimension list reads largest first; a series reads
+            oldest first and carries one row per bucket, zeros included.
         subject:
           type: string
           description: 'What was counted: `reads`, `writes`, or `probes`.'
         window:
           type: string
           description: How far back the answer looks.
+    StatsFilters:
+      type: object
+      description: |-
+        What a counter answer was narrowed to, echoed back so a caller can
+        tell a filtered answer from an unfiltered one without re-reading the
+        query string it sent.
+      properties:
+        actor:
+          type:
+          - string
+          - 'null'
+          description: Only this caller class, when one was chosen.
+        kind:
+          type:
+          - string
+          - 'null'
+          description: Only this kind of thing, when one was chosen.
+        outcome:
+          type:
+          - string
+          - 'null'
+          description: Only this outcome, when one was chosen.
     StatsRow:
       type: object
       description: 'One row of a counter answer: a dimension''s value and its totals.'
@@ -1216,7 +1432,12 @@ components:
           description: How many things it counts, sample-corrected.
         dimension:
           type: string
-          description: The grouped value, empty where the dimension did not apply.
+          description: |-
+            The grouped value, empty where the dimension did not apply.
+
+            For `by=hour` and `by=day` this is the bucket's first instant in
+            epoch seconds, written as digits, so a reader never has to agree
+            with the SQL engine about a date format.
     UploadCreated:
       type: object
       description: |-
@@ -1251,3 +1472,30 @@ components:
           format: int32
           description: The one-based part number just stored.
           minimum: 0
+    WhoAmI:
+      type: object
+      description: 'The `GET /api/whoami` answer: who the caller is to this deployment.'
+      required:
+      - login
+      - admin
+      - credential
+      properties:
+        admin:
+          type: boolean
+          description: Whether that login is in `CACHET_ADMINS`.
+        credential:
+          type: string
+          description: 'Which credential answered: `browser`, `laptop`, or `ci`.'
+        expiresAtMs:
+          type:
+          - integer
+          - 'null'
+          format: int64
+          description: |-
+            When a browser session stops being accepted. Absent for the other
+            two, whose lifetimes belong to GitHub and to the issued token's
+            own record rather than to anything this answer knows.
+          minimum: 0
+        login:
+          type: string
+          description: The GitHub login the credential resolved to.

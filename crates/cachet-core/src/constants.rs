@@ -92,6 +92,18 @@ pub const STATS_DATASET_VAR: &str = "CACHET_STATS_DATASET";
 /// The binding name of the dataset every counted thing is written to.
 pub const STATS_BINDING: &str = "CACHET_EVENTS";
 
+/// Where the counter route sends its statement.
+///
+/// A variable rather than a constant for the same reason the JWKS and
+/// GitHub API addresses are: the lane points it at a stub so the answer
+/// path is exercised, and the address is transport configuration while
+/// the token is what authorises the query. A deployment leaves it unset
+/// and gets `STATS_API_DEFAULT`.
+pub const STATS_API_URL_VAR: &str = "CACHET_STATS_API_URL";
+
+/// Cloudflare's SQL API, where an unconfigured deployment asks.
+pub const STATS_API_DEFAULT: &str = "https://api.cloudflare.com/client/v4";
+
 /// The prefix every read credential this deployment issues carries. It
 /// is what lets the read path tell an issued token from an OIDC token
 /// and from a GitHub token without trying each verifier in turn.

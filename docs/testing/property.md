@@ -24,6 +24,12 @@ classes in force now:
   are never swept, an upload exactly at the grace boundary is kept, a
   tripped fraction gate always means an empty plan, and a NAR URL named
   by any marked narinfo survives.
+- The series law. A gap-filled counter answer carries one row per bucket
+  its window covers, ascending and contiguous, ending at the bucket the
+  request clock falls in, and counts only the buckets the dataset
+  actually reported. Analytics Engine returns nothing for a bucket
+  nothing happened in, so without the fill a chart draws a straight line
+  through an hour that had no traffic.
 
 New classes join this list in the same commit as the code that obeys them.
 

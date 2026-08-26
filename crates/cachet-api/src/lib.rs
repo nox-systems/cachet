@@ -132,11 +132,130 @@ pub struct ProbeBody {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 pub struct StatsRow {
     /// The grouped value, empty where the dimension did not apply.
+    ///
+    /// For `by=hour` and `by=day` this is the bucket's first instant in
+    /// epoch seconds, written as digits, so a reader never has to agree
+    /// with the SQL engine about a date format.
     pub dimension: String,
     /// How many things it counts, sample-corrected.
     pub count: f64,
     /// Bytes, where the answer is bytes.
     pub bytes: f64,
+}
+
+/// What a counter answer was narrowed to, echoed back so a caller can
+/// tell a filtered answer from an unfiltered one without re-reading the
+/// query string it sent.
+#[derive(
+    Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
+)]
+pub struct StatsFilters {
+    /// Only this kind of thing, when one was chosen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    /// Only this outcome, when one was chosen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<String>,
+    /// Only this caller class, when one was chosen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<String>,
+}
+
+/// The `GET /api/self/gc-runs/{runId}` answer: one collection's own
+/// record of what it did.
+///
+/// A mirror of `cachet_core::gc::GcReport`, which the worker streams
+/// verbatim from the bucket rather than re-serializing. The mirror
+/// exists so the generated document describes the body instead of
+/// calling it untyped JSON; a unit test decodes the core type's own
+/// bytes into this one, so the two cannot drift apart quietly.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct GcReportBody {
+    /// The run's identifier, `{millis}-{16 hex}`.
+    #[serde(rename = "runId")]
+    pub run_id: String,
+    /// When the run started.
+    #[serde(rename = "startedAtMs")]
+    pub started_at_ms: u64,
+    /// When it finished.
+    #[serde(rename = "finishedAtMs")]
+    pub finished_at_ms: u64,
+    /// How many paths the inventory held.
+    #[serde(rename = "inventoryPaths")]
+    pub inventory_paths: u64,
+    /// How many leases pinned roots.
+    #[serde(rename = "activeLeases")]
+    pub active_leases: u64,
+    /// How many paths the mark phase reached.
+    #[serde(rename = "markedPaths")]
+    pub marked_paths: u64,
+    /// How many narinfos the walk could not read.
+    #[serde(rename = "unreadableDeep")]
+    pub unreadable_deep: u64,
+    /// How many narinfos the sweep deleted.
+    #[serde(rename = "narinfosDeleted")]
+    pub narinfos_deleted: u64,
+    /// How many NARs the sweep deleted.
+    #[serde(rename = "narsDeleted")]
+    pub nars_deleted: u64,
+    /// How many bytes that freed.
+    #[serde(rename = "bytesFreed")]
+    pub bytes_freed: u64,
+    /// How many abandoned uploads it reaped.
+    #[serde(rename = "uploadsAborted")]
+    pub uploads_aborted: u64,
+    /// Which gate stopped the run, absent on a run that finished.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gate: Option<String>,
+}
+
+/// The `GET /roots/{project}` answer: one lease and what it pins.
+///
+/// A mirror of `cachet_core::lease::LeaseDocument`, served verbatim from
+/// the bucket for the same reason and held in step by the same test.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct LeaseBody {
+    /// The lease name: the repository with its slash hyphenated.
+    pub project: String,
+    /// When the lease was last renewed.
+    #[serde(rename = "renewedAtMs")]
+    pub renewed_at_ms: u64,
+    /// `owner/repo` of the run that renewed it.
+    pub repository: String,
+    /// The ref that run was on.
+    #[serde(rename = "ref")]
+    pub ref_: String,
+    /// That run's id.
+    #[serde(rename = "runId")]
+    pub run_id: String,
+    /// The commit it built.
+    #[serde(rename = "commitSha")]
+    pub commit_sha: String,
+    /// What the run asked for.
+    pub installables: Vec<String>,
+    /// The store paths the lease pins.
+    #[serde(rename = "storePaths")]
+    pub store_paths: Vec<String>,
+}
+
+/// The `GET /api/whoami` answer: who the caller is to this deployment.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct WhoAmI {
+    /// The GitHub login the credential resolved to.
+    pub login: String,
+    /// Whether that login is in `CACHET_ADMINS`.
+    pub admin: bool,
+    /// Which credential answered: `browser`, `laptop`, or `ci`.
+    pub credential: String,
+    /// When a browser session stops being accepted. Absent for the other
+    /// two, whose lifetimes belong to GitHub and to the issued token's
+    /// own record rather than to anything this answer knows.
+    #[serde(
+        rename = "expiresAtMs",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub expires_at_ms: Option<u64>,
 }
 
 /// The `GET /api/self/events` answer: what the chosen question totalled.
@@ -148,7 +267,10 @@ pub struct StatsEvents {
     pub dimension: String,
     /// How far back the answer looks.
     pub window: String,
-    /// The rows, largest first.
+    /// What the answer was narrowed to.
+    pub filters: StatsFilters,
+    /// The rows. A dimension list reads largest first; a series reads
+    /// oldest first and carries one row per bucket, zeros included.
     pub rows: Vec<StatsRow>,
 }
 
@@ -246,8 +368,9 @@ pub struct ProblemBody {
         routes::gc_run_get,
         routes::stats_get,
         routes::stats_events,
+        routes::whoami,
     ),
-    components(schemas(PublicConfig, ProjectList, RenewalBody, ProbeBody, ProbeAnswer, ProblemBody, UploadCreated, UploadedPartBody, GcRunList, StatsBody, ReadTokenIssued, LoginExchangeBody, StatsRow, StatsEvents))
+    components(schemas(PublicConfig, ProjectList, RenewalBody, ProbeBody, ProbeAnswer, ProblemBody, UploadCreated, UploadedPartBody, GcRunList, StatsBody, ReadTokenIssued, LoginExchangeBody, StatsRow, StatsFilters, StatsEvents, WhoAmI, GcReportBody, LeaseBody))
 )]
 pub struct ApiDoc;
 
@@ -283,5 +406,67 @@ mod tests {
             body,
             r#"{"oauthClientId":"id","orgs":["org"],"host":"cachet.example.com","publicKey":"cachet.example.com-1:AAAA"}"#,
         );
+    }
+}
+
+#[cfg(test)]
+mod mirror_tests {
+    use super::{GcReportBody, LeaseBody};
+
+    /// The two bodies the worker streams verbatim are described in the
+    /// generated document by mirrors, and a mirror that drifted would
+    /// document a shape the deployment does not serve. Decoding the core
+    /// type's own serialization into the mirror is what stops that: a
+    /// renamed or dropped field fails here rather than in a client.
+    #[test]
+    fn the_mirrors_decode_what_the_worker_actually_serves() {
+        let report = cachet_core::gc::GcReport {
+            run_id: "1780000000000-0123456789abcdef".to_string(),
+            started_at_ms: 1_780_000_000_000,
+            finished_at_ms: 1_780_000_012_345,
+            inventory_paths: 4_213,
+            active_leases: 7,
+            marked_paths: 4_102,
+            unreadable_deep: 0,
+            narinfos_deleted: 111,
+            nars_deleted: 98,
+            bytes_freed: 8_123_456_789,
+            uploads_aborted: 2,
+            gate: Some("sweep_fraction_exceeded".to_string()),
+        };
+        let served = serde_json::to_string(&report).expect("the report serializes");
+        let mirrored: GcReportBody = serde_json::from_str(&served).expect("the mirror decodes it");
+        assert_eq!(mirrored.run_id, report.run_id);
+        assert_eq!(mirrored.bytes_freed, report.bytes_freed);
+        assert_eq!(mirrored.gate, report.gate);
+        // And back: the mirror's own bytes are bytes the core type reads,
+        // so the schema describes a document nix-side code can consume.
+        let round: cachet_core::gc::GcReport =
+            serde_json::from_str(&serde_json::to_string(&mirrored).expect("the mirror serializes"))
+                .expect("the core type decodes the mirror");
+        assert_eq!(round, report);
+
+        let lease = cachet_core::lease::LeaseDocument {
+            project: "nox-systems-cachet".to_string(),
+            renewed_at_ms: 1_780_000_000_000,
+            repository: "nox-systems/cachet".to_string(),
+            ref_: "refs/heads/main".to_string(),
+            run_id: "123".to_string(),
+            commit_sha: "abc".to_string(),
+            installables: vec![".#devShells.aarch64-darwin.default".to_string()],
+            store_paths: vec!["/nix/store/0123456789abcdfghijklmnpqrsvwxyz-bash-5.2".to_string()],
+        };
+        let served = serde_json::to_string(&lease).expect("the lease serializes");
+        let mirrored: LeaseBody = serde_json::from_str(&served).expect("the mirror decodes it");
+        assert_eq!(mirrored.project, lease.project);
+        assert_eq!(mirrored.ref_, lease.ref_);
+        assert_eq!(mirrored.store_paths, lease.store_paths);
+        // The lease's own reader is a hand parser rather than serde, so
+        // the round trip goes through that instead.
+        let round = cachet_core::lease::LeaseDocument::parse(
+            &serde_json::to_string(&mirrored).expect("the mirror serializes"),
+        )
+        .expect("the lease parser reads the mirror");
+        assert_eq!(round, lease);
     }
 }
