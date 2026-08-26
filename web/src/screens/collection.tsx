@@ -3,7 +3,13 @@ import * as stylex from "@stylexjs/stylex";
 import { useState } from "react";
 
 import * as api from "../api/client.ts";
-import { Label, Panel, Prose, Tiles } from "../components/ui/primitives.tsx";
+import {
+  Intro,
+  Label,
+  Panel,
+  Prose,
+  Tiles,
+} from "../components/ui/primitives.tsx";
 import { Failed, LoadingScreen, NoRunsYet } from "../components/ui/states.tsx";
 import * as format from "../lib/format.ts";
 import {
@@ -92,14 +98,14 @@ export const Collection = () => {
 
   return (
     <>
-      <div>
+      <Intro>
         <Label>Collection</Label>
         <Prose>
           The collector runs on a cron and reports afterwards. Paths stay for
           their grace window after the last lease that named them ends, and a
           run stops itself before deleting more than a quarter of the cache.
         </Prose>
-      </div>
+      </Intro>
 
       <Panel
         title="Recent runs"
@@ -172,8 +178,8 @@ export const Collection = () => {
           />
           {detail.gate === undefined || detail.gate === null ? null : (
             <Prose>
-              This run stopped at its <strong>{detail.gate}</strong> gate and
-              deleted nothing. A tripped gate is the collector refusing to
+              This collection stopped at its <strong>{detail.gate}</strong> gate
+              and deleted nothing. A tripped gate is the collector refusing to
               proceed on evidence it did not trust, which is the behavior that
               keeps a bug from emptying the cache.
             </Prose>

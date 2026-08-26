@@ -86,6 +86,19 @@ export const ticks = <T>(items: readonly T[], most = 6): number[] => {
   return Array.from({ length: most }, (_, index) => Math.round(index * stride));
 };
 
+/** Which bucket a pointer sitting `fraction` of the way across the plot
+ *  is nearest to.
+ *
+ * Nearest rather than containing, so a reader aims at a date rather than
+ * at a two-pixel line: anywhere in the half-bucket either side of a
+ * point selects it, and both ends stay reachable from the plot's very
+ * edges. A fraction outside the plot clamps rather than wrapping. */
+export const nearest = (fraction: number, count: number): number => {
+  if (count <= 1) return 0;
+  const clamped = Math.min(1, Math.max(0, fraction));
+  return Math.round(clamped * (count - 1));
+};
+
 /** A total across a series, which every chart's heading carries. */
 export const total = (
   rows: readonly StatsRow[],

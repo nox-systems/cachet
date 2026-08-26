@@ -5,6 +5,7 @@ import { Bars } from "../components/ui/bars.tsx";
 import { Chart } from "../components/ui/chart.tsx";
 import {
   Hero,
+  Intro,
   Label,
   Panel,
   Prose,
@@ -19,10 +20,11 @@ import * as format from "../lib/format.ts";
 import * as series from "../lib/series.ts";
 
 // What the cache is doing for people, as opposed to for CI. The whole
-// screen is one cross-filtered question: reads whose actor is a laptop.
-// Without the filter the same numbers would need a query per day.
+// screen is one cross-filtered question: reads whose actor is a laptop
+// token, which is the credential a person's machine holds. Without the
+// filter the same numbers would need a query per day.
 
-export const Laptops = () => {
+export const Developers = () => {
   const daily = useQuery({
     queryKey: ["events", "reads", "day", "week", "laptop"],
     queryFn: () =>
@@ -86,19 +88,22 @@ export const Laptops = () => {
 
   return (
     <>
-      <div>
-        <Label>Laptop reads this week</Label>
-        <Hero>{format.count(totals.count)}</Hero>
+      <Intro>
+        <div>
+          <Label>Developer reads this week</Label>
+          <Hero>{format.count(totals.count)}</Hero>
+        </div>
         <Prose>
-          Counted from read events whose actor is a laptop token. Laptops can
-          only read, so every path they found was pushed by CI. Reads from CI
-          and from this console are on the traffic screen.
+          Counted from reads whose credential is a laptop token, which is what a
+          person&apos;s machine holds. Those can only read, so every path they
+          found was pushed by CI. Reads from CI and from this console are on the
+          traffic screen.
         </Prose>
-      </div>
+      </Intro>
 
       <Tiles
         tiles={[
-          { label: "Served to laptops", value: format.bytes(totals.bytes) },
+          { label: "Served to developers", value: format.bytes(totals.bytes) },
           {
             label: "Share of all reads",
             value: format.percent(totals.count, allReads),
@@ -118,7 +123,7 @@ export const Laptops = () => {
       />
 
       <Panel
-        title="Laptop reads per day, past 7 days"
+        title="Developer reads per day, past 7 days"
         aside={`${format.count(totals.count)} reads · ${format.bytes(
           totals.bytes,
         )} served`}
@@ -126,10 +131,11 @@ export const Laptops = () => {
         <Chart points={points} label={format.day} />
       </Panel>
 
-      <Panel title="Laptop reads by outcome">
+      <Panel title="Developer reads by outcome">
         {rows.length === 0 ? (
           <Prose>
-            No laptop has read from this deployment in the past week.
+            Nobody has read from this deployment with a laptop credential in the
+            past week.
           </Prose>
         ) : (
           <Bars

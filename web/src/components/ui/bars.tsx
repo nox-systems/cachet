@@ -18,10 +18,12 @@ const styles = stylex.create({
   row: {
     display: "grid",
     // Fixed slots rather than gap alone, so the bars start on one lane
-    // and the numbers end on one lane however long a name is.
-    gridTemplateColumns: "minmax(0, 22ch) 1fr 10ch 9ch",
+    // and the numbers end on one lane however long a name is. The name
+    // column is a ceiling rather than a width: in a narrow panel it
+    // gives way so the bar keeps enough room to be read as a length.
+    gridTemplateColumns: "minmax(8ch, 22ch) minmax(0, 1fr) 8ch 8ch",
     alignItems: "center",
-    gap: space.s4,
+    gap: space.s3,
     paddingBlock: space.s3,
     borderBottomWidth: "1px",
     borderBottomStyle: "solid",

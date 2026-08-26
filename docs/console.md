@@ -46,9 +46,9 @@ outcomes. Both choices live in the URL, so a view is a link. The day
 window draws hourly buckets and the other two draw daily ones, because
 those are the pairs `/api/self/events` admits.
 
-**Laptops** answers what the cache is doing for people rather than for
+**Developers** answers what the cache is doing for people rather than for
 CI. The whole screen is one cross-filtered question, reads whose actor is
-a laptop, which is what the `actor` filter exists for.
+a laptop token, which is what the `actor` filter exists for.
 
 ## The states the mockups do not draw
 
@@ -80,7 +80,17 @@ every answer with an `effect` schema before a screen sees it: a
 deployment newer or older than the console beside it fails at the
 boundary with the field named rather than three components later as an
 `undefined` on screen. The charts are hand-drawn SVG, because the shape
-is an area, a line, two gridlines and a dot.
+is an area, a line, two gridlines and a dot, and the libraries worth
+considering are either archived (TanStack's react-charts) or arrive with
+a second styling system (shadcn's charts are Recharts and Tailwind).
+
+Every line carries a hover layer, which is part of a chart rather than an
+addition to one: a crosshair that snaps to the nearest bucket, a readout
+where the value leads and the date follows, and the same reading from the
+keyboard, where the plot takes focus and the arrows walk the series into
+a live region. The bars need no tooltip, because every bar is already
+labelled with both its figures; what they gain on hover is the lift that
+says the row noticed.
 
 `just web` builds it into `web/dist`, and `just deploy` uploads that
 directory as the worker's static assets. The asset layer answers a

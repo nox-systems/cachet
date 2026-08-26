@@ -1,6 +1,7 @@
 import * as stylex from "@stylexjs/stylex";
+import { Tooltip } from "@base-ui/react/tooltip";
 import { Link, useRouterState } from "@tanstack/react-router";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import type { Health, PublicConfig, WhoAmI } from "../api/schema.ts";
 import * as format from "../lib/format.ts";
@@ -19,7 +20,9 @@ import {
   CollectionIcon,
   LaptopIcon,
   Mark,
+  NoxMark,
   OverviewIcon,
+  StatusIcon,
   SignOutIcon,
   TrafficIcon,
 } from "./icons.tsx";
@@ -72,10 +75,11 @@ const styles = stylex.create({
     gap: space.s6,
     whiteSpace: "nowrap",
   },
-  dot: { fontSize: "9px", marginRight: space.s2 },
-  healthy: { color: color.signal },
-  degraded: { color: color.amber },
-  unknown: { color: color.lineStrong },
+  status: { display: "inline-flex", alignItems: "center", gap: space.s2 },
+  dot: { width: "6px", height: "6px", borderRadius: "50%" },
+  healthy: { backgroundColor: color.signal },
+  degraded: { backgroundColor: color.amber },
+  unknown: { backgroundColor: color.lineStrong },
   body: { flex: 1, display: "flex", minHeight: 0 },
   railScroll: { overflow: "hidden" },
   rail: {
@@ -92,11 +96,39 @@ const styles = stylex.create({
   },
   mark: {
     color: color.text,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
+    display: "grid",
+    placeItems: "center",
+    width: "48px",
     height: "36px",
     marginBottom: space.s3,
+    textDecoration: "none",
+  },
+  // Both marks occupy the one cell, so the swap is a cross-fade in place
+  // rather than a reflow. The capacitor is what cachet is; the wordmark
+  // is whose it is, and hovering asks the second question.
+  markLayer: {
+    gridArea: "1 / 1",
+    display: "flex",
+    transitionProperty: "opacity, transform",
+    transitionDuration: "260ms",
+    transitionTimingFunction: "cubic-bezier(0.2, 0.8, 0.2, 1)",
+  },
+  markShown: { opacity: 1, transform: "scale(1)" },
+  markHidden: { opacity: 0, transform: "scale(0.86)" },
+  tooltip: {
+    fontFamily: font.ui,
+    fontSize: text.label,
+    lineHeight: leading.label,
+    letterSpacing: tracking.label,
+    textTransform: "uppercase",
+    color: color.text,
+    backgroundColor: color.ink,
+    borderWidth: "1px",
+    borderStyle: "solid",
+    borderColor: color.lineStrong,
+    paddingBlock: space.s2,
+    paddingInline: space.s3,
+    marginLeft: space.s2,
   },
   // Fixed 36px slots so every mark sits on one vertical lane, including
   // the one at the bottom.
@@ -120,6 +152,34 @@ const styles = stylex.create({
     backgroundColor: color.ink2,
   },
   railSpacer: { flex: 1 },
+  railStatus: {
+    width: "36px",
+    height: "36px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  railStatusHealthy: { color: color.muted },
+  railStatusDegraded: { color: color.amber },
+  railStatusUnknown: { color: color.lineStrong },
+  // The reader, as one letter. A full login would not fit a 64px rail and
+  // the status bar already spells it out.
+  avatar: {
+    width: "32px",
+    height: "32px",
+    marginTop: space.s2,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: "1px",
+    borderStyle: "solid",
+    borderColor: color.line,
+    fontFamily: font.ui,
+    fontSize: text.spec,
+    lineHeight: leading.spec,
+    color: color.muted,
+    textTransform: "uppercase",
+  },
   main: {
     flex: 1,
     minWidth: 0,
@@ -178,19 +238,12 @@ const styles = stylex.create({
     lineHeight: leading.label,
     color: color.muted,
   },
+  footerMark: { display: "flex", color: color.muted },
   signOut: {
-    display: "flex",
-    alignItems: "center",
-    gap: space.s2,
+    marginTop: space.s2,
     backgroundColor: "transparent",
-    borderWidth: 0,
     padding: 0,
     cursor: "pointer",
-    color: { default: color.muted, ":hover": color.text },
-    fontFamily: font.ui,
-    fontSize: text.label,
-    letterSpacing: tracking.label,
-    textTransform: "uppercase",
   },
 });
 
@@ -199,7 +252,7 @@ const SCREENS = [
   { to: "/collection", label: "garbage collection", Icon: CollectionIcon },
   { to: "/access", label: "access", Icon: AccessIcon },
   { to: "/traffic", label: "traffic", Icon: TrafficIcon },
-  { to: "/laptops", label: "laptops", Icon: LaptopIcon },
+  { to: "/developers", label: "developers", Icon: LaptopIcon },
 ] as const;
 
 const statusTone = {
@@ -207,6 +260,45 @@ const statusTone = {
   degraded: styles.degraded,
   unknown: styles.unknown,
 } as const;
+
+const railStatusTone = {
+  healthy: styles.railStatusHealthy,
+  degraded: styles.railStatusDegraded,
+  unknown: styles.railStatusUnknown,
+} as const;
+
+/// The rail's mark, which answers a second question on hover.
+const RailMark = () => {
+  const [over, setOver] = useState(false);
+  return (
+    <Link
+      to="/"
+      aria-label="cachet, by nox"
+      onMouseEnter={() => setOver(true)}
+      onMouseLeave={() => setOver(false)}
+      onFocus={() => setOver(true)}
+      onBlur={() => setOver(false)}
+      {...stylex.props(styles.mark)}
+    >
+      <span
+        {...stylex.props(
+          styles.markLayer,
+          over ? styles.markHidden : styles.markShown,
+        )}
+      >
+        <Mark />
+      </span>
+      <span
+        {...stylex.props(
+          styles.markLayer,
+          over ? styles.markShown : styles.markHidden,
+        )}
+      >
+        <NoxMark />
+      </span>
+    </Link>
+  );
+};
 
 export const Shell = ({
   config,
@@ -253,10 +345,11 @@ export const Shell = ({
             <span>Next collection in {countdown}</span>
           )}
           {health === undefined ? null : (
-            <span>
-              <span {...stylex.props(styles.dot, statusTone[health.status])}>
-                ●
-              </span>
+            <span {...stylex.props(styles.status)}>
+              <span
+                {...stylex.props(styles.dot, statusTone[health.status])}
+                aria-hidden="true"
+              />
               {health.status}
             </span>
           )}
@@ -268,24 +361,107 @@ export const Shell = ({
           {...stylex.props(styles.rail, styles.railScroll)}
           aria-label="Screens"
         >
-          <span {...stylex.props(styles.mark)}>
-            <Mark />
-          </span>
+          <RailMark />
           {SCREENS.map((screen) => (
-            <Link
-              key={screen.to}
-              to={screen.to}
-              aria-label={screen.label}
-              title={screen.label}
-              {...stylex.props(
-                styles.railLink,
-                pathname === screen.to && styles.railActive,
-              )}
-            >
-              <screen.Icon />
-            </Link>
+            <Tooltip.Root key={screen.to}>
+              <Tooltip.Trigger
+                render={
+                  <Link
+                    to={screen.to}
+                    aria-label={screen.label}
+                    {...stylex.props(
+                      styles.railLink,
+                      pathname === screen.to && styles.railActive,
+                    )}
+                  >
+                    <screen.Icon />
+                  </Link>
+                }
+              />
+              <Tooltip.Portal>
+                <Tooltip.Positioner side="right" sideOffset={4}>
+                  <Tooltip.Popup {...stylex.props(styles.tooltip)}>
+                    {screen.label}
+                  </Tooltip.Popup>
+                </Tooltip.Positioner>
+              </Tooltip.Portal>
+            </Tooltip.Root>
           ))}
           <span {...stylex.props(styles.railSpacer)} />
+
+          {health === undefined ? null : (
+            <Tooltip.Root>
+              <Tooltip.Trigger
+                render={
+                  <span
+                    aria-label={`Collection is ${health.status}`}
+                    {...stylex.props(
+                      styles.railStatus,
+                      railStatusTone[health.status],
+                    )}
+                  >
+                    <StatusIcon />
+                  </span>
+                }
+              />
+              <Tooltip.Portal>
+                <Tooltip.Positioner side="right" sideOffset={4}>
+                  <Tooltip.Popup {...stylex.props(styles.tooltip)}>
+                    collection is {health.status}
+                  </Tooltip.Popup>
+                </Tooltip.Positioner>
+              </Tooltip.Portal>
+            </Tooltip.Root>
+          )}
+
+          {who === undefined ? null : (
+            <Tooltip.Root>
+              <Tooltip.Trigger
+                render={
+                  <span
+                    aria-label={`Signed in as ${who.login}`}
+                    {...stylex.props(styles.avatar)}
+                  >
+                    {who.login.slice(0, 1)}
+                  </span>
+                }
+              />
+              <Tooltip.Portal>
+                <Tooltip.Positioner side="right" sideOffset={4}>
+                  <Tooltip.Popup {...stylex.props(styles.tooltip)}>
+                    {who.login}
+                    {who.admin ? " (admin)" : ""}
+                  </Tooltip.Popup>
+                </Tooltip.Positioner>
+              </Tooltip.Portal>
+            </Tooltip.Root>
+          )}
+
+          {/* Signing out belongs beside the identity it ends, not in the
+              corner opposite it. */}
+          {who === undefined ? null : (
+            <Tooltip.Root>
+              <Tooltip.Trigger
+                render={
+                  <button
+                    type="button"
+                    onClick={onSignOut}
+                    aria-label="Sign out"
+                    {...stylex.props(styles.railLink, styles.signOut)}
+                  >
+                    <SignOutIcon />
+                  </button>
+                }
+              />
+              <Tooltip.Portal>
+                <Tooltip.Positioner side="right" sideOffset={4}>
+                  <Tooltip.Popup {...stylex.props(styles.tooltip)}>
+                    sign out
+                  </Tooltip.Popup>
+                </Tooltip.Positioner>
+              </Tooltip.Portal>
+            </Tooltip.Root>
+          )}
         </nav>
 
         <div {...stylex.props(styles.main)}>
@@ -295,14 +471,6 @@ export const Shell = ({
               <span {...stylex.props(styles.crumbSlash)}>/</span>
               <span {...stylex.props(styles.crumbLeaf)}>{here.label}</span>
             </span>
-            <button
-              type="button"
-              onClick={onSignOut}
-              {...stylex.props(styles.signOut)}
-            >
-              <SignOutIcon />
-              Sign out
-            </button>
           </header>
 
           <main {...stylex.props(styles.content)}>{children}</main>
@@ -314,7 +482,9 @@ export const Shell = ({
                 : `Signed in as ${who.login}${who.admin ? " (admin)" : ""}`}
               {config === undefined ? "" : ` · ${config.host}`}
             </span>
-            <span>NOX</span>
+            <span {...stylex.props(styles.footerMark)} aria-label="nox">
+              <NoxMark />
+            </span>
           </footer>
         </div>
       </div>

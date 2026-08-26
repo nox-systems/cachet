@@ -119,7 +119,10 @@ const styles = stylex.create({
     alignItems: "center",
     justifyContent: "space-between",
     gap: space.s4,
-    width: "100%",
+    // why: sized to the command, not to the column. A one-word command in
+    // a full-width box reads as an input field waiting for the rest of it.
+    alignSelf: "flex-start",
+    maxWidth: "100%",
     textAlign: "left",
     cursor: "pointer",
     backgroundColor: { default: color.ink, ":hover": color.ink3 },

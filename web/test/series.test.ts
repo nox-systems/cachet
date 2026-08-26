@@ -71,6 +71,28 @@ describe("ticks", () => {
   });
 });
 
+describe("nearest", () => {
+  it("selects the bucket the pointer is closest to", () => {
+    // A reader aims at a date, not at a two-pixel line: anywhere in the
+    // half-bucket either side of a point selects it.
+    expect(series.nearest(0, 7)).toBe(0);
+    expect(series.nearest(1, 7)).toBe(6);
+    expect(series.nearest(0.5, 7)).toBe(3);
+    expect(series.nearest(0.08, 7)).toBe(0);
+    expect(series.nearest(0.09, 7)).toBe(1);
+  });
+
+  it("clamps a pointer that left the plot", () => {
+    expect(series.nearest(-3, 7)).toBe(0);
+    expect(series.nearest(9, 7)).toBe(6);
+  });
+
+  it("has one answer for a series of one, and for none", () => {
+    expect(series.nearest(0.7, 1)).toBe(0);
+    expect(series.nearest(0.7, 0)).toBe(0);
+  });
+});
+
 describe("total and busiest", () => {
   it("sums a series for the heading it appears in", () => {
     expect(series.total([row("1", 5, 50), row("2", 7, 70)])).toEqual({

@@ -68,6 +68,16 @@ const styles = stylex.create({
     color: color.text,
     margin: 0,
   },
+  intro: { display: "flex", flexDirection: "column", gap: space.s4 },
+  // The overview's third block: a wide chart beside a narrower list, in
+  // the proportion the design draws them (800 to 488).
+  row: {
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 800fr) minmax(0, 488fr)",
+    gap: space.s6,
+    alignItems: "start",
+    "@media (max-width: 1100px)": { gridTemplateColumns: "minmax(0, 1fr)" },
+  },
   prose: {
     fontFamily: font.ui,
     fontSize: text.spec,
@@ -79,31 +89,36 @@ const styles = stylex.create({
     // wide, so the same count is a much narrower column than it looks.
     maxWidth: "88ch",
   },
-  // A row of figures divided by hairlines. Fixed-width slots rather than
-  // gap alone, so the numbers line up down the screen.
+  // A block of figures divided by hairlines. One grid rather than a row
+  // per four, because two grids stacked with a gap between them leave the
+  // vertical rules stopping short of the block's bottom edge and the
+  // lattice reads as broken.
   tiles: {
     display: "grid",
-    gridAutoFlow: "column",
-    gridAutoColumns: "1fr",
+    gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
     borderTopWidth: "1px",
     borderTopStyle: "solid",
     borderTopColor: color.line,
   },
   tile: {
     paddingBlock: space.s4,
-    paddingInline: {
-      default: space.s6,
-      ":first-child": 0,
-    },
-    borderLeftWidth: {
-      default: "1px",
-      ":first-child": 0,
-    },
+    paddingInline: space.s6,
+    borderLeftWidth: "1px",
     borderLeftStyle: "solid",
     borderLeftColor: color.line,
     display: "flex",
     flexDirection: "column",
     gap: space.s2,
+  },
+  // The first column carries no rule and no inset: the block's left edge
+  // is the panel's, not a divider.
+  tileFirst: { borderLeftWidth: 0, paddingInline: 0 },
+  // Every row after the first draws its own top rule, so the lattice is
+  // continuous however many figures a screen has.
+  tileWrapped: {
+    borderTopWidth: "1px",
+    borderTopStyle: "solid",
+    borderTopColor: color.line,
   },
   tileValue: {
     fontFamily: font.ui,
@@ -151,16 +166,39 @@ export const Prose = ({ children }: { children: ReactNode }) => (
   <p {...stylex.props(styles.prose)}>{children}</p>
 );
 
+/// A screen's opening: a label, and the thing it labels, with air between
+/// them. Without the gap the two sit on adjacent baselines and the label
+/// reads as the paragraph's first line.
+export const Intro = ({ children }: { children: ReactNode }) => (
+  <div {...stylex.props(styles.intro)}>{children}</div>
+);
+
+/// Two panels side by side, collapsing to one column when the window is
+/// too narrow to give the chart room to be a chart.
+export const Row = ({ children }: { children: ReactNode }) => (
+  <div {...stylex.props(styles.row)}>{children}</div>
+);
+
 export type Tile = {
   readonly label: string;
   readonly value: string;
   readonly tone?: "signal" | "muted";
 };
 
+/** How many figures sit on one row before the block wraps. */
+const COLUMNS = 4;
+
 export const Tiles = ({ tiles }: { tiles: readonly Tile[] }) => (
   <div {...stylex.props(styles.tiles)}>
-    {tiles.map((tile) => (
-      <div key={tile.label} {...stylex.props(styles.tile)}>
+    {tiles.map((tile, index) => (
+      <div
+        key={tile.label}
+        {...stylex.props(
+          styles.tile,
+          index % COLUMNS === 0 && styles.tileFirst,
+          index >= COLUMNS && styles.tileWrapped,
+        )}
+      >
         <Label>{tile.label}</Label>
         <span
           {...stylex.props(

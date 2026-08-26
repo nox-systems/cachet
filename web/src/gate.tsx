@@ -11,7 +11,7 @@ import { SignIn } from "./screens/sign-in.tsx";
 // answers: not signed in, signed in without admin rights, or the shell.
 // Everything below it can assume a credential resolved.
 
-const ADMIN_ONLY = new Set(["/", "/collection", "/traffic", "/laptops"]);
+const ADMIN_ONLY = new Set(["/", "/collection", "/traffic", "/developers"]);
 
 export const Gate = ({ children }: { children: ReactNode }) => {
   const queryClient = useQueryClient();

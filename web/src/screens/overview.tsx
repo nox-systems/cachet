@@ -5,9 +5,11 @@ import { Bars } from "../components/ui/bars.tsx";
 import { Chart } from "../components/ui/chart.tsx";
 import {
   Hero,
+  Intro,
   Label,
   Panel,
   Prose,
+  Row,
   Tiles,
 } from "../components/ui/primitives.tsx";
 import {
@@ -69,22 +71,24 @@ export const Overview = () => {
 
   return (
     <>
-      <div>
-        <Label>Paths in the cache</Label>
-        <Hero>{format.count(report?.inventoryPaths ?? 0)}</Hero>
+      <Intro>
+        <div>
+          <Label>Paths in the cache</Label>
+          <Hero>{format.count(report?.inventoryPaths ?? 0)}</Hero>
+        </div>
         <Prose>
-          Counted by the collection that finished{" "}
+          Counted by the last collection, which finished{" "}
           {report === undefined ? "" : format.stamp(report.finishedAtMs)} UTC.
           {report?.gate === undefined || report.gate === null
             ? ""
-            : ` That run stopped at its ${report.gate} gate and deleted nothing.`}
+            : ` It stopped at its ${report.gate} gate and deleted nothing.`}
         </Prose>
-      </div>
+      </Intro>
 
       <Tiles
         tiles={[
           {
-            label: "Freed by that run",
+            label: "Freed by last GC",
             value: format.bytes(report?.bytesFreed ?? 0),
           },
           {
@@ -109,7 +113,7 @@ export const Overview = () => {
           <CountersUnavailable />
         </Panel>
       ) : (
-        <>
+        <Row>
           <Panel
             title="Reads per day, past 7 days"
             aside={`${format.count(readTotals.count)} reads · ${format.bytes(
@@ -148,7 +152,7 @@ export const Overview = () => {
               </>
             )}
           </Panel>
-        </>
+        </Row>
       )}
     </>
   );

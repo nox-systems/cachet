@@ -74,6 +74,48 @@ export const CheckIcon = () => (
   </Icon>
 );
 
+/** The crosshair the rail's foot carries: the same motif as the nox
+ *  mark's centre, at rail scale. */
+export const StatusIcon = () => (
+  <Icon>
+    <circle cx="12" cy="12" r="4" />
+    <path d="M12 1.5 V5.5 M12 18.5 V22.5 M1.5 12 H5.5 M18.5 12 H22.5" />
+  </Icon>
+);
+
+/** The nox wordmark: N, a crosshaired O with a live centre, X. */
+export const NoxMark = () => (
+  <svg width="48" height="16" viewBox="0 0 72 24" aria-hidden="true">
+    <path
+      d="M4 22 V2 L20 22 V2"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="4"
+    />
+    <circle
+      cx="36"
+      cy="12"
+      r="8"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="4"
+    />
+    <path
+      d="M36 0 V5 M36 19 V24 M24 12 H29 M43 12 H48"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+    />
+    <circle cx="36" cy="12" r="1.6" fill="#E4002B" />
+    <path
+      d="M52 2 L68 22 M68 2 L52 22"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="4"
+    />
+  </svg>
+);
+
 export const Mark = () => (
   <svg width="28" height="28" viewBox="0 0 24 24" aria-hidden="true">
     {/* The cachet mark is a capacitor: two leads meeting two plates

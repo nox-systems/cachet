@@ -8,7 +8,7 @@ import {
 import type { Subject, Window } from "./api/schema.ts";
 import { Access } from "./screens/access.tsx";
 import { Collection } from "./screens/collection.tsx";
-import { Laptops } from "./screens/laptops.tsx";
+import { Developers } from "./screens/developers.tsx";
 import { Overview } from "./screens/overview.tsx";
 import { Traffic } from "./screens/traffic.tsx";
 import { Gate } from "./gate.tsx";
@@ -56,8 +56,8 @@ const routes = [
   }),
   createRoute({
     getParentRoute: () => rootRoute,
-    path: "/laptops",
-    component: Laptops,
+    path: "/developers",
+    component: Developers,
   }),
 ];
 
