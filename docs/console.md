@@ -22,6 +22,19 @@ worker's version, and the commit it was built from, all from
 down to the next collection and shows a status, both from
 `/api/self/health`.
 
+It also names the Cloudflare colo answering the reader and the round trip
+to it. Both come from timing a fetch of `/nix-cache-info`, which is the
+one protocol path needing no credential: Cloudflare puts the colo in the
+last segment of the `cf-ray` header on every response, so the deployment
+serves nothing extra for it. The number means what it says because
+placement is unpinned (docs/DEPLOY.md), so the worker runs at the colo
+nearest the client and the edge answering the console is the same one
+answering that laptop's substitutions. It is a median of the last five
+probes, because one round trip that hit a cold isolate should not move a
+number somebody is using to decide whether their cache is near them. It
+speaks for the reader and not for CI, whose runners sit wherever GitHub
+puts them.
+
 **Overview** answers how big the cache is and what put it there. The hero
 is the inventory the last collection counted, which is the one number
 that means "how big" without qualification. Below it: what that run

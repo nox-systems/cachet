@@ -4,6 +4,7 @@ import { Link, useRouterState } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
 
 import type { Health, PublicConfig, WhoAmI } from "../api/schema.ts";
+import { useEdge } from "../lib/edge.ts";
 import * as format from "../lib/format.ts";
 import {
   color,
@@ -66,6 +67,14 @@ const styles = stylex.create({
     letterSpacing: tracking.label,
     textTransform: "uppercase",
     color: color.muted,
+  },
+  hudLeft: {
+    display: "flex",
+    alignItems: "center",
+    gap: space.s6,
+    minWidth: 0,
+    overflow: "hidden",
+    whiteSpace: "nowrap",
   },
   hudClock: { justifySelf: "center", whiteSpace: "nowrap" },
   hudRight: {
@@ -300,6 +309,7 @@ export const Shell = ({
   const pathname = useRouterState({
     select: (state) => state.location.pathname,
   });
+  const edge = useEdge();
   const here = SCREENS.find((screen) => screen.to === pathname) ?? SCREENS[0];
   const countdown =
     health?.nextCollectionAtMs === undefined
@@ -309,15 +319,41 @@ export const Shell = ({
   return (
     <div {...stylex.props(styles.page)}>
       <div {...stylex.props(styles.hud)}>
-        <span>
-          {[
-            "cachet",
-            config?.deployment,
-            config === undefined ? undefined : `v${config.version}`,
-            config?.buildSha,
-          ]
-            .filter((part) => part !== undefined && part !== "")
-            .join(" · ")}
+        <span {...stylex.props(styles.hudLeft)}>
+          <span>
+            {[
+              "cachet",
+              config?.deployment,
+              config === undefined ? undefined : `v${config.version}`,
+              config?.buildSha === undefined
+                ? undefined
+                : `commit ${config.buildSha}`,
+            ]
+              .filter((part) => part !== undefined && part !== "")
+              .join(" · ")}
+          </span>
+          {/* The colo answering this reader, and how far away it is.
+              Placement is unpinned, so this is the same edge that answers
+              their substitutions. */}
+          {edge.colo === undefined ? null : (
+            <Tooltip.Root>
+              <Tooltip.Trigger
+                render={
+                  <span>
+                    edge · {edge.colo}
+                    {edge.rttMs === undefined ? "" : ` · ${edge.rttMs} ms`}
+                  </span>
+                }
+              />
+              <Tooltip.Portal>
+                <Tooltip.Positioner side="bottom" sideOffset={6}>
+                  <Tooltip.Popup {...stylex.props(styles.tooltip)}>
+                    your round trip to this cache
+                  </Tooltip.Popup>
+                </Tooltip.Positioner>
+              </Tooltip.Portal>
+            </Tooltip.Root>
+          )}
         </span>
         <span {...stylex.props(styles.hudClock)}>
           UTC {format.clock(nowMs)}

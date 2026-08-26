@@ -71,6 +71,24 @@ describe("ticks", () => {
   });
 });
 
+describe("median", () => {
+  it("takes the middle of an odd set and the mean of an even one", () => {
+    expect(series.median([41, 38, 44])).toBe(41);
+    expect(series.median([40, 42])).toBe(41);
+    expect(series.median([7])).toBe(7);
+  });
+
+  it("is not moved by one slow sample", () => {
+    // A round trip that hit a cold isolate should not change the number
+    // a reader is using to decide whether their cache is near them.
+    expect(series.median([40, 41, 42, 43, 900])).toBe(42);
+  });
+
+  it("has no answer for no samples", () => {
+    expect(series.median([])).toBeUndefined();
+  });
+});
+
 describe("nearest", () => {
   it("selects the bucket the pointer is closest to", () => {
     // A reader aims at a date, not at a two-pixel line: anywhere in the
