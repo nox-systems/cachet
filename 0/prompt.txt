@@ -1,0 +1,6 @@
+You can get rid of this:
+```
+<span aria-label="Signed in as shivansh" class="x1td3qas x10w6t97 x8hokos x78zum5 x6s0dn4 xl56j7k xmkeg23 x1y0btm7 x8arwzh xphp1ok xbvv1a9 xrv0ek0 xlw7ol3 xtvhhri" id="base-ui-_r_b_" data-base-ui-tooltip-trigger="">s</span>
+```
+
+Overview reads per day is fine for now
