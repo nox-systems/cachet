@@ -1,0 +1,42 @@
+<task-notification>
+<task-id>bjsw9dbi5</task-id>
+<summary>Monitor event: "staging deploy outcome and any stats-token error"</summary>
+<event>staging deploy: completed/failure</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>b7nz1je44</task-id>
+<summary>Monitor event: "ci on f8373ce and the staging deploy that binds the stats token"</summary>
+<event>ci on f8373ce: success</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>b7nz1je44</task-id>
+<summary>Monitor event: "ci on f8373ce and the staging deploy that binds the stats token"</summary>
+<event>staging deploy: success</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>b7nz1je44</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-shivanshvij-Development-nox-cachet/4406a8f5-e3b8-42e4-a5a2-eef2da85c0c4/tasks/b7nz1je44.output</output-file>
+<status>completed</status>
+<summary>Monitor "ci on f8373ce and the staging deploy that binds the stats token" stream ended</summary>
+</task-notification>
+
+---
+
+Okay two things I've discovered. 
+
+First, you need to be lowercasing everything. The admin usernames, the org names, what github returns, etc. - all normalized via lowercase. 
+
+Second, the capacitor symbol looks off in the UI. Third, why does cachet.staging.nox.so ask me to do a basic auth before letting me sign in via github? On the / and /console URLs it shouldn't right?
