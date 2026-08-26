@@ -1,0 +1,9 @@
+Node IDs: 7L6-0 <- what else do we need from that header? Should we have those things? Is it worth the complication?
+
+---
+
+I think we probably want to put the word COMMIT before the commit hash. I think the EDGE SJC bit isn't a lie because the user's nix cache requests will be also served from the same nearby worker. The latency I think can be changed so we record maybe like TTFB latency for the console? That makes sense right?
+
+---
+
+No not a round trip against nix-cache-info, a round trip for the console being served back to the user bro
