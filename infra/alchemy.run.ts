@@ -72,9 +72,18 @@ export default Alchemy.Stack(
         // already owns and no power over R2, KV, or the worker itself.
         // Optional: a deployment without it counts normally and simply
         // cannot report.
+        // why: the binding is CACHET_STATS_TOKEN and the variable read to
+        // fill it is CACHET_DEPLOY_STATS_TOKEN, because those are two
+        // different names for two different sides. Everything an operator
+        // sets carries the deploy prefix; what the worker reads does not.
+        // They were the same name here, so a deployment that set the
+        // documented variable satisfied the condition above and then
+        // resolved a variable nothing had set.
         ...(cfg.statsToken === undefined
           ? {}
-          : { CACHET_STATS_TOKEN: Config.redacted("CACHET_STATS_TOKEN") }),
+          : {
+              CACHET_STATS_TOKEN: Config.redacted("CACHET_DEPLOY_STATS_TOKEN"),
+            }),
         // The account the SQL API runs the query under. A worker cannot
         // read the dataset it writes to without naming an account, and
         // this is the same one alchemy is deploying into, so it comes
