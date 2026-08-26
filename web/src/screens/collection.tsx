@@ -3,13 +3,7 @@ import * as stylex from "@stylexjs/stylex";
 import { useState } from "react";
 
 import * as api from "../api/client.ts";
-import {
-  Intro,
-  Label,
-  Panel,
-  Prose,
-  Tiles,
-} from "../components/ui/primitives.tsx";
+import { Label, Panel, Prose, Tiles } from "../components/ui/primitives.tsx";
 import { Failed, LoadingScreen, NoRunsYet } from "../components/ui/states.tsx";
 import * as format from "../lib/format.ts";
 import {
@@ -98,15 +92,6 @@ export const Collection = () => {
 
   return (
     <>
-      <Intro>
-        <Label>Collection</Label>
-        <Prose>
-          The collector runs on a cron and reports afterwards. Paths stay for
-          their grace window after the last lease that named them ends, and a
-          run stops itself before deleting more than a quarter of the cache.
-        </Prose>
-      </Intro>
-
       <Panel
         title="Recent runs"
         aside={`${runIds.length} of ${runs.data?.runs.length ?? 0} kept reports`}

@@ -30,15 +30,14 @@ reads per day, and the repositories that pushed, largest first.
 
 **Garbage collection** answers whether the collector is working. The
 table is the last eight runs with their durations, deletions, and
-results; a run that tripped a gate says so in the signal colour, because
-a tripped gate is the collector refusing to proceed on evidence it did
-not trust rather than an error. Selecting a run shows its whole report.
+results; a run that tripped a gate says so in the signal colour.
+Selecting a run shows its whole report.
 
 **Access** answers who can reach this deployment and how. The
-organizations, the public key with a copy button, the OAuth client id,
-the workflow snippet CI needs, and the three commands a laptop runs. It
-closes with a sentence about the reader's own session and what it can and
-cannot do.
+organizations, the public key, the OAuth client id, the workflow snippet
+CI needs, and the three commands a laptop runs; every command and key
+copies on click. It closes by naming the reader's own session and when it
+expires.
 
 **Traffic** answers what the deployment is serving. Reads, writes, or
 probes, over a day, a week, or a month, as a line and as a ranked list of
@@ -49,6 +48,12 @@ those are the pairs `/api/self/events` admits.
 **Developers** answers what the cache is doing for people rather than for
 CI. The whole screen is one cross-filtered question, reads whose actor is
 a laptop token, which is what the `actor` filter exists for.
+
+The screens carry facts and not explanations of them. What a gate is,
+what a grace window does, and why laptops cannot write are all true and
+all belong in this document rather than beside a number, because a
+paragraph explaining the system sits between a reader and the figure they
+came for.
 
 ## The states the mockups do not draw
 

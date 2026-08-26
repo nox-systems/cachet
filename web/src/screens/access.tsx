@@ -243,8 +243,7 @@ steps:
                 {deployment.orgs.join(", ")}
               </span>
               <p {...stylex.props(styles.note)}>
-                Members can read. CI in these organizations&apos; repositories
-                can also write, through GitHub OIDC.
+                Members read. Their CI writes.
               </p>
             </div>
             <span />
@@ -269,12 +268,6 @@ steps:
       <div {...stylex.props(styles.columns)}>
         <Panel title="Push from CI" aside={<Copy value={action} />}>
           <pre {...stylex.props(styles.code)}>{action}</pre>
-          <Prose>
-            The action installs nix trusting this cache, snapshots the store
-            before your build, and pushes what the build added on success.
-            Signing happens on the deployment, so the job needs no secrets
-            beyond its OIDC token.
-          </Prose>
         </Panel>
 
         <Panel title="Read from a laptop" aside="Tokens last thirty days">
@@ -318,11 +311,7 @@ steps:
             {who.data.admin ? ", an admin of this deployment" : ""}.
             {who.data.expiresAtMs === undefined
               ? ""
-              : ` This browser session expires on ${format.date(
-                  who.data.expiresAtMs,
-                )}.`}{" "}
-            A browser session reads this console and nothing else: it cannot
-            substitute from the cache.
+              : ` This session expires on ${format.date(who.data.expiresAtMs)}.`}
           </>
         )}
       </p>

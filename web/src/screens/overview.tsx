@@ -135,21 +135,15 @@ export const Overview = () => {
                 CI; laptops can only read.
               </Prose>
             ) : (
-              <>
-                <Bars
-                  rows={writeRows.slice(0, 6).map((row) => ({
-                    key: row.dimension,
-                    name: row.dimension === "" ? "unattributed" : row.dimension,
-                    value: row.count,
-                    figure: format.count(row.count),
-                    aside: format.bytes(row.bytes),
-                  }))}
-                />
-                <Prose>
-                  Every path in the cache was pushed by CI. Laptops can only
-                  read.
-                </Prose>
-              </>
+              <Bars
+                rows={writeRows.slice(0, 6).map((row) => ({
+                  key: row.dimension,
+                  name: row.dimension === "" ? "unattributed" : row.dimension,
+                  value: row.count,
+                  figure: format.count(row.count),
+                  aside: format.bytes(row.bytes),
+                }))}
+              />
             )}
           </Panel>
         </Row>

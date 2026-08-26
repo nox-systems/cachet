@@ -75,7 +75,11 @@ const styles = stylex.create({
     display: "grid",
     gridTemplateColumns: "minmax(0, 800fr) minmax(0, 488fr)",
     gap: space.s6,
-    alignItems: "start",
+    // why: stretch, which is the grid default and was overridden to
+    // start. Two panels side by side at different heights read as two
+    // unrelated things that happen to be adjacent; the design draws them
+    // the same height because they are one row of one screen.
+    alignItems: "stretch",
     "@media (max-width: 1100px)": { gridTemplateColumns: "minmax(0, 1fr)" },
   },
   prose: {
