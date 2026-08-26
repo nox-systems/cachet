@@ -162,24 +162,6 @@ const styles = stylex.create({
   railStatusHealthy: { color: color.muted },
   railStatusDegraded: { color: color.amber },
   railStatusUnknown: { color: color.lineStrong },
-  // The reader, as one letter. A full login would not fit a 64px rail and
-  // the status bar already spells it out.
-  avatar: {
-    width: "32px",
-    height: "32px",
-    marginTop: space.s2,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: "1px",
-    borderStyle: "solid",
-    borderColor: color.line,
-    fontFamily: font.ui,
-    fontSize: text.spec,
-    lineHeight: leading.spec,
-    color: color.muted,
-    textTransform: "uppercase",
-  },
   main: {
     flex: 1,
     minWidth: 0,
@@ -408,29 +390,6 @@ export const Shell = ({
                 <Tooltip.Positioner side="right" sideOffset={4}>
                   <Tooltip.Popup {...stylex.props(styles.tooltip)}>
                     collection is {health.status}
-                  </Tooltip.Popup>
-                </Tooltip.Positioner>
-              </Tooltip.Portal>
-            </Tooltip.Root>
-          )}
-
-          {who === undefined ? null : (
-            <Tooltip.Root>
-              <Tooltip.Trigger
-                render={
-                  <span
-                    aria-label={`Signed in as ${who.login}`}
-                    {...stylex.props(styles.avatar)}
-                  >
-                    {who.login.slice(0, 1)}
-                  </span>
-                }
-              />
-              <Tooltip.Portal>
-                <Tooltip.Positioner side="right" sideOffset={4}>
-                  <Tooltip.Popup {...stylex.props(styles.tooltip)}>
-                    {who.login}
-                    {who.admin ? " (admin)" : ""}
                   </Tooltip.Popup>
                 </Tooltip.Positioner>
               </Tooltip.Portal>
