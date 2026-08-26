@@ -169,8 +169,15 @@ CACHET_DEPLOY_AUDIENCE=${CACHET_DEPLOY_AUDIENCE}
 CACHET_DEPLOY_DEFAULT_BRANCH_REF=${CACHET_DEPLOY_DEFAULT_BRANCH_REF}
 CACHET_OAUTH_CLIENT_SECRET=${CACHET_OAUTH_CLIENT_SECRET}
 CACHET_SIGNING_KEY=${signing_key}
-# Optional: the future UI's origin for the browser login redirect.
-#CACHET_DEPLOY_UI_ORIGIN=https://ui.example.com
+# Optional. Without a stats token the deployment counts every read, write,
+# and probe and cannot report them, so the console's traffic and laptop
+# screens say so instead of drawing. The token is a Cloudflare API token
+# scoped to Account Analytics:Read and nothing else, and reporting needs
+# CLOUDFLARE_ACCOUNT_ID in the deploy environment beside it.
+#CACHET_DEPLOY_STATS_TOKEN=
+# Optional. A stylesheet the console loads for licensed faces; unset, it
+# renders the open-licensed ones it ships.
+#CACHET_DEPLOY_FONT_CSS=
 ENV
 chmod 600 "${env_file}.tmp"
 mv "${env_file}.tmp" "${env_file}"
@@ -196,11 +203,21 @@ cachet: next steps, in order:
        plus Zone:Read and Zone:DNS:Edit on the zone above.
     4. If GitHub let you set the callback URL only roughly, make sure it
        reads exactly https://${CACHET_DEPLOY_HOST}/_auth/callback.
-    5. On a laptop: install the cachet binary from the release page, then
+       Signing in lands on the console, which is not configurable: it is
+       this deployment's own https://${CACHET_DEPLOY_HOST}/console.
+    5. Open https://${CACHET_DEPLOY_HOST}/ and sign in with GitHub. The
+       logins in CACHET_DEPLOY_ADMINS see every screen; an org member
+       outside that list sees the access screen alone.
+    6. If you want the traffic and laptop screens to draw, set
+       CACHET_DEPLOY_STATS_TOKEN in ${env_file} to a Cloudflare API token
+       scoped to Account Analytics:Read, and redeploy. Until then the
+       deployment counts everything and reports nothing, and those two
+       screens say which value is missing.
+    7. On a laptop: install the cachet binary from the release page, then
        cachet login --cache-url https://${CACHET_DEPLOY_HOST}
        cachet setup
        cachet doctor
-    6. In CI: uses: nox-systems/cachet/action@v1 with cache-url:
+    8. In CI: uses: nox-systems/cachet/action@v1 with cache-url:
        https://${CACHET_DEPLOY_HOST} and permissions id-token: write.
 
 SUMMARY

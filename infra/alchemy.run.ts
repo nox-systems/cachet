@@ -95,9 +95,6 @@ export default Alchemy.Stack(
         CACHET_HOST: cfg.host,
         CACHET_OAUTH_CLIENT_ID: cfg.oauthClientId,
         CACHET_ADMINS: cfg.admins,
-        ...(cfg.uiOrigin === undefined
-          ? {}
-          : { CACHET_UI_ORIGIN: cfg.uiOrigin }),
         ...(cfg.gcGraceMs === undefined
           ? {}
           : { CACHET_GC_GRACE_MS: cfg.gcGraceMs }),

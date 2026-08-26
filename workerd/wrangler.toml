@@ -33,11 +33,9 @@ CACHET_OAUTH_CLIENT_ID = "lane-oauth-client"
 # The laptop token's user is the lane's admin; a second member token
 # exercises forbidden_admin.
 CACHET_ADMINS = "lane-dev"
-# The OAuth web endpoints join per run via --var, like the API URL.
-# CACHET_UI_ORIGIN is deliberately unset: unset is what every deployment
-# runs with, and it means the callback lands on this deployment's own
-# console. The override and the deliberate-empty case are decided by pure
-# code and asserted in cachet-core's tests.
+# The OAuth web endpoints join per run via --var, like the API URL. Where
+# a successful callback lands is not configuration: it is this
+# deployment's own console, addressed from CACHET_HOST.
 # The collector runs armed with grace zeroed: the lane's seeded objects
 # are seconds old and must still be sweepable.
 CACHET_GC_GRACE_MS = "0"

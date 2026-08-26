@@ -51,10 +51,13 @@ domain, and a second thing to keep in step with the first.
 4. A worker deployed without the binding answers 404 for `/console` and
    serves the protocol exactly as before, which is the same degradation
    the counter binding already makes.
-5. The OAuth callback lands on `https://{host}/console` by default.
-   `CACHET_UI_ORIGIN` stays as an override for a UI hosted elsewhere, and
-   set to the empty string it means the deployment has no UI and the
-   callback answers 204.
+5. The OAuth callback lands on `https://{host}/console`, and that is not
+   configurable. `CACHET_UI_ORIGIN` used to name the target and is
+   removed: pointing it elsewhere redirected a browser to a UI that could
+   not authenticate, because the session cookie is SameSite=Lax on this
+   host and the worker has no CORS layer, and setting it empty stranded
+   the person signing in without turning any console off, since the
+   assets upload unconditionally.
 
 ## Consequences
 

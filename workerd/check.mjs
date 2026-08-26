@@ -1700,8 +1700,8 @@ try {
         const state = await login();
         const res = await callback(LANE_OAUTH_CODE, state);
         assert.equal(res.status, 302);
-        // Unset CACHET_UI_ORIGIN, which is what a deployment runs with:
-        // signing in lands back on the console it was started from.
+        // Signing in lands back on the console it was started from.
+        // There is no configuration for this and there used to be.
         assert.equal(
           res.headers.get("location"),
           "https://cachet.lane.invalid/console",

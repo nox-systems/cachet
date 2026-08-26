@@ -24,8 +24,6 @@ export interface StageConfig {
   defaultBranchRef: string;
   /** The custom domain to attach; defaults to the host. */
   domain: string;
-  /** The browser OAuth flow's redirect target, when a UI exists. */
-  uiOrigin: string | undefined;
   /** The GC grace override; the worker's default (14 days) applies unset. */
   gcGraceMs: string | undefined;
   // The Cloudflare API token the counter route reads analytics with,
@@ -125,7 +123,6 @@ export function loadStageConfig(stage: string): StageConfig {
     audience: value("AUDIENCE") ?? "cachet",
     defaultBranchRef: value("DEFAULT_BRANCH_REF") ?? "refs/heads/main",
     domain,
-    uiOrigin: value("UI_ORIGIN"),
     gcGraceMs: value("GC_GRACE_MS"),
     statsToken,
     accountId,

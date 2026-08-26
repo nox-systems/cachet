@@ -121,31 +121,33 @@ pub fn clear_session_cookie() -> String {
 /// Where a successful callback lands.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CallbackTarget {
-    /// 302 to the deployment's own console, or to a configured origin.
+    /// 302 to the deployment's own console.
     Redirect(String),
-    /// 204 with the body empty.
+    /// 204 with the body empty, for a deployment that cannot name its
+    /// own host and so cannot address its own console.
     Empty,
 }
 
 /// The console's path on the deployment's own host.
 pub const CONSOLE_PATH: &str = "/console";
 
-/// Pick where the callback lands from the deployment's configuration.
+/// Where a person who just signed in lands: the console they came from.
 ///
-/// The default is the deployment's own console, because that is where a
-/// person who just signed in came from and it needs no configuration to
-/// be right. `ui_origin` overrides it for anyone hosting a UI elsewhere,
-/// and a deployment that sets it to the empty string is saying it has no
-/// UI at all, which answers 204 the way every deployment did before the
-/// console existed.
+/// There is no configuration here, and there was until the console
+/// existed. A `CACHET_UI_ORIGIN` pointing somewhere else redirected a
+/// browser to a UI that could not authenticate: the session cookie is
+/// SameSite=Lax on this host, the worker emits no CORS headers and
+/// answers OPTIONS with a 404, so the destination had no credential and
+/// no way to acquire one. Turning a deployment's console off is a
+/// different thing than redirecting past it, and this was never that
+/// either: the assets upload unconditionally, so `/console` served
+/// regardless and the setting only stranded the person signing in.
 #[must_use]
-pub fn callback_target(host: &str, ui_origin: Option<&str>) -> CallbackTarget {
-    match ui_origin {
-        Some("") => CallbackTarget::Empty,
-        Some(origin) => CallbackTarget::Redirect(origin.to_string()),
-        None if host.is_empty() => CallbackTarget::Empty,
-        None => CallbackTarget::Redirect(format!("https://{host}{CONSOLE_PATH}")),
+pub fn callback_target(host: &str) -> CallbackTarget {
+    if host.is_empty() {
+        return CallbackTarget::Empty;
     }
+    CallbackTarget::Redirect(format!("https://{host}{CONSOLE_PATH}"))
 }
 
 /// The form body that trades a refresh token for a fresh access token.
@@ -312,26 +314,13 @@ mod tests {
     }
 
     #[test]
-    fn the_callback_target_defaults_to_the_deployment_s_own_console() {
-        // No configuration: a person who signed in lands back on the
-        // console they signed in from.
+    fn the_callback_lands_on_the_deployment_s_own_console() {
         assert_eq!(
-            callback_target("cachet.example.com", None),
+            callback_target("cachet.example.com"),
             CallbackTarget::Redirect("https://cachet.example.com/console".to_string())
         );
-        // A UI hosted elsewhere overrides it.
-        assert_eq!(
-            callback_target("cachet.example.com", Some("https://ui.example.com")),
-            CallbackTarget::Redirect("https://ui.example.com".to_string())
-        );
-        // Set empty on purpose means "this deployment has no UI", which
-        // is what every deployment answered before the console existed.
-        assert_eq!(
-            callback_target("cachet.example.com", Some("")),
-            CallbackTarget::Empty
-        );
-        // A deployment that cannot name its own host cannot build a
-        // default, and says nothing rather than redirecting to nowhere.
-        assert_eq!(callback_target("", None), CallbackTarget::Empty);
+        // A deployment that cannot name its own host cannot address its
+        // own console, and says nothing rather than redirecting nowhere.
+        assert_eq!(callback_target(""), CallbackTarget::Empty);
     }
 }
