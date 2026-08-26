@@ -1,74 +1,70 @@
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 
-import { median } from "./series.ts";
+// Which of Cloudflare's edges answered this reader, and how long the
+// console took to start arriving from it. Both are facts about the
+// person reading rather than about the deployment, which is what makes
+// them worth showing: placement is deliberately unpinned
+// (docs/DEPLOY.md), so the worker runs at the colo nearest the client and
+// the edge that served this console is the edge that serves that
+// laptop's substitutions.
+//
+// Neither costs a request. The colo rides the `cf-ray` header Cloudflare
+// puts on every response, read off answers the console was making
+// anyway; the timing is the browser's own record of the navigation that
+// loaded this page.
 
-// Which of Cloudflare's edges answers this reader, and how far away it
-// is. Both are facts about the person reading rather than about the
-// deployment, which is what makes them worth showing: placement is
-// deliberately unpinned (docs/DEPLOY.md), so the worker runs at the colo
-// nearest the client and the edge answering this console is the same one
-// answering that laptop's substitutions.
+let colo: string | undefined;
+const listeners = new Set<() => void>();
 
-/** How many round trips the median is taken over. */
-const WINDOW = 5;
+/** Record the colo named by a response the console already made. */
+export const noteColo = (ray: string | null): void => {
+  const named = ray?.split("-").pop();
+  if (named === undefined || named === "" || named === colo) return;
+  colo = named;
+  for (const listener of listeners) listener();
+};
 
-/** How often to take another. */
-const EVERY_MS = 60_000;
+const subscribe = (listener: () => void): (() => void) => {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+};
+
+/**
+ * The console's own time to first byte.
+ *
+ * The browser's record of the navigation that loaded this page, so it is
+ * the round trip the reader actually waited through rather than a probe
+ * standing in for one. It does not change while the page is open, which
+ * is correct: it describes one load, and re-measuring would describe a
+ * request nobody made.
+ */
+export const ttfbMs = (): number | undefined => {
+  const [entry] = performance.getEntriesByType(
+    "navigation",
+  ) as PerformanceNavigationTiming[];
+  if (entry === undefined) return undefined;
+  const elapsed = entry.responseStart - entry.requestStart;
+  return elapsed > 0 ? Math.round(elapsed) : undefined;
+};
 
 export type Edge = {
   /** The colo's IATA code, absent where Cloudflare is not in front. */
   readonly colo?: string;
-  /** The median round trip in milliseconds, absent until one lands. */
-  readonly rttMs?: number;
+  /** The console's time to first byte, in milliseconds. */
+  readonly ttfbMs?: number;
 };
 
-/**
- * Measure the round trip to this deployment's edge.
- *
- * `/nix-cache-info` is the probe because it is the one protocol path that
- * needs no credential and because it is edge-cached, which is what makes
- * the number mean something: a warm narinfo read is an edge hit too, so
- * this is the same round trip a substitution pays. `cache: "no-store"`
- * keeps the browser from answering from its own cache without stopping
- * Cloudflare's from answering from its.
- *
- * A probe that fails says nothing rather than something wrong: the
- * previous samples stand and the reader sees no change.
- */
 export const useEdge = (): Edge => {
-  const [colo, setColo] = useState<string | undefined>(undefined);
-  const [samples, setSamples] = useState<readonly number[]>([]);
-
-  useEffect(() => {
-    let live = true;
-    const probe = async () => {
-      const started = performance.now();
-      try {
-        const answer = await fetch("/nix-cache-info", { cache: "no-store" });
-        const elapsed = performance.now() - started;
-        if (!live) return;
-        // Cloudflare names the colo in the last segment of every ray id,
-        // so this costs the deployment nothing to serve.
-        const ray = answer.headers.get("cf-ray");
-        const named = ray?.split("-").pop();
-        if (named !== undefined && named !== "") setColo(named);
-        setSamples((previous) => [...previous, elapsed].slice(-WINDOW));
-      } catch {
-        // Offline, or the deployment is down. The rest of the console
-        // will say so far more usefully than a missing millisecond.
-      }
-    };
-    void probe();
-    const timer = window.setInterval(() => void probe(), EVERY_MS);
-    return () => {
-      live = false;
-      window.clearInterval(timer);
-    };
-  }, []);
-
-  const rttMs = median(samples);
+  const seen = useSyncExternalStore(
+    subscribe,
+    () => colo,
+    () => undefined,
+  );
+  const ttfb = ttfbMs();
   return {
-    ...(colo === undefined ? {} : { colo }),
-    ...(rttMs === undefined ? {} : { rttMs: Math.round(rttMs) }),
+    ...(seen === undefined ? {} : { colo: seen }),
+    ...(ttfb === undefined ? {} : { ttfbMs: ttfb }),
   };
 };

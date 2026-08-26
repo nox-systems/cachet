@@ -22,6 +22,18 @@ worker's version, and the commit it was built from, all from
 down to the next collection and shows a status, both from
 `/api/self/health`.
 
+It also names the Cloudflare colo that answered the reader and the time
+to first byte of the console itself. Neither costs a request. The colo
+rides the `cf-ray` header Cloudflare puts on every response, read off
+answers the console was making anyway, and the timing is the browser's
+own record of the navigation that loaded the page, so it is the round
+trip the reader actually waited through rather than a probe standing in
+for one. Both mean what they say because placement is unpinned
+(docs/DEPLOY.md): the worker runs at the colo nearest the client, so the
+edge that served this console is the edge that serves that laptop's
+substitutions. They speak for the reader and not for CI, whose runners
+sit wherever GitHub puts them.
+
 It also names the Cloudflare colo answering the reader and the round trip
 to it. Both come from timing a fetch of `/nix-cache-info`, which is the
 one protocol path needing no credential: Cloudflare puts the colo in the

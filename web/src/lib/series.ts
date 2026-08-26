@@ -86,20 +86,6 @@ export const ticks = <T>(items: readonly T[], most = 6): number[] => {
   return Array.from({ length: most }, (_, index) => Math.round(index * stride));
 };
 
-/** The middle value of a set of samples.
- *
- * A median rather than a mean, because a network round trip has a long
- * tail: one request that hit a cold isolate should not move the number a
- * reader is using to decide whether their cache is near them. */
-export const median = (values: readonly number[]): number | undefined => {
-  if (values.length === 0) return undefined;
-  const sorted = [...values].sort((left, right) => left - right);
-  const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 1
-    ? sorted[middle]
-    : ((sorted[middle - 1] ?? 0) + (sorted[middle] ?? 0)) / 2;
-};
-
 /** Which bucket a pointer sitting `fraction` of the way across the plot
  *  is nearest to.
  *

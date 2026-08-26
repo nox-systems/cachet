@@ -341,14 +341,14 @@ export const Shell = ({
                 render={
                   <span>
                     edge · {edge.colo}
-                    {edge.rttMs === undefined ? "" : ` · ${edge.rttMs} ms`}
+                    {edge.ttfbMs === undefined ? "" : ` · ${edge.ttfbMs} ms`}
                   </span>
                 }
               />
               <Tooltip.Portal>
                 <Tooltip.Positioner side="bottom" sideOffset={6}>
                   <Tooltip.Popup {...stylex.props(styles.tooltip)}>
-                    your round trip to this cache
+                    this console's first byte, from {edge.colo}
                   </Tooltip.Popup>
                 </Tooltip.Positioner>
               </Tooltip.Portal>

@@ -1,5 +1,6 @@
 import { Schema } from "effect";
 
+import { noteColo } from "../lib/edge.ts";
 import * as wire from "./schema.ts";
 
 // The console's one door to the deployment. Every network detail stops
@@ -51,6 +52,10 @@ const read = async <A>(
     credentials: "same-origin",
     headers: { accept: "application/json" },
   });
+  // why: read off an answer the console was making anyway. Cloudflare
+  // names the colo that served a request in the last segment of its ray
+  // id, so knowing which edge answers this reader costs no request.
+  noteColo(response.headers.get("cf-ray"));
   const body: unknown = await response.json().catch(() => undefined);
   if (!response.ok) {
     const problem = Schema.decodeUnknownOption(wire.Problem)(body);
