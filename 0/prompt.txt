@@ -1,0 +1,14 @@
+sick. Open the PR big dawg
+
+---
+
+Oh siiiiick
+
+---
+
+```
+This deployment counts, and cannot report
+
+Reading the counters back is Cloudflare's SQL API, which takes an account token the deployment has not been given. Set CACHET_DEPLOY_STATS_TOKEN and CLOUDFLARE_ACCOUNT_ID and redeploy; every read, write, and probe since the deployment started is already counted and will be there.
+```
+Why is staging saying this? Also why the fuck is this prose so trash

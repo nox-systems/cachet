@@ -1,0 +1,32 @@
+{
+  "cli_version": "0.10.2",
+  "checkpoint_id": "01M1075G7JRWB7W9TQC73AMTVS",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "crates/cachet-core/src/stats_query.rs",
+    "crates/cachet-worker/src/api.rs",
+    "web/index.html",
+    "web/public/favicon.svg",
+    "web/src/components/ui/states.tsx",
+    "web/test/components.test.tsx",
+    "workerd/check.mjs"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 32,
+    "cache_creation_tokens": 15443,
+    "cache_read_tokens": 14712214,
+    "output_tokens": 12433,
+    "api_call_count": 16
+  }
+}
