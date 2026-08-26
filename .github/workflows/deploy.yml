@@ -51,6 +51,8 @@ jobs:
       CACHET_DEPLOY_DEFAULT_BRANCH_REF: ${{ secrets.CACHET_DEPLOY_DEFAULT_BRANCH_REF }}
       CACHET_DEPLOY_DOMAIN: ${{ secrets.CACHET_DEPLOY_DOMAIN }}
       CACHET_DEPLOY_UI_ORIGIN: ${{ secrets.CACHET_DEPLOY_UI_ORIGIN }}
+      CACHET_DEPLOY_STATS_TOKEN: ${{ secrets.CACHET_DEPLOY_STATS_TOKEN }}
+      CACHET_DEPLOY_FONT_CSS: ${{ secrets.CACHET_DEPLOY_FONT_CSS }}
       # why: zeroed grace is a test-rig property (the integration lane
       # sweeps what it seeds), so the workflow says it outright instead of
       # riding a stage-name default in config.
@@ -116,6 +118,8 @@ jobs:
       CACHET_DEPLOY_DEFAULT_BRANCH_REF: ${{ secrets.CACHET_DEPLOY_DEFAULT_BRANCH_REF }}
       CACHET_DEPLOY_DOMAIN: ${{ secrets.CACHET_DEPLOY_DOMAIN }}
       CACHET_DEPLOY_UI_ORIGIN: ${{ secrets.CACHET_DEPLOY_UI_ORIGIN }}
+      CACHET_DEPLOY_STATS_TOKEN: ${{ secrets.CACHET_DEPLOY_STATS_TOKEN }}
+      CACHET_DEPLOY_FONT_CSS: ${{ secrets.CACHET_DEPLOY_FONT_CSS }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: nix on the cachet cache

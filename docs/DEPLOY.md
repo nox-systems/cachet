@@ -134,6 +134,14 @@ values the local file carries, all of them as environment secrets: the
 `CACHET_OAUTH_CLIENT_SECRET`, `CLOUDFLARE_API_TOKEN`, and
 `CLOUDFLARE_ACCOUNT_ID`.
 
+The workflow names each of those in its own `env` block rather than
+inheriting the environment, so a value added to the table above reaches a
+deployment only once it is added there too. A secret the environment does
+not hold renders as the empty string, which the config reads as absent:
+that is why an optional value can be listed unconditionally, and why a
+missing one is a deployment quietly running without it rather than a
+failure.
+
 ## Upgrading a deployment
 
 Upgrades are manual and local. Fetch the tags, check out the one you
