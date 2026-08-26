@@ -137,10 +137,17 @@ impl QueryDimension {
     /// The projection this dimension groups by.
     ///
     /// A blob dimension names its column; a time dimension floors the
-    /// platform's ingest timestamp to a bucket and renders it as epoch
-    /// seconds. The rendering is deliberate: a formatted date would make
-    /// the answer depend on the SQL engine's calendar formatting, where
-    /// an integer means the same thing to every reader.
+    /// platform's ingest timestamp to a bucket and answers epoch seconds.
+    /// Epoch seconds are deliberate: a formatted date would make the
+    /// answer depend on the SQL engine's calendar formatting, where an
+    /// integer means the same thing to every reader.
+    ///
+    /// why: no cast to text. Analytics Engine's type conversions are
+    /// `toUInt8` and `toUInt32` and nothing else, so a `toString` around
+    /// this is a statement Cloudflare rejects outright, which the worker
+    /// can only report as "the counters cannot be read". The bucket
+    /// therefore comes back as a JSON number and the reader turns it into
+    /// digits.
     fn projection(self) -> String {
         match self {
             Self::Kind => "blob1".to_string(),
@@ -150,7 +157,7 @@ impl QueryDimension {
             Self::Reference => "blob5".to_string(),
             Self::Hour | Self::Day => {
                 let bucket = self.bucket_secs().unwrap_or(DAY_SECS);
-                format!("toString(intDiv(toUInt32(timestamp), {bucket}) * {bucket})")
+                format!("intDiv(toUInt32(timestamp), {bucket}) * {bucket}")
             }
         }
     }
@@ -444,7 +451,7 @@ mod tests {
     fn a_series_orders_by_time_and_is_bounded_by_its_buckets() {
         assert_eq!(
             query(QueryDimension::Day, QueryWindow::Week).sql("cachet_production"),
-            "SELECT toString(intDiv(toUInt32(timestamp), 86400) * 86400) AS dimension, \
+            "SELECT intDiv(toUInt32(timestamp), 86400) * 86400 AS dimension, \
              SUM(_sample_interval * double1) AS count, \
              SUM(_sample_interval * double2) AS bytes \
              FROM cachet_production \

@@ -99,16 +99,16 @@ export const LoadingScreen = () => (
   </div>
 );
 
-/** The counters exist and cannot be read. Not an error: a deployment
- *  counts without a token and reports with one, and which of those it is
- *  belongs in the deploy config rather than on this screen. */
+/** The counters could not be read.
+ *
+ * The old copy named one cause, a missing token, and was wrong the first
+ * time a deployment with a token hit it. The route answers one status for
+ * every reason it cannot read, so the screen says that and points at the
+ * log line that does know which. */
 export const CountersUnavailable = () => (
-  <Note title="This deployment counts, and cannot report">
-    Reading the counters back is Cloudflare&apos;s SQL API, which takes an
-    account token the deployment has not been given. Set{" "}
-    <Mono>CACHET_DEPLOY_STATS_TOKEN</Mono> and{" "}
-    <Mono>CLOUDFLARE_ACCOUNT_ID</Mono> and redeploy; every read, write, and
-    probe since the deployment started is already counted and will be there.
+  <Note title="Counters unavailable">
+    Nothing is lost: reads, writes, and probes are still being counted. Check
+    the worker log for <Mono>api.stats_query_failed</Mono>.
   </Note>
 );
 

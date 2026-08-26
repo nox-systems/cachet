@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <!-- The cachet mark on the console's own ground. A tile rather than a
+       bare stroke because a tab bar can be light or dark and a favicon
+       inherits neither: white-on-transparent disappears on a light one. -->
+  <rect width="24" height="24" fill="#0A0A0A"/>
+  <path d="M2 12 H9 M15 12 H22 M9 5 V19 M15 5 V19"
+        fill="none" stroke="#E5E5E5" stroke-width="2"/>
+</svg>

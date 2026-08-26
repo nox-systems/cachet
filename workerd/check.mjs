@@ -2516,15 +2516,19 @@ try {
           // would claim traffic was smooth when it was absent.
           const day = 86_400;
           const newest = Math.floor(Date.now() / 1000 / day) * day;
+          // why: numbers, not strings. Analytics Engine has no cast to
+          // text, so a bucketed answer comes back as a JSON number and
+          // the route has to render it; a stub answering strings would
+          // let a route that could not read a number pass.
           statsStub.rows = [
-            { dimension: String(newest), count: 1_508, bytes: 5_000 },
-            { dimension: String(newest - day * 3), count: 2_133, bytes: 9_000 },
+            { dimension: newest, count: 1_508, bytes: 5_000 },
+            { dimension: newest - day * 3, count: 2_133, bytes: 9_000 },
           ];
           const { res, text } = await ask("subject=reads&by=day&window=week");
           assert.equal(res.status, 200, text);
           assert.equal(
             statsStub.sql[0],
-            "SELECT toString(intDiv(toUInt32(timestamp), 86400) * 86400) AS dimension, " +
+            "SELECT intDiv(toUInt32(timestamp), 86400) * 86400 AS dimension, " +
               "SUM(_sample_interval * double1) AS count, " +
               "SUM(_sample_interval * double2) AS bytes " +
               "FROM cachet_lane " +
@@ -2558,7 +2562,7 @@ try {
         assert.equal(res.status, 200, text);
         assert.ok(
           statsStub.sql[0].includes(
-            "toString(intDiv(toUInt32(timestamp), 3600) * 3600)",
+            "intDiv(toUInt32(timestamp), 3600) * 3600 AS dimension",
           ),
           statsStub.sql[0],
         );

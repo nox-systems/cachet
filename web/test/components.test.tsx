@@ -103,11 +103,14 @@ describe("Chart", () => {
 });
 
 describe("the states the mockups do not draw", () => {
-  it("tells a deployment that counts without reporting what to set", () => {
+  it("says the counters are unreadable without guessing why", () => {
+    // The route answers one status for every reason it cannot read, so a
+    // screen that named a cause was wrong the first time a deployment
+    // with a token hit it. It points at the log line that does know.
     render(<CountersUnavailable />);
-    expect(screen.getByText(/counts, and cannot report/)).toBeDefined();
-    expect(screen.getByText("CACHET_DEPLOY_STATS_TOKEN")).toBeDefined();
-    expect(screen.getByText("CLOUDFLARE_ACCOUNT_ID")).toBeDefined();
+    expect(screen.getByText(/Counters unavailable/)).toBeDefined();
+    expect(screen.getByText("api.stats_query_failed")).toBeDefined();
+    expect(screen.getByText(/still being counted/)).toBeDefined();
   });
 
   it("says a young deployment is young rather than broken", () => {

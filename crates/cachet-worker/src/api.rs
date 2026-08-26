@@ -431,7 +431,7 @@ async fn run_stats_sql(
         .data
         .into_iter()
         .map(|row| cachet_api::StatsRow {
-            dimension: row.dimension,
+            dimension: row.dimension(),
             count: row.count,
             bytes: row.bytes,
         })
@@ -445,13 +445,30 @@ struct SqlAnswer {
 }
 
 /// One row, named by the aliases `stats_query` gives its columns.
+///
+/// `dimension` arrives as text for a blob column and as a number for a
+/// time bucket, because Analytics Engine offers no cast to text and a
+/// statement asking for one is rejected. Reading it as a JSON value and
+/// rendering it here keeps the wire contract one shape: the answer's
+/// dimension is always a string.
 #[derive(serde::Deserialize)]
 struct SqlRow {
-    dimension: String,
+    dimension: serde_json::Value,
     #[serde(default)]
     count: f64,
     #[serde(default)]
     bytes: f64,
+}
+
+impl SqlRow {
+    /// The dimension as the answer states it.
+    fn dimension(&self) -> String {
+        match &self.dimension {
+            serde_json::Value::String(text) => text.clone(),
+            serde_json::Value::Number(number) => number.to_string(),
+            other => other.to_string(),
+        }
+    }
 }
 
 /// `GET /api/self/gc-runs`: one page of run ids, oldest first. Pagination
