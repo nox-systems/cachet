@@ -1,0 +1,53 @@
+why would there be a production gh environment br
+
+---
+
+If I make a production environment are you saying it'll get auto-deployed on merge to main?
+
+---
+
+I say on a tagged release we should auto-deploy production
+
+---
+
+also the secret is CACHET_DEPLOY_STATS_TOKEN no? 
+
+I have these secrets:
+```
+CACHET_DEPLOY_ADMINS
+
+
+CACHET_DEPLOY_AUDIENCE
+
+
+CACHET_DEPLOY_DEFAULT_BRANCH_REF
+
+
+CACHET_DEPLOY_HOST
+
+
+CACHET_DEPLOY_OAUTH_CLIENT_ID
+
+
+CACHET_DEPLOY_ORGS
+
+
+CACHET_DEPLOY_STATS_TOKEN
+
+
+CACHET_OAUTH_CLIENT_SECRET
+
+
+CACHET_SIGNING_KEY
+
+
+CLOUDFLARE_ACCOUNT_ID
+
+
+    
+CLOUDFLARE_API_TOKEN
+```
+
+---
+
+just fix it
