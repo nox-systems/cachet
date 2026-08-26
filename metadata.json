@@ -1,0 +1,35 @@
+{
+  "cli_version": "0.10.2",
+  "checkpoint_id": "01M0ZYQ59YDBRDBKNR1AF7APZM",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 2,
+  "files_touched": [
+    ".github/workflows/deploy.yml",
+    "crates/cachet-core/src/oauth.rs",
+    "crates/cachet-worker/src/oauth.rs",
+    "docs/DEPLOY.md",
+    "docs/adr/0014-the-deployment-serves-its-own-console.md",
+    "infra/alchemy.run.ts",
+    "infra/src/config.ts",
+    "scripts/bootstrap.sh",
+    "workerd/check.mjs",
+    "workerd/wrangler.toml"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 22,
+    "cache_creation_tokens": 13063,
+    "cache_read_tokens": 7429319,
+    "output_tokens": 9451,
+    "api_call_count": 11
+  }
+}

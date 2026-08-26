@@ -1,0 +1,58 @@
+{
+  "cli_version": "0.10.2",
+  "checkpoint_id": "01M0ZYQ59YDBRDBKNR1AF7APZM",
+  "session_id": "4406a8f5-e3b8-42e4-a5a2-eef2da85c0c4",
+  "strategy": "manual-commit",
+  "created_at": "2026-08-26T21:13:22.951051Z",
+  "branch": "main",
+  "checkpoints_count": 2,
+  "files_touched": [
+    ".github/workflows/deploy.yml",
+    "crates/cachet-core/src/oauth.rs",
+    "crates/cachet-worker/src/oauth.rs",
+    "docs/DEPLOY.md",
+    "docs/adr/0014-the-deployment-serves-its-own-console.md",
+    "infra/alchemy.run.ts",
+    "infra/src/config.ts",
+    "scripts/bootstrap.sh",
+    "workerd/check.mjs",
+    "workerd/wrangler.toml"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-fable-5",
+  "turn_id": "c0e7d8cc8bd2",
+  "checkpoint_transcript_start": 1918,
+  "transcript_lines_at_start": 1918,
+  "compact_transcript_start": 362,
+  "token_usage": {
+    "input_tokens": 22,
+    "cache_creation_tokens": 13063,
+    "cache_read_tokens": 7429319,
+    "output_tokens": 9451,
+    "api_call_count": 11
+  },
+  "session_metrics": {
+    "turn_count": 13
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-08-26T21:13:22.47703Z",
+    "agent_lines": 57,
+    "agent_removed": 65,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 57,
+    "total_lines_changed": 122,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    }
+  ]
+}
