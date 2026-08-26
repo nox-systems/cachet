@@ -83,15 +83,20 @@ export const StatusIcon = () => (
   </Icon>
 );
 
-/** The nox wordmark: N, a crosshaired O with a live centre, X. */
+/** The nox wordmark: N, a crosshaired O with a live centre, X.
+ *
+ * Taken from the design as drawn. The N is a filled outline rather than a
+ * stroked path, which is what makes it clean at this size: a stroked N
+ * has two acute joins, and every join setting trades one artifact for
+ * another. A filled glyph has no joins.
+ *
+ * The centre dot keeps its literal red. It is the one mark in the console
+ * that is the brand's colour rather than the theme's, and it stays that
+ * colour wherever the wordmark is drawn.
+ */
 export const NoxMark = () => (
   <svg width="48" height="16" viewBox="0 0 72 24" aria-hidden="true">
-    <path
-      d="M4 22 V2 L20 22 V2"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="4"
-    />
+    <path d="M2 2 H6 L18 16 V2 H22 V22 H18 L6 8 V22 H2 Z" fill="currentColor" />
     <circle
       cx="36"
       cy="12"
