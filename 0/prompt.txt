@@ -1,0 +1,20 @@
+I believe it's now time for some admin UI work! 
+
+Please look at Node IDs: 8RN-0, 8RO-0, 8RP-0, 8RQ-0, 95W-0 
+
+ Two API gaps the charts expose, since you own the repo: /api/self/events groups by kind|outcome|actor|repository|reference|project but has no time bucket,
+  so the per-day lines on Traffic and Laptops need something like by=day added to the closed enum in stats_query.rs (the Analytics Engine timestamp column
+  makes it a one-clause change). It also can't cross-filter, so "laptop reads by outcome" isn't answerable yet; the Laptops screen only shows what a
+  single-dimension query can give.
+
+---
+
+The ndoes are in paper
+
+---
+
+Fine okay
+
+---
+
+No I mean fine okay carry on, I agree with keeping the URL as an env variable

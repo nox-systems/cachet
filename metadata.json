@@ -1,0 +1,43 @@
+{
+  "cli_version": "0.10.2",
+  "checkpoint_id": "01M0ZP54W7XY7WS0BBPDDT7D2E",
+  "strategy": "manual-commit",
+  "branch": "console-and-counters",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "Cargo.lock",
+    "crates/cachet-api/Cargo.toml",
+    "crates/cachet-api/src/lib.rs",
+    "crates/cachet-api/src/routes.rs",
+    "crates/cachet-core/src/constants.rs",
+    "crates/cachet-core/src/stats.rs",
+    "crates/cachet-core/src/stats_query.rs",
+    "crates/cachet-core/tests/property.rs",
+    "crates/cachet-worker/src/api.rs",
+    "crates/cachet-worker/src/lib.rs",
+    "crates/cachet-worker/src/probe.rs",
+    "crates/cachet-worker/src/read.rs",
+    "crates/cachet-worker/src/stats.rs",
+    "crates/cachet-worker/src/verdict.rs",
+    "docs/openapi.yaml",
+    "docs/testing/property.md",
+    "infra/alchemy.run.ts",
+    "infra/src/config.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 224,
+    "cache_creation_tokens": 354759,
+    "cache_read_tokens": 28343300,
+    "output_tokens": 133044,
+    "api_call_count": 112
+  }
+}

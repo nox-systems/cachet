@@ -1,0 +1,64 @@
+{
+  "cli_version": "0.10.2",
+  "checkpoint_id": "01M0ZP54W7XY7WS0BBPDDT7D2E",
+  "session_id": "4406a8f5-e3b8-42e4-a5a2-eef2da85c0c4",
+  "strategy": "manual-commit",
+  "created_at": "2026-08-26T18:44:28.408441Z",
+  "branch": "console-and-counters",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "Cargo.lock",
+    "crates/cachet-api/Cargo.toml",
+    "crates/cachet-api/src/lib.rs",
+    "crates/cachet-api/src/routes.rs",
+    "crates/cachet-core/src/constants.rs",
+    "crates/cachet-core/src/stats.rs",
+    "crates/cachet-core/src/stats_query.rs",
+    "crates/cachet-core/tests/property.rs",
+    "crates/cachet-worker/src/api.rs",
+    "crates/cachet-worker/src/lib.rs",
+    "crates/cachet-worker/src/probe.rs",
+    "crates/cachet-worker/src/read.rs",
+    "crates/cachet-worker/src/stats.rs",
+    "crates/cachet-worker/src/verdict.rs",
+    "docs/openapi.yaml",
+    "docs/testing/property.md",
+    "infra/alchemy.run.ts",
+    "infra/src/config.ts"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-fable-5",
+  "turn_id": "1fda0f88e1ac",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 224,
+    "cache_creation_tokens": 354759,
+    "cache_read_tokens": 28343300,
+    "output_tokens": 133044,
+    "api_call_count": 112
+  },
+  "session_metrics": {
+    "turn_count": 1
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-08-26T18:44:28.300994Z",
+    "agent_lines": 1589,
+    "agent_removed": 188,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 1589,
+    "total_lines_changed": 1777,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    }
+  ]
+}
