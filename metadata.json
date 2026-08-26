@@ -1,0 +1,32 @@
+{
+  "cli_version": "0.10.2",
+  "checkpoint_id": "01M0ZPP2SVBADHWF9WTT7BXA38",
+  "strategy": "manual-commit",
+  "branch": "console-and-counters",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "docs/DEPLOY.md",
+    "docs/adr/0015-counters-answer-chosen-questions.md",
+    "docs/adr/0016-the-browser-session-is-see-only.md",
+    "docs/security/threat-model.md",
+    "docs/testing/workerd.md",
+    "workerd/check.mjs",
+    "workerd/wrangler.toml"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 64,
+    "cache_creation_tokens": 43421,
+    "cache_read_tokens": 12933861,
+    "output_tokens": 22690,
+    "api_call_count": 32
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "cli_version": "0.10.2",
+  "checkpoint_id": "01M0ZPP2SVBADHWF9WTT7BXA38",
+  "session_id": "4406a8f5-e3b8-42e4-a5a2-eef2da85c0c4",
+  "strategy": "manual-commit",
+  "created_at": "2026-08-26T18:52:57.805176Z",
+  "branch": "console-and-counters",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "docs/DEPLOY.md",
+    "docs/adr/0015-counters-answer-chosen-questions.md",
+    "docs/adr/0016-the-browser-session-is-see-only.md",
+    "docs/security/threat-model.md",
+    "docs/testing/workerd.md",
+    "workerd/check.mjs",
+    "workerd/wrangler.toml"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-fable-5",
+  "turn_id": "1fda0f88e1ac",
+  "checkpoint_transcript_start": 771,
+  "transcript_lines_at_start": 771,
+  "compact_transcript_start": 131,
+  "token_usage": {
+    "input_tokens": 64,
+    "cache_creation_tokens": 43421,
+    "cache_read_tokens": 12933861,
+    "output_tokens": 22690,
+    "api_call_count": 32
+  },
+  "session_metrics": {
+    "turn_count": 1
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-08-26T18:52:57.671732Z",
+    "agent_lines": 570,
+    "agent_removed": 48,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 570,
+    "total_lines_changed": 618,
+    "agent_percentage": 100,
+    "metric_version": 2
+  }
+}
