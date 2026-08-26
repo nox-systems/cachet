@@ -426,7 +426,8 @@ async fn read_routes(
         other => other,
     };
     if let Err(code) = authorized {
-        return Some(error::problem_response(code));
+        // The one path whose 401 names a scheme: nix is the client here.
+        return Some(error::object_read_problem(code));
     }
     let generation = match generation {
         Ok(generation) => generation,

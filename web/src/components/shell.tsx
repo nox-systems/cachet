@@ -30,20 +30,30 @@ import {
 // and takes only what it shows.
 
 const styles = stylex.create({
+  // why: the frame is fixed and the content scrolls inside it. The hud,
+  // the rail, the breadcrumb, and the footer are how someone knows which
+  // deployment and which screen they are on, and scrolling them away
+  // takes that off the glass exactly when a long table needs it most.
   page: {
-    minHeight: "100%",
+    height: "100vh",
+    overflow: "hidden",
     display: "flex",
     flexDirection: "column",
     backgroundColor: color.ink,
   },
+  // why: a grid, not space-between. With three flex children the middle
+  // one lands wherever the outer two leave it, so the clock was centred
+  // only by coincidence and drifted the moment the right-hand group was
+  // empty, which it is for anyone who is not an admin. Equal side tracks
+  // put it on the strip's centre line whatever sits beside it.
   hud: {
     height: dims.hud,
     flexShrink: 0,
-    display: "flex",
+    display: "grid",
+    gridTemplateColumns: "1fr auto 1fr",
     alignItems: "center",
-    justifyContent: "space-between",
     gap: space.s4,
-    paddingInline: space.s4,
+    paddingInline: space.s6,
     borderBottomWidth: "1px",
     borderBottomStyle: "solid",
     borderBottomColor: color.line,
@@ -54,12 +64,20 @@ const styles = stylex.create({
     textTransform: "uppercase",
     color: color.muted,
   },
-  hudRight: { display: "flex", alignItems: "center", gap: space.s6 },
+  hudClock: { justifySelf: "center", whiteSpace: "nowrap" },
+  hudRight: {
+    justifySelf: "end",
+    display: "flex",
+    alignItems: "center",
+    gap: space.s6,
+    whiteSpace: "nowrap",
+  },
   dot: { fontSize: "9px", marginRight: space.s2 },
   healthy: { color: color.signal },
   degraded: { color: color.amber },
   unknown: { color: color.lineStrong },
   body: { flex: 1, display: "flex", minHeight: 0 },
+  railScroll: { overflow: "hidden" },
   rail: {
     width: dims.rail,
     flexShrink: 0,
@@ -102,7 +120,13 @@ const styles = stylex.create({
     backgroundColor: color.ink2,
   },
   railSpacer: { flex: 1 },
-  main: { flex: 1, minWidth: 0, display: "flex", flexDirection: "column" },
+  main: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 0,
+    display: "flex",
+    flexDirection: "column",
+  },
   header: {
     height: dims.header,
     flexShrink: 0,
@@ -130,6 +154,9 @@ const styles = stylex.create({
   content: {
     flex: 1,
     minWidth: 0,
+    minHeight: 0,
+    overflowY: "auto",
+    overscrollBehavior: "contain",
     paddingInline: space.s8,
     paddingBlock: space.s8,
     display: "flex",
@@ -218,7 +245,9 @@ export const Shell = ({
             .filter((part) => part !== undefined && part !== "")
             .join(" · ")}
         </span>
-        <span>UTC {format.clock(nowMs)}</span>
+        <span {...stylex.props(styles.hudClock)}>
+          UTC {format.clock(nowMs)}
+        </span>
         <span {...stylex.props(styles.hudRight)}>
           {countdown === undefined ? null : (
             <span>Next collection in {countdown}</span>
@@ -235,7 +264,10 @@ export const Shell = ({
       </div>
 
       <div {...stylex.props(styles.body)}>
-        <nav {...stylex.props(styles.rail)} aria-label="Screens">
+        <nav
+          {...stylex.props(styles.rail, styles.railScroll)}
+          aria-label="Screens"
+        >
           <span {...stylex.props(styles.mark)}>
             <Mark />
           </span>

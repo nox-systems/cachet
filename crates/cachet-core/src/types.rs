@@ -82,7 +82,12 @@ impl ProjectName {
         if text.contains("..") {
             return Err(ClientError::MalformedKey);
         }
-        Ok(Self(text.to_string()))
+        // why: folded, because this becomes a bucket key and GitHub is
+        // case-insensitive about the repository it is derived from. A
+        // renewal whose URL wrote Owner-Repo and whose token said
+        // owner/repo would otherwise bind to two different leases, and a
+        // read of one would miss the other.
+        Ok(Self(crate::auth::fold_identifier(text)))
     }
 
     /// Borrow the validated text.

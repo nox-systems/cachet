@@ -61,15 +61,29 @@ export const SignOutIcon = () => (
   </Icon>
 );
 
+export const CopyIcon = () => (
+  <Icon>
+    <rect x="9" y="9" width="11" height="11" />
+    <path d="M15 5H5v10" />
+  </Icon>
+);
+
+export const CheckIcon = () => (
+  <Icon>
+    <path d="M4 12.5 9.5 18 20 6" />
+  </Icon>
+);
+
 export const Mark = () => (
-  <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true">
-    {/* The cachet mark: two rules and a bar, the same shape the brand
-        uses at every size. */}
+  <svg width="28" height="28" viewBox="0 0 24 24" aria-hidden="true">
+    {/* The cachet mark is a capacitor: two leads meeting two plates
+        across a gap. A cache is the same shape of thing, which is the
+        joke, and it only reads as one if the plates are the short pair
+        and the leads are the long ones. */}
     <path
-      d="M4 8v12M24 8v12M4 14h20"
+      d="M2 12 H9 M15 12 H22 M9 5 V19 M15 5 V19"
       stroke="currentColor"
       strokeWidth="2"
-      strokeLinecap="square"
       fill="none"
     />
   </svg>

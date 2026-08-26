@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import * as api from "../api/client.ts";
 import { Label, Panel, Prose } from "../components/ui/primitives.tsx";
+import { CheckIcon, CopyIcon } from "../components/icons.tsx";
 import { Failed, LoadingScreen } from "../components/ui/states.tsx";
 import * as format from "../lib/format.ts";
 import {
@@ -25,12 +26,18 @@ const styles = stylex.create({
     display: "grid",
     gridTemplateColumns: "20ch 1fr auto",
     gap: space.s6,
-    alignItems: "start",
+    // why: centred. A label beside a one-line value reads as one row
+    // only when the two share a centre line; aligning both to the top
+    // left the label riding above its own value.
+    alignItems: "center",
     paddingBlock: space.s4,
     borderBottomWidth: "1px",
     borderBottomStyle: "solid",
     borderBottomColor: color.line,
   },
+  // The organizations row carries a second, explanatory line, so its
+  // label belongs beside the first line rather than the block's middle.
+  rowTop: { alignItems: "start" },
   value: {
     fontFamily: font.mono,
     fontSize: text.spec,
@@ -108,17 +115,36 @@ const styles = stylex.create({
     color: color.text,
   },
   command: {
-    display: "block",
-    fontFamily: font.mono,
-    color: color.text,
-    backgroundColor: color.ink,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: space.s4,
+    width: "100%",
+    textAlign: "left",
+    cursor: "pointer",
+    backgroundColor: { default: color.ink, ":hover": color.ink3 },
     borderWidth: "1px",
     borderStyle: "solid",
-    borderColor: color.line,
+    borderColor: { default: color.line, ":hover": color.lineStrong },
     padding: space.s3,
     marginTop: space.s2,
-    overflowX: "auto",
+    transitionProperty: "background-color, border-color",
+    transitionDuration: "140ms",
   },
+  commandText: {
+    fontFamily: font.mono,
+    fontSize: text.spec,
+    color: color.text,
+    overflowX: "auto",
+    whiteSpace: "pre",
+  },
+  commandHint: {
+    display: "flex",
+    alignItems: "center",
+    color: color.muted,
+    flexShrink: 0,
+  },
+  copied: { color: color.text },
   session: {
     fontFamily: font.ui,
     fontSize: text.spec,
@@ -128,18 +154,44 @@ const styles = stylex.create({
   strong: { color: color.text, fontWeight: weight.bold },
 });
 
-const Copy = ({ value }: { value: string }) => {
+const useCopy = (value: string): [boolean, () => void] => {
   const [copied, setCopied] = useState(false);
+  return [
+    copied,
+    () => {
+      void navigator.clipboard?.writeText(value);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1_400);
+    },
+  ];
+};
+
+/// A command, with the one affordance a command wants.
+///
+/// The whole block is the button and the mark is the hint, because the
+/// thing being copied is right there and a word beside it would be read
+/// as part of the command.
+const Command = ({ children }: { children: string }) => {
+  const [copied, copy] = useCopy(children);
   return (
     <button
       type="button"
-      {...stylex.props(styles.copy)}
-      onClick={() => {
-        void navigator.clipboard?.writeText(value);
-        setCopied(true);
-        window.setTimeout(() => setCopied(false), 1_400);
-      }}
+      onClick={copy}
+      aria-label={copied ? "Copied" : `Copy: ${children}`}
+      {...stylex.props(styles.command)}
     >
+      <code {...stylex.props(styles.commandText)}>{children}</code>
+      <span {...stylex.props(styles.commandHint, copied && styles.copied)}>
+        {copied ? <CheckIcon /> : <CopyIcon />}
+      </span>
+    </button>
+  );
+};
+
+const Copy = ({ value }: { value: string }) => {
+  const [copied, copy] = useCopy(value);
+  return (
+    <button type="button" {...stylex.props(styles.copy)} onClick={copy}>
       {copied ? "Copied" : "Copy"}
     </button>
   );
@@ -181,7 +233,7 @@ steps:
     <>
       <Panel title="Who has access" aside="Set in the deploy config">
         <div {...stylex.props(styles.rows)}>
-          <div {...stylex.props(styles.row)}>
+          <div {...stylex.props(styles.row, styles.rowTop)}>
             <Label>Organizations</Label>
             <div>
               <span {...stylex.props(styles.value)}>
@@ -228,9 +280,7 @@ steps:
               <span {...stylex.props(styles.stepNumber)}>1</span>
               <span {...stylex.props(styles.stepBody)}>
                 Sign in through GitHub.
-                <code {...stylex.props(styles.command)}>
-                  cachet login --cache-url {url}
-                </code>
+                <Command>{`cachet login --cache-url ${url}`}</Command>
               </span>
             </li>
             <li {...stylex.props(styles.step)}>
@@ -243,7 +293,7 @@ steps:
               <span {...stylex.props(styles.stepNumber)}>3</span>
               <span {...stylex.props(styles.stepBody)}>
                 Add the cache and its public key to nix.conf.
-                <code {...stylex.props(styles.command)}>cachet setup</code>
+                <Command>cachet setup</Command>
               </span>
             </li>
           </ol>

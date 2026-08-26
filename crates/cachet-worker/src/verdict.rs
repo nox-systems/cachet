@@ -257,7 +257,7 @@ pub(crate) async fn check_github_token(env: &Env, now: UnixMillis, token: &str) 
                 serde_json::from_str(&membership_body).map_err(|_| ClientError::AuthUnavailable)?;
             if membership.state == "active" {
                 return Ok(Verdict {
-                    login: user.login,
+                    login: cachet_core::auth::fold_identifier(&user.login),
                     org_member: true,
                     checked_at_ms: now.as_u64(),
                 });
@@ -265,7 +265,7 @@ pub(crate) async fn check_github_token(env: &Env, now: UnixMillis, token: &str) 
         }
     }
     Ok(Verdict {
-        login: user.login,
+        login: cachet_core::auth::fold_identifier(&user.login),
         org_member: false,
         checked_at_ms: now.as_u64(),
     })
@@ -358,7 +358,7 @@ async fn resolve_token(env: &Env, now: UnixMillis, token: &str) -> Result<ReadId
                     .min(now.as_u64() + MEMO_ALLOW_TTL_MS)
             });
         let read_identity = ReadIdentity::Ci {
-            login: identity.repository_owner,
+            login: cachet_core::auth::fold_identifier(&identity.repository_owner),
             repository: identity.repository,
             reference: identity.ref_,
         };
@@ -546,7 +546,11 @@ pub(crate) async fn require_admin(env: &Env, now: UnixMillis, req: &Request) -> 
     let (ReadIdentity::Token { login } | ReadIdentity::Session { login, .. }) = identity else {
         return Err(ClientError::ForbiddenAdmin);
     };
-    if admins(env).iter().any(|admin| admin == &login) {
+    let login = cachet_core::auth::fold_identifier(&login);
+    if admins(env)
+        .iter()
+        .any(|admin| cachet_core::auth::fold_identifier(admin) == login)
+    {
         Ok(login)
     } else {
         log::event("info", "api.admin_refused", &[("login", login)]);

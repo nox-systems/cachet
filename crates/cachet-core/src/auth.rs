@@ -32,6 +32,26 @@ pub struct OidcConfig {
     pub default_branch_ref: String,
 }
 
+/// A GitHub login, organisation slug, or repository name, folded to the
+/// one spelling this deployment compares.
+///
+/// GitHub treats all three case-insensitively and returns them
+/// case-preserving, so `NoxSystems` and `nox-systems` are one
+/// organisation and an operator may have typed either into the deploy
+/// config. Comparing them as bytes makes access depend on which spelling
+/// somebody happened to use, which fails closed in a way nobody can see
+/// from the outside: a correct admin list that refuses its admin. Every
+/// one of these values is folded on the way in, so nothing downstream
+/// compares anything else.
+///
+/// ASCII lowercase, because GitHub logins and slugs are ASCII letters,
+/// digits, and hyphens, and a Unicode fold would be a different function
+/// answering a question nobody asked here.
+#[must_use]
+pub fn fold_identifier(raw: &str) -> String {
+    raw.trim().to_ascii_lowercase()
+}
+
 impl OidcConfig {
     /// Validate the configuration itself: an empty org list, an org entry
     /// with whitespace, an empty audience, or more orgs than the cap is a
@@ -142,9 +162,15 @@ pub fn verify_claims(
     let repository_owner = string_claim(raw, "repository_owner")?;
     let ref_ = string_claim(raw, "ref")?;
 
-    // Exact membership in the configured list. No prefix matches, no
-    // case folding: GitHub emits owner names in canonical form.
-    if !config.orgs.iter().any(|org| org == &repository_owner) {
+    // Membership in the configured list, folded on both sides. No prefix
+    // matches: an org named my-org never admits my-org-extended.
+    let repository = fold_identifier(&repository);
+    let repository_owner = fold_identifier(&repository_owner);
+    if !config
+        .orgs
+        .iter()
+        .any(|org| fold_identifier(org) == repository_owner)
+    {
         return Err(ClientError::ForbiddenOrg);
     }
 
@@ -459,5 +485,98 @@ mod tests {
         assert_eq!(decide_jwks(None, UnixMillis::new(0)), JwksDecision::Fetch);
         assert!(refetch_once_allowed(false));
         assert!(!refetch_once_allowed(true));
+    }
+}
+
+#[cfg(test)]
+mod folding_tests {
+    use super::*;
+    use crate::types::ProjectName;
+
+    #[test]
+    fn identifiers_fold_to_one_spelling() {
+        for (raw, folded) in [
+            ("NoxSystems", "noxsystems"),
+            ("nox-systems", "nox-systems"),
+            ("  ShivanshVij  ", "shivanshvij"),
+            ("CACHET", "cachet"),
+        ] {
+            assert_eq!(fold_identifier(raw), folded, "{raw}");
+        }
+    }
+
+    #[test]
+    fn an_org_admits_a_token_however_either_was_spelled() {
+        // GitHub is case-insensitive about org slugs and returns them
+        // case-preserving, so which spelling reached the deploy config and
+        // which reached the claim are both accidents. Access must not
+        // depend on them agreeing.
+        let config = OidcConfig {
+            orgs: vec!["Nox-Systems".to_string()],
+            audience: "cachet".to_string(),
+            default_branch_ref: "refs/heads/main".to_string(),
+        };
+        let claims = |owner: &str| {
+            serde_json::json!({
+                "iss": OIDC_ISSUER,
+                "aud": "cachet",
+                "exp": 1_780_000_600_u64,
+                "iat": 1_u64,
+                "repository": format!("{owner}/Cachet"),
+                "repository_owner": owner,
+                "ref": "refs/heads/main",
+            })
+        };
+        for owner in ["Nox-Systems", "nox-systems", "NOX-SYSTEMS"] {
+            let identity =
+                verify_claims(&claims(owner), &config, UnixMillis::new(1_780_000_000_000))
+                    .unwrap_or_else(|failure| panic!("{owner} refused: {failure:?}"));
+            // And what it carries onward is the folded spelling, so every
+            // comparison after this one is already normalized.
+            assert_eq!(identity.repository_owner, "nox-systems");
+            assert_eq!(identity.repository, format!("{}/cachet", "nox-systems"));
+        }
+        // Folding admits no one it should not: a different org is still a
+        // different org, and a prefix is not a match.
+        for owner in ["elsewhere", "nox-systems-extended"] {
+            assert!(matches!(
+                verify_claims(&claims(owner), &config, UnixMillis::new(1_780_000_000_000)),
+                Err(ClientError::ForbiddenOrg)
+            ));
+        }
+    }
+
+    #[test]
+    fn a_project_is_one_key_however_it_was_written() {
+        // The project becomes a bucket key. Two spellings would be two
+        // leases, and a read of one would miss the other.
+        assert_eq!(
+            ProjectName::parse("Nox-Systems-Cachet")
+                .expect("valid")
+                .as_str(),
+            "nox-systems-cachet"
+        );
+        assert_eq!(
+            ProjectName::from_repository("Nox-Systems/Cachet")
+                .expect("valid")
+                .as_str(),
+            "nox-systems-cachet"
+        );
+        // And the binding still holds: the token's repository and the URL's
+        // project agree after folding, whichever case either used.
+        let identity = OidcIdentity {
+            repository: "nox-systems/cachet".to_string(),
+            repository_owner: "nox-systems".to_string(),
+            ref_: "refs/heads/main".to_string(),
+            run_id: "1".to_string(),
+            sha: "abc".to_string(),
+        };
+        assert!(
+            require_project_binding(
+                &identity,
+                &ProjectName::parse("Nox-Systems-Cachet").unwrap()
+            )
+            .is_ok()
+        );
     }
 }
