@@ -1,6 +1,7 @@
 //! The core's pure laws over arbitrary inputs (docs/testing/property.md).
 //! Law classes: totality (a function answers Ok or a typed refusal over any
-//! input), round-trips, and plan laws for uploads and GC.
+//! input), round-trips, plan laws for uploads and GC, and the series law
+//! for gap-filled counter answers.
 
 use cachet_core::constants::{MULTIPART_PARTS_MAX, UPLOAD_PART_BYTES};
 use cachet_core::error::ClientError;
@@ -9,6 +10,9 @@ use cachet_core::keys::{
 };
 use cachet_core::multipart::{part_plan, plan_shape};
 use cachet_core::narinfo::Narinfo;
+use cachet_core::stats_query::{
+    QueryDimension, QueryFilters, QuerySubject, QueryWindow, SeriesPoint, StatsQuery, fill_series,
+};
 use hegel::TestCase;
 use hegel::generators as gs;
 
@@ -295,5 +299,77 @@ fn gc_laws_hold_over_the_exhausted_decision_space(_tc: TestCase) {
                 }
             }
         }
+    }
+}
+
+/// Series law: a bucketed answer is always exactly the buckets its
+/// window implies, ascending, contiguous, and ending at now's bucket.
+///
+/// The dataset answers only for buckets something happened in, so the
+/// fill is what stands between an empty hour and a chart that draws a
+/// straight line through it. The law holds over any clock and any
+/// subset of buckets the dataset chose to report, including none.
+#[hegel::test(test_cases = 256)]
+fn a_filled_series_is_whole(tc: TestCase) {
+    let (dimension, window) = match tc.draw(gs::integers::<u8>()) % 4 {
+        0 => (QueryDimension::Hour, QueryWindow::Day),
+        1 => (QueryDimension::Day, QueryWindow::Day),
+        2 => (QueryDimension::Day, QueryWindow::Week),
+        _ => (QueryDimension::Day, QueryWindow::Month),
+    };
+    let query = StatsQuery::new(
+        QuerySubject::Reads,
+        dimension,
+        window,
+        QueryFilters::default(),
+    )
+    .expect("the drawn pairs are admissible");
+    let now_ms = tc.draw(gs::integers::<u64>());
+    let bucket = dimension.bucket_secs().expect("a time dimension");
+    let expected = query.bucket_count().expect("a series");
+
+    // Whatever the dataset reported, drawn from anywhere in u64: real
+    // buckets, stray ones, and none at all.
+    let observed: Vec<SeriesPoint> = (0..tc.draw(gs::integers::<u8>()) % 6)
+        .map(|_| SeriesPoint {
+            start_secs: tc.draw(gs::integers::<u64>()),
+            count: 1.0,
+            bytes: 1.0,
+        })
+        .collect();
+
+    let filled = fill_series(&query, now_ms, &observed);
+    // One row per bucket, except where the window reaches behind the
+    // epoch and there are fewer buckets than that to have.
+    let newest = (now_ms / 1_000 / bucket) * bucket;
+    let available = newest / bucket + 1;
+    assert_eq!(
+        filled.len() as u64,
+        expected.min(available),
+        "one row per bucket the window covers"
+    );
+    for pair in filled.windows(2) {
+        assert_eq!(
+            pair[1].start_secs - pair[0].start_secs,
+            bucket,
+            "ascending and contiguous"
+        );
+    }
+    assert_eq!(
+        filled.last().expect("a series is never empty").start_secs,
+        newest,
+        "the last bucket is the one now falls in"
+    );
+    // Nothing is invented: a row carries a count only where the dataset
+    // reported that exact bucket.
+    for row in &filled {
+        let reported = observed
+            .iter()
+            .any(|point| point.start_secs == row.start_secs);
+        assert_eq!(
+            row.count.to_bits() != 0.0_f64.to_bits(),
+            reported,
+            "a filled bucket counts only what was reported"
+        );
     }
 }

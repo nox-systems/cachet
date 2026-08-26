@@ -33,13 +33,40 @@ CACHET_OAUTH_CLIENT_ID = "lane-oauth-client"
 # The laptop token's user is the lane's admin; a second member token
 # exercises forbidden_admin.
 CACHET_ADMINS = "lane-dev"
-# The OAuth web endpoints join per run via --var, like the API URL. The UI
-# origin is fixed here so the callback's redirect branch is lane-tested;
-# absent in a deployment without a UI, where the callback answers 204.
-CACHET_UI_ORIGIN = "https://ui.lane.invalid"
+# The OAuth web endpoints join per run via --var, like the API URL.
+# CACHET_UI_ORIGIN is deliberately unset: unset is what every deployment
+# runs with, and it means the callback lands on this deployment's own
+# console. The override and the deliberate-empty case are decided by pure
+# code and asserted in cachet-core's tests.
 # The collector runs armed with grace zeroed: the lane's seeded objects
 # are seconds old and must still be sweepable.
 CACHET_GC_GRACE_MS = "0"
+# The counter route's account and dataset. The token is a secret and
+# enters through .dev.vars, so a scenario without that file exercises the
+# "counts but cannot report" answer and one with it exercises the query.
+CLOUDFLARE_ACCOUNT_ID = "lane-account"
+CACHET_STATS_DATASET = "cachet_lane"
+# The console header's own inputs: the deployment's name, and the cron it
+# counts down to. The lane's cron below is the same expression, so the
+# countdown the health route answers is the schedule that fires.
+CACHET_DEPLOY_NAME = "cachet-lane"
+CACHET_GC_CRON = "0 5 * * *"
+
+# The console's asset directory is deliberately absent here. Binding it
+# makes miniflare put Cloudflare's asset router in front of this worker,
+# and that router has no scheduled handler, so the collector's dev
+# endpoint answers "exception" instead of running. The console scenario
+# boots against a generated copy of this file with the block appended
+# (workerd/check.mjs); every other scenario needs the collector more than
+# it needs the console.
+
+# Every counted thing is written here. The binding is what moves
+# stats::emit off its early return, so the blob and double marshalling
+# runs in every scenario rather than only in unit tests; workerd discards
+# the points, which is all the lane needs from the write half.
+[[analytics_engine_datasets]]
+binding = "CACHET_EVENTS"
+dataset = "cachet_lane"
 
 # The deployment's collector binding; the lane invokes the scheduled
 # handler directly over its dev endpoint.

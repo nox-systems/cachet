@@ -9,6 +9,7 @@
 
 mod api;
 mod auth;
+mod console;
 mod error;
 mod gc;
 mod log;
@@ -137,8 +138,15 @@ async fn fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
         if let Err(code) = authorized {
             return error::problem_response(code);
         }
+        let bytes = uploaded_bytes(&req);
         let answered = write::put_narinfo(&env, req, &hash).await;
-        return count_write(&env, "narinfo", &caller, answered);
+        return count_write(
+            &env,
+            cachet_core::stats::StatKind::Narinfo,
+            bytes,
+            &caller,
+            answered,
+        );
     }
 
     if path.starts_with("/nar/") {
@@ -161,11 +169,27 @@ async fn fixed_get_routes(
     if path == "/nix-cache-info" {
         return Some(read::serve_cache_info());
     }
+    // why: ahead of every protocol path, and by exact prefix. The asset
+    // layer answers the console's built files before a request gets
+    // here; what reaches this line is a route inside the console's own
+    // router, which renders the shell (ADR 0014).
+    if console::owns(path) {
+        return Some(console::serve(env, req, path).await);
+    }
+    if path == "/" {
+        return Some(console::redirect_to_console());
+    }
     if *method != Method::Get {
         return None;
     }
     if path == "/api/public/config" {
         return Some(api::public_config(env));
+    }
+    if path == "/api/self/health" {
+        return Some(api::health(env, now, req).await);
+    }
+    if path == "/api/whoami" {
+        return Some(api::whoami(env, now, req).await);
     }
     if path == "/api/openapi.json" {
         return Some(api::openapi_document());
@@ -211,6 +235,7 @@ async fn write_routes(
         return error::problem_response(code);
     }
     let kind = write_kind(&req, &method);
+    let bytes = uploaded_bytes(&req);
     let answered = match method {
         Method::Put => {
             match (
@@ -233,13 +258,18 @@ async fn write_routes(
             }
         }
         Method::Post => {
+            // why: these answer through the counter rather than around
+            // it. Returning here left `begin` and `complete` as kinds the
+            // router names and no point ever carries, so a multipart push
+            // showed up in the counters as parts with no upload around
+            // them.
             if let Some(upload_id) = query_value(&req, "uploadId") {
-                return write::complete_multipart(&env, req, &key, &upload_id).await;
+                write::complete_multipart(&env, req, &key, &upload_id).await
+            } else if query_value(&req, "uploads").is_some() {
+                write::create_multipart(&env, &key, now, &mut req).await
+            } else {
+                error::problem_response(ClientError::MalformedKey)
             }
-            if query_value(&req, "uploads").is_some() {
-                return write::create_multipart(&env, &key, now, &mut req).await;
-            }
-            error::problem_response(ClientError::MalformedKey)
         }
         Method::Delete => {
             let Some(upload_id) = query_value(&req, "uploadId") else {
@@ -249,21 +279,39 @@ async fn write_routes(
         }
         _ => error::problem_response(ClientError::NotFound),
     };
-    count_write(&env, kind, &caller, answered)
+    count_write(&env, kind, bytes, &caller, answered)
 }
 
 /// What a write was against, for the statistic. Read off the route
 /// rather than the handler, because this is the one place that knows
 /// which branch the request took before it takes it.
-fn write_kind(req: &Request, method: &Method) -> &'static str {
+fn write_kind(req: &Request, method: &Method) -> cachet_core::stats::StatKind {
+    use cachet_core::stats::StatKind;
     match method {
-        Method::Put if query_value(req, "partNumber").is_some() => "part",
-        Method::Put => "nar",
-        Method::Post if query_value(req, "uploadId").is_some() => "complete",
-        Method::Post => "begin",
-        Method::Delete => "abort",
-        _ => "unknown",
+        Method::Put if query_value(req, "partNumber").is_some() => StatKind::Part,
+        Method::Put => StatKind::Nar,
+        Method::Post if query_value(req, "uploadId").is_some() => StatKind::Complete,
+        Method::Post => StatKind::Begin,
+        Method::Delete => StatKind::Abort,
+        _ => StatKind::Unknown,
     }
+}
+
+/// How many bytes this write put on the wire.
+///
+/// Read from `content-length` before the handler consumes the body,
+/// which is the one place the number is available without measuring the
+/// stream a second time. It is the compressed size R2 gains rather than
+/// the store path's decompressed size: what the bucket grew by, which is
+/// what "pushed this week" means. A request with no body, which is every
+/// multipart open, completion, and abort, contributes nothing.
+fn uploaded_bytes(req: &Request) -> u64 {
+    req.headers()
+        .get("content-length")
+        .ok()
+        .flatten()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .unwrap_or(0)
 }
 
 /// The caller dimensions a write carries: which run it came from.
@@ -285,23 +333,30 @@ fn write_caller(
 /// number for.
 fn count_write(
     env: &Env,
-    kind: &str,
+    kind: cachet_core::stats::StatKind,
+    bytes: u64,
     caller: &cachet_core::stats::StatCaller,
     answered: Result<Response>,
 ) -> Result<Response> {
+    use cachet_core::stats::{StatEvent, StatOutcome, StatPoint};
     let Ok(response) = answered else {
         return answered;
     };
     let status = response.status_code();
     let outcome = if (200..300).contains(&status) {
-        "stored".to_string()
+        StatOutcome::Stored
     } else {
-        status.to_string()
+        StatOutcome::Status(status)
     };
+    // why: a refusal's bytes are counted too. A push that uploads a
+    // gigabyte and is refused cost the deployment that gigabyte, and an
+    // operator reading a bandwidth number wants the bytes that arrived
+    // rather than the bytes that were kept.
     stats::emit(
         env,
-        &cachet_core::stats::StatPoint::new(cachet_core::stats::StatEvent::Write, kind, &outcome)
-            .by(caller),
+        &StatPoint::new(StatEvent::Write, kind, outcome)
+            .by(caller)
+            .measuring(1, bytes),
     );
     Ok(response)
 }
@@ -360,6 +415,15 @@ async fn read_routes(
     let caller = match &authorized {
         Ok(identity) => stat_caller(identity),
         Err(_) => cachet_core::stats::StatCaller::anonymous(),
+    };
+    let authorized = match authorized {
+        // why: a browser session is see-only. It authenticates the
+        // console's own surface and stops at the cache's contents, so a
+        // cookie copied out of a browser cannot substitute. The refusal
+        // is the anonymous one, because naming the reason would tell a
+        // caller which credential class it holds.
+        Ok(identity) if !identity.reads_cache_objects() => Err(ClientError::Unauthorized),
+        other => other,
     };
     if let Err(code) = authorized {
         return Some(error::problem_response(code));

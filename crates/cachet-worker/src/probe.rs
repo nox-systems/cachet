@@ -91,8 +91,8 @@ pub async fn answer_probe(env: &Env, now: UnixMillis, mut req: Request) -> Resul
         env,
         &cachet_core::stats::StatPoint::new(
             cachet_core::stats::StatEvent::Probe,
-            "probe",
-            "answered",
+            cachet_core::stats::StatKind::Probe,
+            cachet_core::stats::StatOutcome::Answered,
         )
         .measuring(asked.len() as u64, present.len() as u64),
     );

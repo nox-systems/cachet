@@ -24,7 +24,7 @@ pub fn emit(env: &Env, point: &StatPoint) {
     };
     let mut builder = AnalyticsEngineDataPointBuilder::new().indexes([point.event.name()]);
     for blob in point.blobs() {
-        builder = builder.add_blob(blob);
+        builder = builder.add_blob(blob.as_ref());
     }
     for double in point.doubles() {
         builder = builder.add_double(double);

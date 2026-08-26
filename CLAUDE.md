@@ -17,9 +17,12 @@ The worker runs on workers-rs compiled to wasm32-unknown-unknown, with R2
 as the only cache-data store and KV for auth verdicts, sessions, and
 OAuth state only. Deployments are provisioned by an alchemy-run program
 under `infra/`; the `cachet` CLI ships natively through cargo-dist; the
-GitHub Action lives in this repo under `action/`. The three auth flows
-are GitHub OIDC for writes and CI reads, GitHub device flow for laptop
-reads, and browser OAuth with KV sessions for the future SPA. Signing is
+GitHub Action lives in this repo under `action/`. The browser console is
+a React application in `web/`, built by `just web` and uploaded as the
+worker's static assets. The three auth flows are GitHub OIDC for writes
+and CI reads, GitHub device flow for laptop reads, and browser OAuth with
+KV sessions for the console, whose sessions read the console's surface
+and never the cache's contents. Signing is
 server-side only, and a narinfo is signed only after its stored NAR
 verifies byte-for-byte.
 
@@ -42,7 +45,9 @@ thread::spawn, HashMap, HashSet.
 The dependency direction is one-way: cachet-core is pure; cachet-crypto
 computes; cachet-api describes the HTTP surface and generates the OpenAPI
 document; cachet-worker is the wasm32 deployable that owns every binding;
-cachet-push and cachet-cli are native writer tools. cachet-worker fails
+cachet-push and cachet-cli are native writer tools; `web/` is the
+console, which depends on the HTTP surface and on nothing in the
+workspace. cachet-worker fails
 host builds and is excluded from workspace default-members; its build and
 its truth lane are the wasm verbs. A path dependency against this
 direction fails review.
@@ -104,10 +109,12 @@ exactly the repo's non-ADR Markdown, no more and no less.
 @PROSE.md
 @SECURITY.md
 @docs/DEPLOY.md
+@docs/console.md
 @docs/security/threat-model.md
 @docs/testing/unit.md
 @docs/testing/property.md
 @docs/testing/golden.md
 @docs/testing/kani.md
+@docs/testing/console.md
 @docs/testing/workerd.md
 @docs/testing/integration.md

@@ -24,6 +24,7 @@ struct OAuthConfig {
     web_base: String,
     client_id: String,
     client_secret: String,
+    host: String,
     redirect_uri: String,
     ui_origin: Option<String>,
 }
@@ -51,14 +52,16 @@ fn oauth_config(env: &Env) -> cachet_core::error::Result<OAuthConfig> {
         .secret(CLIENT_SECRET_BINDING)
         .map_err(|_| ClientError::AuthUnavailable)?
         .to_string();
-    // The one optional piece: absent means the callback answers a bare 204
-    // instead of redirecting to a UI.
+    // The one optional piece: absent means the callback lands on this
+    // deployment's own console, which is where the person signing in
+    // came from and needs no configuration to be right.
     let ui_origin = env.var("CACHET_UI_ORIGIN").ok().map(|v| v.to_string());
     Ok(OAuthConfig {
         web_base,
         client_id,
         client_secret,
         redirect_uri: format!("https://{host}{}", oauth::CALLBACK_PATH),
+        host,
         ui_origin,
     })
 }
@@ -211,7 +214,7 @@ pub async fn callback(env: &Env, now: UnixMillis, req: &Request) -> Result<Respo
     // The Location joins the cookie's header set directly: `with_headers`
     // replaces the whole set, so a redirect built first and given these
     // headers would lose the very header that makes it a redirect.
-    match oauth::callback_target(config.ui_origin.as_deref()) {
+    match oauth::callback_target(&config.host, config.ui_origin.as_deref()) {
         CallbackTarget::Redirect(origin) => {
             if Url::parse(&origin).is_err() {
                 log::event("error", "oauth.ui_origin_invalid", &[]);

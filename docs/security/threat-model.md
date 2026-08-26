@@ -59,20 +59,31 @@ claim policy's tests for the rows that need no wire (the unknown-kid
 one-refetch rule, the audience array, mistyped claims).
 
 **Ex-member's token.** A person leaves the org; their access should
-die. The bound differs by credential class, and the laptop's is the
-loose one. A CI job's OIDC token expires in minutes and is re-verified
-against GitHub's JWKS every time. A browser session re-checks membership
-through the verdict cache, 600s for an allow and 60s for a deny, so
-revocation at github.com closes at that bound. A laptop holds a token this
+die. The bound differs by credential class. A CI job's OIDC token
+expires in minutes and is re-verified
+against GitHub's JWKS every time. A laptop holds a token this
 deployment issued, which is a pointer to a record holding the GitHub
 credential it stands for, so every read re-checks membership through
-that same cache and closes at the same 600s (ADR 0002). Access also ends
-immediately when an operator deletes the `readtoken/` record or the
-holder runs `cachet logout`, and in any case at the record's thirty-day
-outer bound. Proven: verdict-caching scenario in the workerd lane (hit
-counts on the stub GitHub API), the issued-token scenario's
-membership-lapse and revocation rows, the TTL constants in
-cachet-core.
+the verdict cache and closes at 600s for an allow and 60s for a deny
+(ADR 0002). Access also ends immediately when an operator deletes the
+`readtoken/` record or the holder runs `cachet logout`, and in any case
+at the record's thirty-day outer bound.
+
+A browser session is the loose one, and it is bounded by what it can
+reach rather than by a re-check. The session record holds a login and a
+creation time and no GitHub credential, so nothing is re-checked against
+GitHub after the mint: the session is accepted until its fourteen-day
+expiry or until logout deletes it. What keeps that from being a hole in
+the cache is that a session is see-only (ADR 0016). It authenticates the
+console's own surface, `/api/self/*`, `/api/whoami`, `/api/probe`, and
+`/roots`, and answers 401 on the paths that serve cache bytes, so a
+cookie copied out of a browser cannot substitute. An ex-member's session
+can read counters and collection reports for up to a fortnight, which is
+the accepted trade; it cannot read what the cache holds. Proven:
+verdict-caching scenario in the workerd lane (hit counts on the stub
+GitHub API), the issued-token scenario's membership-lapse and revocation
+rows, the browser-flow scenario's 401 on a narinfo and a NAR against a
+live session cookie, and the TTL constants in cachet-core.
 
 **A stolen copy of the deployment's own state.** An attacker reads the
 KV namespace or an export of it. What they find: read-token records
@@ -147,11 +158,18 @@ every other `/api/self` route. And the caller chooses a question rather
 than composing one: `subject`, `by`, and `window` each parse into a
 closed enum or are refused, and the statement is built from literals and
 enum values, so no caller text reaches SQL that would run with that
-token's authority. The token is optional; a deployment without it counts
-and does not report. Proven: the query builder's tests (a hostile string
-parses into no choice at all), and the counter route's rows in the
-workerd lane covering the anonymous, non-admin, and unoffered-choice
-answers.
+token's authority. Filters narrow only the three columns whose values
+come from closed vocabularies (`kind`, `outcome`, `actor`); the columns
+holding text a pusher chose, `repository` and `reference`, can be
+grouped by and never filtered on, because a `GROUP BY` names a column
+where a filter names a value. The token is optional; a deployment
+without it counts and does not report. Proven: the query builder's tests
+(a hostile string parses into no choice at all), the counter route's
+rows in the workerd lane covering the anonymous, non-admin, and
+unoffered-choice answers, and the lane's stub SQL endpoint, which
+receives the composed statement and asserts it whole rather than by
+substring, since a clause that moved or a bound that changed would run
+with that token behind it.
 
 **Admin API abuse.** A non-admin org member reads GC reports or stats,
 or an anonymous caller reaches them. Defense: admin routes require a

@@ -19,6 +19,36 @@ import path from "node:path";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const configPath = path.join(repoRoot, "workerd", "wrangler.toml");
+
+// The console's config is this one plus an asset directory. It is
+// generated rather than committed because a second checked-in config
+// would drift from the first, and the two must agree on every binding
+// the console scenario exercises. It is separate at all because binding
+// assets puts Cloudflare's asset router in front of the worker under
+// miniflare, and that router has no scheduled handler: with it bound,
+// the collector's dev endpoint answers "exception" rather than running.
+// Production invokes the cron against the worker itself, so this is a
+// local-runner limitation and not a deployment shape.
+const consoleAssetsDir = path.join(repoRoot, "workerd", "fixtures", "assets");
+const consoleConfigPath = path.join(
+  repoRoot,
+  "workerd",
+  ".wrangler-console.toml",
+);
+await writeFile(
+  consoleConfigPath,
+  `${await readFile(configPath, "utf8")}
+[assets]
+directory = ${JSON.stringify(consoleAssetsDir)}
+binding = "ASSETS"
+# Both handling modes off: the layer answers a file that exists under
+# /console and never invents an answer for one that does not, so an
+# unmatched request falls through to the worker and a cache miss is still
+# decided by the router.
+html_handling = "none"
+not_found_handling = "none"
+`,
+);
 const fixturesDir = path.resolve(
   process.argv[2] ?? path.join(repoRoot, "fixtures", "nix-signed"),
 );
@@ -50,6 +80,13 @@ const laneMembership = { active: true };
 // read answers 401 without one.
 const READ_AUTH = () => ({ authorization: `Bearer ${GOOD_LAPTOP_TOKEN}` });
 const stubHits = { user: 0, memberships: 0, exchange: 0, oidcMint: 0 };
+// Cloudflare's SQL API, as far as the counter route can tell. The worker
+// reaches it through CACHET_STATS_API_URL, the same way it reaches the
+// JWKS and the GitHub API through theirs, so the answer path runs for
+// real: the statement it composed arrives here as text, and what this
+// answers is what the route deserializes and shapes.
+const LANE_STATS_TOKEN = "lane-stats-token";
+const statsStub = { sql: [], authorization: null, rows: [], status: 200 };
 const LANE_OAUTH_CODE = "lane-code";
 const LANE_OUTSIDER_CODE = "lane-code-outsider";
 const OUTSIDER_TOKEN = "lane-outsider-token";
@@ -77,6 +114,19 @@ const stubServer = http.createServer((req, res) => {
       count: 1,
       value: mint({ aud: audience ?? "cachet-lane" }),
     });
+  }
+  if (req.url.endsWith("/analytics_engine/sql") && req.method === "POST") {
+    let sql = "";
+    req.on("data", (chunk) => (sql += chunk));
+    req.on("end", () => {
+      statsStub.sql.push(sql);
+      statsStub.authorization = req.headers.authorization ?? null;
+      if (statsStub.status !== 200) {
+        return json(statsStub.status, { errors: ["lane refusal"] });
+      }
+      json(200, { data: statsStub.rows });
+    });
+    return;
   }
   if (req.url === "/login/oauth/access_token" && req.method === "POST") {
     stubHits.exchange += 1;
@@ -138,6 +188,7 @@ const stubServer = http.createServer((req, res) => {
 await new Promise((resolve) => stubServer.listen(0, "127.0.0.1", resolve));
 const jwksUrl = `http://127.0.0.1:${stubServer.address().port}/jwks.json`;
 const githubApiUrl = `http://127.0.0.1:${stubServer.address().port}`;
+const statsApiUrl = `http://127.0.0.1:${stubServer.address().port}`;
 
 const b64url = (data) =>
   Buffer.from(data)
@@ -289,7 +340,7 @@ async function untilEvent(events, marker) {
 // race a probe-and-release dance invites cannot exist. The boot's answer
 // is the banner itself; its absence by the deadline is the test's own
 // signal, never retried.
-async function bootWorkerd(persist, vars) {
+async function bootWorkerd(persist, vars, config = configPath) {
   const proc = spawn(
     "wrangler",
     [
@@ -300,7 +351,7 @@ async function bootWorkerd(persist, vars) {
       "--persist-to",
       persist,
       "--config",
-      configPath,
+      config,
       "--var",
       `CACHET_JWKS_URL:${jwksUrl}`,
       "--var",
@@ -347,7 +398,13 @@ async function bootWorkerd(persist, vars) {
 }
 
 // One scenario per persistence directory: fresh R2, fresh edge cache.
-async function scenario(name, seed, assertions, vars = {}) {
+async function scenario(
+  name,
+  seed,
+  assertions,
+  vars = {},
+  config = configPath,
+) {
   const persist = await mkdtemp(path.join(os.tmpdir(), "cachet-lane-"));
   for (const [key, content] of await seed()) {
     const seedFile = path.join(persist, "seed-input");
@@ -377,6 +434,7 @@ async function scenario(name, seed, assertions, vars = {}) {
   const { proc, base, events, clearEvents, fullEvents } = await bootWorkerd(
     persist,
     vars,
+    config,
   );
 
   try {
@@ -829,6 +887,14 @@ try {
             )
           ).trim();
           assert.equal(body.publicKey, lanePublic);
+          // The console header's identity line reads from here, so an
+          // org member who is not an admin still gets a header.
+          assert.equal(body.deployment, "cachet-lane");
+          assert.match(body.version, /^\d+\.\d+\.\d+$/);
+          // The lane's build stamps no commit and licenses no fonts, and
+          // both are absent rather than null, so a client can tell "not
+          // stamped" from "stamped empty".
+          assert.equal("fontCss" in body, false, JSON.stringify(body));
         },
       );
 
@@ -1180,6 +1246,21 @@ try {
           );
         },
       );
+
+      await check("counting never breaks the thing it counts", async () => {
+        // The lane binds CACHET_EVENTS, so stats::emit runs its real path
+        // in every scenario rather than returning early on a missing
+        // binding: the point is built, its blobs and doubles marshalled,
+        // and handed to workerd, which discards it. What that proves is
+        // the marshalling, not storage, and the proof is negative because
+        // a discarded point leaves nothing to read back: a builder that
+        // threw would have logged stats.write_failed beside the reads and
+        // writes this scenario just made.
+        assert.ok(
+          !events().includes('"event":"stats.write_failed"'),
+          `a counted request failed to marshal its point:\n${events().slice(-800)}`,
+        );
+      });
     },
   );
 
@@ -1619,7 +1700,12 @@ try {
         const state = await login();
         const res = await callback(LANE_OAUTH_CODE, state);
         assert.equal(res.status, 302);
-        assert.equal(res.headers.get("location"), "https://ui.lane.invalid");
+        // Unset CACHET_UI_ORIGIN, which is what a deployment runs with:
+        // signing in lands back on the console it was started from.
+        assert.equal(
+          res.headers.get("location"),
+          "https://cachet.lane.invalid/console",
+        );
         const cookies = res.headers.getSetCookie();
         assert.equal(cookies.length, 1);
         const cookie = cookies[0];
@@ -1637,10 +1723,42 @@ try {
         const sessionId = cookie.match(
           /^cachet_session=([A-Za-z0-9_-]{22});/,
         )[1];
-        const read = await fetch(`${base}/${NAR_KEY}`, {
-          headers: { cookie: `cachet_session=${sessionId}` },
+        const session = { cookie: `cachet_session=${sessionId}` };
+
+        // The session is see-only. It rides a cookie a browser sends by
+        // itself and keeps for a fortnight without re-checking whether
+        // its holder is still in the org, so a copy of it must not
+        // substitute from the cache. Nix never sends a cookie, so
+        // nothing that reads for real loses a credential here.
+        for (const objectPath of [NAR_KEY, NARINFO_KEY]) {
+          const read = await fetch(`${base}/${objectPath}`, {
+            headers: session,
+          });
+          assert.equal(
+            read.status,
+            401,
+            `a session does not open ${objectPath}`,
+          );
+          assert.equal((await read.json()).code, "unauthorized");
+        }
+
+        // What it does open is the console's own surface, starting with
+        // the question a console asks before it renders anything.
+        const who = await fetch(`${base}/api/whoami`, { headers: session });
+        const whoText = await who.text();
+        assert.equal(who.status, 200, whoText);
+        const me = JSON.parse(whoText);
+        assert.equal(me.login, "lane-dev");
+        assert.equal(me.credential, "browser");
+        assert.equal(me.admin, true, "lane-dev is CACHET_ADMINS");
+        assert.ok(
+          me.expiresAtMs > Date.now(),
+          `the session names its own expiry: ${whoText}`,
+        );
+        const runs = await fetch(`${base}/api/self/gc-runs`, {
+          headers: session,
         });
-        assert.equal(read.status, 200, "the session opens reads");
+        assert.equal(runs.status, 200, "an admin session reads the reports");
 
         const exchanges = stubHits.exchange;
         const replay = await callback(LANE_OAUTH_CODE, state);
@@ -1867,6 +1985,34 @@ await scenario(
     const laptop = { authorization: `Bearer ${GOOD_LAPTOP_TOKEN}` };
     const member = { authorization: `Bearer ${MEMBER_TOKEN}` };
 
+    await check("the health route reads the run it just landed", async () => {
+      const anon = await fetch(`${base}/api/self/health`);
+      assert.equal(anon.status, 401);
+      const nonAdmin = await fetch(`${base}/api/self/health`, {
+        headers: member,
+      });
+      assert.equal(nonAdmin.status, 403);
+      assert.equal((await nonAdmin.json()).code, "forbidden_admin");
+
+      const res = await fetch(`${base}/api/self/health`, { headers: laptop });
+      const text = await res.text();
+      assert.equal(res.status, 200, text);
+      const body = JSON.parse(text);
+      // The run this scenario just made finished seconds ago and tripped
+      // no gate, which is the whole definition of healthy.
+      assert.equal(body.status, "healthy", text);
+      assert.equal(body.gate, undefined, text);
+      assert.match(body.latestRunId, /^\d+-[0-9a-f]{16}$/);
+      assert.ok(body.latestFinishedAtMs > 0, text);
+      // The countdown is the lane's own cron, 05:00 UTC, and it is
+      // always ahead: a console counting down to a moment already past
+      // would render a negative duration.
+      assert.ok(body.nextCollectionAtMs > Date.now(), text);
+      const next = new Date(body.nextCollectionAtMs);
+      assert.equal(next.getUTCHours(), 5, next.toISOString());
+      assert.equal(next.getUTCMinutes(), 0, next.toISOString());
+    });
+
     await check("the counter route gates before it queries", async () => {
       // The credential behind this route is a Cloudflare API token, so
       // the gate matters more here than on a route that only reads the
@@ -1892,6 +2038,20 @@ await scenario(
         "subject=reads&window=decade",
         "subject=everything",
         "by=actor",
+        // A bucket finer than its window can hold: 720 hourly rows
+        // against a cap of 100. Refused rather than truncated, because a
+        // truncated series is a chart that starts partway through its
+        // own window without saying so.
+        "subject=reads&by=hour&window=month",
+        "subject=reads&by=hour&window=week",
+        // A filter that names nothing narrows to nothing loudly. Quietly
+        // answering the unfiltered question would make a typo look like
+        // a deployment where every read came from a laptop.
+        "subject=reads&actor=nobody",
+        "subject=reads&actor=laptop'%20OR%20'1'%3D'1",
+        "subject=reads&kind=lease",
+        "subject=reads&outcome=4041",
+        "subject=reads&outcome=99",
       ]) {
         const res = await fetch(`${base}/api/self/events?${query}`, {
           headers: laptop,
@@ -2116,6 +2276,316 @@ await scenario(
   },
 );
 
+// The console's routing law. The deployment binds an asset directory and
+// tells Cloudflare to run the worker first, so the Rust router is the
+// only thing deciding which paths reach the asset layer. What that
+// protects is the nix key space: reading a cache means asking about paths
+// that mostly do not exist, and an asset layer answering an unmatched
+// request with an application shell would answer 200 text/html to every
+// substituter that asked.
+await scenario(
+  "the console serves without ever touching the nix key space",
+  async () => [
+    [NARINFO_KEY, await readFile(path.join(fixturesDir, NARINFO_KEY))],
+    [NAR_KEY, await readFile(path.join(fixturesDir, NAR_FILE))],
+  ],
+  async ({ base }) => {
+    await check("the root is the console's front door", async () => {
+      // nix asks for /nix-cache-info and for paths, never for /, so the
+      // root is free for the person who typed the host into a browser.
+      const res = await fetch(`${base}/`, { redirect: "manual" });
+      assert.equal(res.status, 302);
+      assert.equal(res.headers.get("location"), "/console");
+    });
+
+    await check("a console route renders the shell", async () => {
+      for (const route of ["/console", "/console/", "/console/traffic"]) {
+        const res = await fetch(`${base}${route}`);
+        const body = await res.text();
+        assert.equal(res.status, 200, `${route} -> ${res.status}`);
+        assert.ok(body.includes("lane console shell"), `${route} -> ${body}`);
+      }
+    });
+
+    await check("a built file is served by its own name", async () => {
+      const res = await fetch(`${base}/console/assets/lane-a4f31c.js`);
+      const body = await res.text();
+      assert.equal(res.status, 200, body);
+      assert.ok(body.includes('export const lane = "console"'), body);
+      assert.ok(!body.includes("lane console shell"), "not the shell");
+    });
+
+    await check("the console needs no credential and grants none", async () => {
+      // The shell is public: a person has to reach it to sign in. What
+      // it does not do is authenticate anything, so the API behind it
+      // answers a console request exactly as it answers any other.
+      const shell = await fetch(`${base}/console`);
+      assert.equal(shell.status, 200);
+      const api = await fetch(`${base}/api/self/stats`);
+      assert.equal(api.status, 401, "no credential, no answer");
+    });
+
+    await check("a cache miss is still a cache miss", async () => {
+      // The row this whole design exists for. nix reads "does this cache
+      // hold it" from the status, so with an asset directory bound an
+      // absent path must still answer the protocol's own miss: 404, the
+      // negative-caching headers, and the two words nix ignores. What it
+      // must never be is the console's shell with a 200 on it.
+      for (const absent of [
+        `${"b".repeat(32)}.narinfo`,
+        `nar/${"f".repeat(52)}.nar.zst`,
+      ]) {
+        const res = await fetch(`${base}/${absent}`, { headers: READ_AUTH() });
+        const body = await res.text();
+        assert.equal(res.status, 404, `${absent} -> ${res.status} ${body}`);
+        assert.equal(
+          res.headers.get("content-type"),
+          "text/plain; charset=utf-8",
+          absent,
+        );
+        assert.equal(body, "not found\n", absent);
+        assert.ok(!body.includes("console shell"), absent);
+      }
+
+      // The router's own fallback keeps its problem+json shape, which is
+      // the other half: the asset layer rewrites neither answer.
+      const nowhere = await fetch(`${base}/nope`);
+      assert.equal(nowhere.status, 404);
+      assert.equal(
+        nowhere.headers.get("content-type"),
+        "application/problem+json",
+      );
+      assert.equal((await nowhere.json()).code, "not_found");
+    });
+
+    await check("the protocol paths answer as they always did", async () => {
+      const info = await fetch(`${base}/nix-cache-info`);
+      assert.equal(info.status, 200);
+      assert.equal(info.headers.get("content-type"), "text/x-nix-cache-info");
+
+      const narinfo = await fetch(`${base}/${NARINFO_KEY}`, {
+        headers: READ_AUTH(),
+      });
+      assert.equal(narinfo.status, 200, "a held path still serves");
+      assert.equal(narinfo.headers.get("content-type"), "text/x-nix-narinfo");
+
+      // And a path that merely looks like the console's is a narinfo.
+      const lookalike = await fetch(`${base}/consoles.narinfo`, {
+        headers: READ_AUTH(),
+      });
+      assert.equal(lookalike.status, 400, await lookalike.text());
+    });
+  },
+  {},
+  consoleConfigPath,
+);
+
+// The counter route's answering half, which nothing has ever run. Every
+// other counter row in this lane stops at the configuration check,
+// because a deployment without a stats token counts and cannot report;
+// with the token bound and CACHET_STATS_API_URL pointed at the driver's
+// stub, the statement the worker composed arrives as text and what comes
+// back is deserialized, shaped, and served for real.
+await writeFile(
+  devVarsPath,
+  `CACHET_SIGNING_KEY=${laneSigningSecret}\nCACHET_OAUTH_CLIENT_SECRET=${LANE_OAUTH_SECRET}\nCACHET_STATS_TOKEN=${LANE_STATS_TOKEN}\n`,
+);
+try {
+  await scenario(
+    "the counter route asks what it was told to and answers what came back",
+    async () => [],
+    async ({ base }) => {
+      const laptop = { authorization: `Bearer ${GOOD_LAPTOP_TOKEN}` };
+      const ask = async (query) => {
+        statsStub.sql = [];
+        const res = await fetch(`${base}/api/self/events?${query}`, {
+          headers: laptop,
+        });
+        return { res, text: await res.text() };
+      };
+
+      await check(
+        "a deployment that has never collected is unknown, not broken",
+        async () => {
+          // This scenario seeds nothing, so there is no latest report.
+          // /api/self/stats answers 404, which is the honest shape for a
+          // projection with nothing to project; health answers 200 with
+          // a status, because it renders in a header on every screen and
+          // a failing header reads as a broken console.
+          const stats = await fetch(`${base}/api/self/stats`, {
+            headers: laptop,
+          });
+          assert.equal(stats.status, 404);
+
+          const res = await fetch(`${base}/api/self/health`, {
+            headers: laptop,
+          });
+          const text = await res.text();
+          assert.equal(res.status, 200, text);
+          const body = JSON.parse(text);
+          assert.equal(body.status, "unknown", text);
+          assert.equal(body.latestRunId, undefined, text);
+          assert.equal(body.gate, undefined, text);
+          // The countdown does not depend on a run having happened.
+          assert.ok(body.nextCollectionAtMs > Date.now(), text);
+        },
+      );
+
+      await check("a dimension list is asked for and served back", async () => {
+        statsStub.rows = [
+          { dimension: "edge_hit", count: 11904, bytes: 44_236_800 },
+          { dimension: "miss", count: 564, bytes: 0 },
+        ];
+        const { res, text } = await ask("subject=reads&by=outcome&window=week");
+        assert.equal(res.status, 200, text);
+        // The statement is asserted whole. A lane matching substrings
+        // lets a clause move, an order flip, or a bound change without
+        // anything failing, and this statement runs with an account
+        // token behind it.
+        assert.equal(
+          statsStub.sql[0],
+          "SELECT blob2 AS dimension, " +
+            "SUM(_sample_interval * double1) AS count, " +
+            "SUM(_sample_interval * double2) AS bytes " +
+            "FROM cachet_lane " +
+            "WHERE index1 = 'read' " +
+            "AND timestamp > NOW() - INTERVAL '7' DAY " +
+            "GROUP BY dimension ORDER BY count DESC LIMIT 100",
+          statsStub.sql[0],
+        );
+        assert.equal(
+          statsStub.authorization,
+          `Bearer ${LANE_STATS_TOKEN}`,
+          "the query carries the deployment's own token",
+        );
+        const body = JSON.parse(text);
+        assert.equal(body.subject, "reads");
+        assert.equal(body.dimension, "outcome");
+        assert.equal(body.window, "week");
+        assert.deepEqual(body.filters, {});
+        assert.equal(body.rows.length, 2);
+        assert.equal(body.rows[0].dimension, "edge_hit");
+        assert.equal(body.rows[0].count, 11904);
+        assert.equal(body.rows[0].bytes, 44_236_800);
+      });
+
+      await check("a filtered question narrows with literals", async () => {
+        statsStub.rows = [
+          { dimension: "bucket_hit", count: 610, bytes: 1_300 },
+        ];
+        const { res, text } = await ask(
+          "subject=reads&by=outcome&window=week&actor=laptop",
+        );
+        assert.equal(res.status, 200, text);
+        assert.ok(
+          statsStub.sql[0].includes(
+            "WHERE index1 = 'read' AND blob3 = 'laptop' AND timestamp >",
+          ),
+          statsStub.sql[0],
+        );
+        // The answer says what it was narrowed to, so a caller reading a
+        // chart never has to trust that its own query string arrived.
+        assert.deepEqual(JSON.parse(text).filters, { actor: "laptop" });
+      });
+
+      await check("every filter stacks in column order", async () => {
+        statsStub.rows = [];
+        const { res, text } = await ask(
+          "subject=writes&by=repository&window=month&kind=nar&outcome=404&actor=ci",
+        );
+        assert.equal(res.status, 200, text);
+        assert.ok(
+          statsStub.sql[0].includes(
+            "WHERE index1 = 'write' AND blob1 = 'nar' AND blob2 = '404' " +
+              "AND blob3 = 'ci' AND timestamp >",
+          ),
+          statsStub.sql[0],
+        );
+        assert.deepEqual(JSON.parse(text).filters, {
+          kind: "nar",
+          outcome: "404",
+          actor: "ci",
+        });
+      });
+
+      await check(
+        "a series is asked for by time and comes back whole",
+        async () => {
+          // Two of seven days reported. Analytics Engine says nothing
+          // about the other five, and a line drawn through the silence
+          // would claim traffic was smooth when it was absent.
+          const day = 86_400;
+          const newest = Math.floor(Date.now() / 1000 / day) * day;
+          statsStub.rows = [
+            { dimension: String(newest), count: 1_508, bytes: 5_000 },
+            { dimension: String(newest - day * 3), count: 2_133, bytes: 9_000 },
+          ];
+          const { res, text } = await ask("subject=reads&by=day&window=week");
+          assert.equal(res.status, 200, text);
+          assert.equal(
+            statsStub.sql[0],
+            "SELECT toString(intDiv(toUInt32(timestamp), 86400) * 86400) AS dimension, " +
+              "SUM(_sample_interval * double1) AS count, " +
+              "SUM(_sample_interval * double2) AS bytes " +
+              "FROM cachet_lane " +
+              "WHERE index1 = 'read' " +
+              "AND timestamp > NOW() - INTERVAL '7' DAY " +
+              "GROUP BY dimension ORDER BY dimension ASC LIMIT 7",
+            statsStub.sql[0],
+          );
+          const body = JSON.parse(text);
+          assert.equal(body.dimension, "day");
+          assert.equal(body.rows.length, 7, "one row per day, holes included");
+          assert.equal(body.rows[6].dimension, String(newest));
+          assert.equal(body.rows[6].count, 1_508);
+          assert.equal(body.rows[3].count, 2_133);
+          assert.equal(body.rows[0].count, 0, "an empty day counts zero");
+          assert.equal(body.rows[0].bytes, 0);
+          for (let i = 1; i < body.rows.length; i += 1) {
+            assert.equal(
+              Number(body.rows[i].dimension) -
+                Number(body.rows[i - 1].dimension),
+              day,
+              "ascending and contiguous",
+            );
+          }
+        },
+      );
+
+      await check("an hourly series fits its day", async () => {
+        statsStub.rows = [];
+        const { res, text } = await ask("subject=probes&by=hour&window=day");
+        assert.equal(res.status, 200, text);
+        assert.ok(
+          statsStub.sql[0].includes(
+            "toString(intDiv(toUInt32(timestamp), 3600) * 3600)",
+          ),
+          statsStub.sql[0],
+        );
+        assert.ok(statsStub.sql[0].endsWith("ORDER BY dimension ASC LIMIT 24"));
+        assert.equal(JSON.parse(text).rows.length, 24);
+      });
+
+      await check(
+        "an upstream refusal answers 503 and says nothing about upstream",
+        async () => {
+          statsStub.status = 500;
+          const { res, text } = await ask("subject=reads&by=actor");
+          statsStub.status = 200;
+          assert.equal(res.status, 503, text);
+          const body = JSON.parse(text);
+          assert.equal(body.code, "storage_unavailable");
+          // The upstream answers about an account, not about this cache.
+          assert.ok(!text.includes("lane refusal"), text);
+        },
+      );
+    },
+    { CACHET_STATS_API_URL: statsApiUrl },
+  );
+} finally {
+  await rm(devVarsPath, { force: true });
+}
+
 // The write path's other half is the CLI itself (crates/cachet-push): its
 // unit fakes answer over a scripted wire, so this scenario runs the real
 // pipeline — real nix-store, real staging tree, real token mints against
@@ -2182,9 +2652,15 @@ try {
 
       await check("the push uploads exactly the payload", async () => {
         const payload = path.join(runnerTemp, "lane-payload");
+        // why: the content decides the store path, so it has to be new
+        // every run. It used to be the driver's pid, which the operating
+        // system recycles: a run that drew a pid some earlier run had
+        // already pushed found its path in the snapshot, uploaded
+        // nothing, minted nothing, and failed three checks at once with
+        // nothing in the message to say why.
         await writeFile(
           payload,
-          `cachet workerd lane payload ${process.pid}\n`,
+          `cachet workerd lane payload ${crypto.randomUUID()}\n`,
         );
         const added = spawnSync(
           "nix-store",
@@ -2204,7 +2680,9 @@ try {
         assert.equal(
           stubHits.oidcMint - mintsBefore,
           1,
-          "one mint carries the whole push run",
+          `one mint carries the whole push run, saw ${
+            stubHits.oidcMint - mintsBefore
+          }: ${pushed.stdout}`,
         );
         assert.ok(
           pushed.stdout.includes("cachet: 1 new to cachet"),
@@ -2279,7 +2757,9 @@ try {
           assert.equal(
             stubHits.oidcMint - mintsBefore,
             1,
-            "one mint carries the multipart run, parts included",
+            `one mint carries the multipart run, parts included, saw ${
+              stubHits.oidcMint - mintsBefore
+            }: ${pushed.stdout}`,
           );
           assert.ok(
             pushed.stdout.includes("cachet: uploaded 2 objects"),
@@ -2311,5 +2791,6 @@ process.stdout.write("workerd lane green\n");
 // why: the stub server's listen handle (and its keep-alive sockets from the
 // worker's fetches) would hold the event loop open forever; close it so a
 // green lane exits.
+await rm(consoleConfigPath, { force: true });
 stubServer.closeAllConnections();
 stubServer.close();

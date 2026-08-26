@@ -44,6 +44,27 @@ say "deployment answers for host ${host}, orgs ${orgs}, key ${public_key%%:*}"
 [[ ${public_key} == "${host}-"*":"* ]] ||
   fail "the served public key ${public_key} is not ${host}-<n>:<base64>: deployment identity mismatch"
 
+# --- the console, served by the deployment itself ---
+
+say "the root redirects to the console"
+location="$(curl -s -o /dev/null -w '%{redirect_url}' "${URL}/")"
+[[ ${location} == *"/console" ]] ||
+  fail "the root redirected to '${location}', expected the console"
+
+say "the console's shell serves without a credential"
+shell="$(curl -fsSL "${URL}/console")" ||
+  fail "the console answered nothing at ${URL}/console"
+grep -qi '<div id="root">' <<<"${shell}" ||
+  fail "the console served a document that is not its shell"
+# why: the built bundle, not just any document. The shell names an asset
+# the build emitted, so a deploy that uploaded a stale or empty
+# directory fails here rather than in someone's browser.
+asset="$(grep -o '/console/assets/[A-Za-z0-9._-]*\.js' <<<"${shell}" | head -1)"
+[ -n "${asset}" ] || fail "the console's shell names no script"
+curl -fsSL -o /dev/null "${URL}${asset}" ||
+  fail "the console's shell names ${asset}, which the deployment does not serve"
+say "console shell and ${asset}: ok"
+
 # --- the read guard over the wire ---
 
 say "an anonymous narinfo read must refuse"
@@ -114,5 +135,16 @@ netrc-file = ${work}/netrc
 " nix copy --from "${URL}" "${store_path}"
 [ -e "${store_path}" ] || fail "the substitution produced no local path"
 say "substitution verified the deployment's signature: ok"
+
+# --- and the assets never take the protocol's answers ---
+
+say "a cache miss is still a cache miss, with assets bound"
+miss="$(curl -s -o "${work}/miss.body" -w '%{http_code}' \
+  --netrc-file "${work}/netrc" "${URL}/0000000000000000000000000000000a.narinfo")"
+[ "${miss}" = "404" ] ||
+  fail "an absent narinfo answered ${miss}, expected 404: the asset layer is answering protocol paths"
+grep -qi 'html' "${work}/miss.body" &&
+  fail "an absent narinfo answered HTML: nix would read the console's shell as a narinfo"
+say "the miss answered 404 and no shell: ok"
 
 say "the round trip holds"

@@ -14,6 +14,14 @@
 //! wrong rather than broken. One type defines the positions, every
 //! writer fills that type, and docs/DEPLOY.md's queries name the same
 //! columns.
+//!
+//! The kind and outcome vocabularies are enums rather than free strings
+//! because `stats_query` filters on them. A filter value has to parse
+//! into a closed set before it can be formatted into SQL, and the set a
+//! reader may filter by is exactly the set the writers emit, so both
+//! sides read from the one definition here.
+
+use std::borrow::Cow;
 
 /// Which family of thing happened. The dataset's index, so it is also
 /// the sampling key: coarse on purpose.
@@ -25,10 +33,6 @@ pub enum StatEvent {
     Write,
     /// A push asked what the cache already holds.
     Probe,
-    /// The collector ran.
-    Collect,
-    /// A credential was issued or refused.
-    Auth,
 }
 
 impl StatEvent {
@@ -39,9 +43,175 @@ impl StatEvent {
             Self::Read => "read",
             Self::Write => "write",
             Self::Probe => "probe",
-            Self::Collect => "collect",
-            Self::Auth => "auth",
         }
+    }
+}
+
+/// What the counted thing was: `blob1`.
+///
+/// One variant per branch a writer can take, and nothing else. A kind
+/// nobody emits would be a question `/api/self/events?kind=` accepts and
+/// can only answer with zero, which reads as "none happened" rather than
+/// "this deployment never records that".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatKind {
+    /// A `{hash}.narinfo` document.
+    Narinfo,
+    /// A `nar/{key}` object, whole.
+    Nar,
+    /// One part of a multipart upload.
+    Part,
+    /// A multipart upload was opened.
+    Begin,
+    /// A multipart upload was completed.
+    Complete,
+    /// A multipart upload was abandoned.
+    Abort,
+    /// A push asked what the cache already holds.
+    Probe,
+    /// A write whose route matched no other branch.
+    Unknown,
+}
+
+impl StatKind {
+    /// The name the dataset stores.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Narinfo => "narinfo",
+            Self::Nar => "nar",
+            Self::Part => "part",
+            Self::Begin => "begin",
+            Self::Complete => "complete",
+            Self::Abort => "abort",
+            Self::Probe => "probe",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    /// Parse a reader's filter choice. Anything else is not a choice.
+    #[must_use]
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "narinfo" => Some(Self::Narinfo),
+            "nar" => Some(Self::Nar),
+            "part" => Some(Self::Part),
+            "begin" => Some(Self::Begin),
+            "complete" => Some(Self::Complete),
+            "abort" => Some(Self::Abort),
+            "probe" => Some(Self::Probe),
+            "unknown" => Some(Self::Unknown),
+            _ => None,
+        }
+    }
+
+    /// Every kind, for the tests that hold the two sides in step.
+    #[must_use]
+    pub const fn all() -> [Self; 8] {
+        [
+            Self::Narinfo,
+            Self::Nar,
+            Self::Part,
+            Self::Begin,
+            Self::Complete,
+            Self::Abort,
+            Self::Probe,
+            Self::Unknown,
+        ]
+    }
+}
+
+impl From<crate::read::ObjectKind> for StatKind {
+    /// The read path names its object kinds in its own enum; counting
+    /// them means the one vocabulary a filter can also name.
+    fn from(kind: crate::read::ObjectKind) -> Self {
+        match kind {
+            crate::read::ObjectKind::Narinfo => Self::Narinfo,
+            crate::read::ObjectKind::Nar => Self::Nar,
+        }
+    }
+}
+
+/// How the counted thing went: `blob2`.
+///
+/// The named variants are the successful and near-successful shapes. A
+/// refusal carries its HTTP status instead, because the error code lives
+/// in a body the counting layer would have to consume to read, and a
+/// rejection rate answers the question either way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatOutcome {
+    /// Served from the Cache API without touching the bucket.
+    EdgeHit,
+    /// Served from the bucket.
+    BucketHit,
+    /// The bucket does not hold it.
+    Miss,
+    /// The write stored it.
+    Stored,
+    /// The probe answered.
+    Answered,
+    /// A refusal, named by the status it answered with.
+    Status(u16),
+}
+
+/// The smallest HTTP status a refusal can carry.
+const STATUS_MIN: u16 = 100;
+/// One past the largest HTTP status a refusal can carry.
+const STATUS_END: u16 = 600;
+
+impl StatOutcome {
+    /// The text the dataset stores.
+    ///
+    /// Borrowed for the named variants and owned for a status, so a
+    /// writer pays an allocation only on the refusal path.
+    #[must_use]
+    pub fn render(self) -> Cow<'static, str> {
+        match self {
+            Self::EdgeHit => Cow::Borrowed("edge_hit"),
+            Self::BucketHit => Cow::Borrowed("bucket_hit"),
+            Self::Miss => Cow::Borrowed("miss"),
+            Self::Stored => Cow::Borrowed("stored"),
+            Self::Answered => Cow::Borrowed("answered"),
+            Self::Status(status) => Cow::Owned(status.to_string()),
+        }
+    }
+
+    /// Parse a reader's filter choice. Anything else is not a choice.
+    ///
+    /// A status parses only as exactly three ASCII digits naming a real
+    /// HTTP status, so the value formatted into SQL is an integer this
+    /// function produced rather than text a caller wrote.
+    #[must_use]
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "edge_hit" => Some(Self::EdgeHit),
+            "bucket_hit" => Some(Self::BucketHit),
+            "miss" => Some(Self::Miss),
+            "stored" => Some(Self::Stored),
+            "answered" => Some(Self::Answered),
+            _ => {
+                if text.len() != 3 || !text.bytes().all(|byte| byte.is_ascii_digit()) {
+                    return None;
+                }
+                let status: u16 = text.parse().ok()?;
+                (STATUS_MIN..STATUS_END)
+                    .contains(&status)
+                    .then_some(Self::Status(status))
+            }
+        }
+    }
+
+    /// Every named outcome, for the tests that hold the two sides in
+    /// step. `Status` is excluded: it is a family, not a name.
+    #[must_use]
+    pub const fn named() -> [Self; 5] {
+        [
+            Self::EdgeHit,
+            Self::BucketHit,
+            Self::Miss,
+            Self::Stored,
+            Self::Answered,
+        ]
     }
 }
 
@@ -70,6 +240,24 @@ impl StatActor {
             Self::Browser => "browser",
             Self::Anonymous => "anonymous",
         }
+    }
+
+    /// Parse a reader's filter choice. Anything else is not a choice.
+    #[must_use]
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "ci" => Some(Self::Ci),
+            "laptop" => Some(Self::Laptop),
+            "browser" => Some(Self::Browser),
+            "anonymous" => Some(Self::Anonymous),
+            _ => None,
+        }
+    }
+
+    /// Every actor, for the tests that hold the two sides in step.
+    #[must_use]
+    pub const fn all() -> [Self; 4] {
+        [Self::Ci, Self::Laptop, Self::Browser, Self::Anonymous]
     }
 }
 
@@ -136,19 +324,16 @@ impl StatCaller {
 pub struct StatPoint {
     /// The family of thing that happened.
     pub event: StatEvent,
-    /// What it happened to: `narinfo`, `nar`, `part`, `lease`, `sweep`.
-    pub kind: String,
-    /// How it went: `edge_hit`, `bucket_hit`, `miss`, `stored`, or the
-    /// error code of a refusal, so a rejection rate is one query.
-    pub outcome: String,
+    /// What it happened to.
+    pub kind: StatKind,
+    /// How it went.
+    pub outcome: StatOutcome,
     /// Who asked.
     pub actor: StatActor,
     /// `owner/repo` when a workflow run is the caller, else empty.
     pub repository: String,
     /// The git ref of that run, else empty.
     pub reference: String,
-    /// The lease name a push writes under, else empty.
-    pub project: String,
     /// How many things this point counts. Almost always one; a batch
     /// says how big it was.
     pub count: f64,
@@ -159,15 +344,14 @@ pub struct StatPoint {
 impl StatPoint {
     /// A point with every dimension empty, for a writer to fill.
     #[must_use]
-    pub fn new(event: StatEvent, kind: &str, outcome: &str) -> Self {
+    pub fn new(event: StatEvent, kind: StatKind, outcome: StatOutcome) -> Self {
         Self {
             event,
-            kind: kind.to_string(),
-            outcome: outcome.to_string(),
+            kind,
+            outcome,
             actor: StatActor::Anonymous,
             repository: String::new(),
             reference: String::new(),
-            project: String::new(),
             count: 1.0,
             bytes: 0.0,
         }
@@ -190,13 +374,6 @@ impl StatPoint {
         self
     }
 
-    /// Name the lease this concerns.
-    #[must_use]
-    pub fn for_project(mut self, project: &str) -> Self {
-        self.project = project.to_string();
-        self
-    }
-
     /// Say how many, and how much.
     #[must_use]
     pub fn measuring(mut self, count: u64, bytes: u64) -> Self {
@@ -206,15 +383,20 @@ impl StatPoint {
     }
 
     /// The blob columns, in the order every query names them.
+    ///
+    /// `blob6` is reserved and always empty. It held a lease name that
+    /// no writer ever filled, and the column stays in place rather than
+    /// closing the gap because renumbering would make every point
+    /// already in the dataset read as a different question.
     #[must_use]
-    pub fn blobs(&self) -> [&str; 6] {
+    pub fn blobs(&self) -> [Cow<'_, str>; 6] {
         [
-            self.kind.as_str(),
-            self.outcome.as_str(),
-            self.actor.name(),
-            self.repository.as_str(),
-            self.reference.as_str(),
-            self.project.as_str(),
+            Cow::Borrowed(self.kind.name()),
+            self.outcome.render(),
+            Cow::Borrowed(self.actor.name()),
+            Cow::Borrowed(self.repository.as_str()),
+            Cow::Borrowed(self.reference.as_str()),
+            Cow::Borrowed(""),
         ]
     }
 
@@ -255,9 +437,8 @@ mod tests {
         // in exactly this order. A writer that reordered them would make
         // every committed query silently wrong, so the order is asserted
         // rather than assumed.
-        let point = StatPoint::new(StatEvent::Read, "narinfo", "edge_hit")
+        let point = StatPoint::new(StatEvent::Read, StatKind::Narinfo, StatOutcome::EdgeHit)
             .by(&StatCaller::ci("nox-systems/cachet", "refs/heads/main"))
-            .for_project("nox-systems-cachet")
             .measuring(1, 4_096);
         assert_eq!(
             point.blobs(),
@@ -267,7 +448,7 @@ mod tests {
                 "ci",
                 "nox-systems/cachet",
                 "refs/heads/main",
-                "nox-systems-cachet",
+                "",
             ]
         );
         // why: bit equality. The claim is that these land exactly, not
@@ -282,9 +463,10 @@ mod tests {
     #[test]
     fn an_unfilled_dimension_is_empty_and_not_missing() {
         // Positional columns: skipping one would shift the rest.
-        let point = StatPoint::new(StatEvent::Probe, "probe", "answered");
+        let point = StatPoint::new(StatEvent::Probe, StatKind::Probe, StatOutcome::Answered);
         assert_eq!(point.blobs().len(), 6);
         assert_eq!(point.blobs()[3], "", "no repository is the empty string");
+        assert_eq!(point.blobs()[5], "", "blob6 is reserved and never filled");
         assert_eq!(point.actor, StatActor::Anonymous);
     }
 
@@ -300,22 +482,44 @@ mod tests {
     }
 
     #[test]
-    fn every_actor_and_event_names_itself() {
-        for actor in [
-            StatActor::Ci,
-            StatActor::Laptop,
-            StatActor::Browser,
-            StatActor::Anonymous,
-        ] {
-            assert!(!actor.name().is_empty());
+    fn every_written_name_parses_back_to_what_wrote_it() {
+        // The writer's vocabulary and the reader's filter vocabulary are
+        // the same set. A kind a writer can emit but a filter cannot name
+        // would be invisible; a name a filter accepts but no writer emits
+        // would answer zero and read as "none happened".
+        for kind in StatKind::all() {
+            assert_eq!(StatKind::parse(kind.name()), Some(kind), "{kind:?}");
         }
-        for event in [
-            StatEvent::Read,
-            StatEvent::Write,
-            StatEvent::Probe,
-            StatEvent::Collect,
-            StatEvent::Auth,
+        for outcome in StatOutcome::named() {
+            assert_eq!(
+                StatOutcome::parse(&outcome.render()),
+                Some(outcome),
+                "{outcome:?}"
+            );
+        }
+        for actor in StatActor::all() {
+            assert_eq!(StatActor::parse(actor.name()), Some(actor), "{actor:?}");
+        }
+    }
+
+    #[test]
+    fn a_refusal_names_itself_by_status_and_only_by_status() {
+        assert_eq!(StatOutcome::Status(404).render(), "404");
+        assert_eq!(StatOutcome::parse("404"), Some(StatOutcome::Status(404)));
+        assert_eq!(StatOutcome::parse("503"), Some(StatOutcome::Status(503)));
+        // Three ASCII digits naming a real status, and nothing else. A
+        // value that parsed loosely here would be a value formatted into
+        // SQL that a caller chose the shape of.
+        for refused in [
+            "4041", "40", "0404", "4o4", "099", "600", "999", "+04", " 404", "",
         ] {
+            assert_eq!(StatOutcome::parse(refused), None, "{refused}");
+        }
+    }
+
+    #[test]
+    fn every_event_names_itself() {
+        for event in [StatEvent::Read, StatEvent::Write, StatEvent::Probe] {
             assert!(!event.name().is_empty());
         }
     }

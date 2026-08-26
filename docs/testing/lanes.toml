@@ -19,5 +19,8 @@ summary = "Proofs over scalar-symbolic, allocation-free cores: today the multipa
 [lane.workerd]
 summary = "The built worker under workerd: real R2 and Cache API semantics for every route, asserted over real HTTP."
 
+[lane.console]
+summary = "The browser console's pure derivations, its presentational components, and the schemas it decodes every answer with."
+
 [lane.integration]
 summary = "The live round trip against a deployment: served truth, real OIDC, push, verified substitution."

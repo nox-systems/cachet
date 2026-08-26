@@ -184,6 +184,17 @@ jobs:
           roots: .#devShells.x86_64-linux.default
       - run: nix develop --command just openapi-check
 
+  console:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: nix on the cachet cache
+        uses: nox-systems/cachet/action@v0
+        with:
+          cache-url: https://cachet.nox.so
+          roots: .#devShells.x86_64-linux.default
+      - run: nix develop --command just console
+
   workerd:
     runs-on: ubuntu-latest
     steps:

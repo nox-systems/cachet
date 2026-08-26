@@ -14,6 +14,11 @@ import * as Effect from "effect/Effect";
 
 import { loadStageConfig } from "./src/config.ts";
 
+// The collector's schedule, named once: the platform gets it as the
+// worker's trigger and the worker gets it as configuration, so the
+// console's countdown and the cron that fires can never disagree.
+const GC_CRON = "0 5 * * *";
+
 export default Alchemy.Stack(
   "cachet",
   {
@@ -70,6 +75,20 @@ export default Alchemy.Stack(
         ...(cfg.statsToken === undefined
           ? {}
           : { CACHET_STATS_TOKEN: Config.redacted("CACHET_STATS_TOKEN") }),
+        // The account the SQL API runs the query under. A worker cannot
+        // read the dataset it writes to without naming an account, and
+        // this is the same one alchemy is deploying into, so it comes
+        // from the deploy's own environment rather than a second copy.
+        ...(cfg.accountId === undefined
+          ? {}
+          : { CLOUDFLARE_ACCOUNT_ID: cfg.accountId }),
+        // The console's header names the deployment and counts down to
+        // the next collection. The name and the cron live here and
+        // nowhere else the worker can see, so they ride in as
+        // configuration rather than being guessed at request time.
+        CACHET_DEPLOY_NAME: stage,
+        CACHET_GC_CRON: GC_CRON,
+        ...(cfg.fontCss === undefined ? {} : { CACHET_FONT_CSS: cfg.fontCss }),
         CACHET_ORGS: cfg.orgs,
         CACHET_AUDIENCE: cfg.audience,
         CACHET_DEFAULT_BRANCH_REF: cfg.defaultBranchRef,
@@ -88,7 +107,7 @@ export default Alchemy.Stack(
         ),
       },
       // The collector fires daily; GC_ARMED stays unset (armed by default).
-      crons: ["0 5 * * *"],
+      crons: [GC_CRON],
       // The worker's own event stream is the only way to tell an edge hit
       // from a bucket read in production, and without this it goes
       // nowhere: a slow read cannot be diagnosed from the outside.
@@ -113,6 +132,26 @@ export default Alchemy.Stack(
       // signing key's identity.
       workersDev: false,
       domain: { name: cfg.domain },
+      // The browser console, built by `just web` into web/dist and
+      // uploaded beside the wasm bundle. base mirrors Vite's, so the
+      // manifest holds the paths the worker asks for.
+      //
+      // why: both handling modes are "none", which is the whole safety
+      // argument. The asset layer answers a request that names a file
+      // under /console and never invents an answer for one that does
+      // not: an unmatched request falls through to the worker, which
+      // routes it as it always has. notFoundHandling other than "none"
+      // would eventually answer a cache miss with the console's shell,
+      // and a nix client reads "does this cache hold it" from the status,
+      // so 200 text/html is a wrong answer to a question about a path.
+      // htmlHandling is "none" so /console reaches the router rather than
+      // being redirected by the layer (ADR 0014).
+      assets: {
+        directory: "../web/dist",
+        base: "/console",
+        htmlHandling: "none",
+        notFoundHandling: "none",
+      },
     });
 
     return {

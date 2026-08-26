@@ -4,11 +4,13 @@
 //! rides in a secret channel it does not yet have.
 
 use cachet_core::constants::{
-    ACCOUNT_ID_VAR, GC_LATEST_REPORT_KEY, GC_REPORTS_KEY_PREFIX, GC_RUNS_PAGE_LIMIT,
+    ACCOUNT_ID_VAR, DEPLOY_NAME_VAR, FONT_CSS_VAR, GC_CRON_VAR, GC_LATEST_REPORT_KEY,
+    GC_REPORTS_KEY_PREFIX, GC_RUNS_PAGE_LIMIT, STATS_API_DEFAULT, STATS_API_URL_VAR,
     STATS_DATASET_VAR, STATS_TOKEN_SECRET,
 };
 use cachet_core::error::ClientError;
 use cachet_core::gc::{GcReport, parse_run_id};
+use cachet_core::schedule::DailySchedule;
 use cachet_core::types::UnixMillis;
 use cachet_crypto::ed25519::NixSecretKey;
 use worker::{Env, Request, Response};
@@ -53,6 +55,22 @@ pub fn public_config(env: &Env) -> worker::Result<Response> {
         orgs: config.orgs,
         host,
         public_key,
+        deployment: env
+            .var(DEPLOY_NAME_VAR)
+            .map_or_else(|_| "cachet".to_string(), |value| value.to_string()),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        // why: stamped by the build that produces the deployable bundle,
+        // absent from any other build. A worker compiled outside that
+        // path says nothing here rather than naming a commit it was not
+        // built from.
+        build_sha: option_env!("CACHET_BUILD_SHA")
+            .filter(|sha| !sha.is_empty())
+            .map(ToString::to_string),
+        font_css: env
+            .var(FONT_CSS_VAR)
+            .ok()
+            .map(|value| value.to_string())
+            .filter(|value| !value.is_empty()),
     })
     .expect("the config fields serialize");
     let headers = worker::Headers::new();
@@ -114,22 +132,8 @@ pub async fn stats_events(env: &Env, now: UnixMillis, req: &Request) -> worker::
             .find(|(key, _)| key == name)
             .map(|(_, value)| value.into_owned())
     };
-    let (Some(subject), Some(dimension), Some(window)) = (
-        pick("subject")
-            .as_deref()
-            .and_then(cachet_core::stats_query::QuerySubject::parse),
-        pick("by")
-            .as_deref()
-            .or(Some("outcome"))
-            .and_then(cachet_core::stats_query::QueryDimension::parse),
-        cachet_core::stats_query::QueryWindow::parse(pick("window").as_deref()),
-    ) else {
+    let Some(query) = compose_query(&pick) else {
         return crate::error::problem_response(ClientError::MalformedQuery);
-    };
-    let query = cachet_core::stats_query::StatsQuery {
-        subject,
-        dimension,
-        window,
     };
 
     let Ok(token) = env.secret(STATS_TOKEN_SECRET) else {
@@ -152,7 +156,12 @@ pub async fn stats_events(env: &Env, now: UnixMillis, req: &Request) -> worker::
         return crate::error::problem_response(ClientError::StorageUnavailable);
     }
 
+    let base = env
+        .var(STATS_API_URL_VAR)
+        .map_or_else(|_| STATS_API_DEFAULT.to_string(), |value| value.to_string());
+
     let rows = match run_stats_sql(
+        &base,
         &account.to_string(),
         &token.to_string(),
         &query.sql(&dataset),
@@ -163,17 +172,226 @@ pub async fn stats_events(env: &Env, now: UnixMillis, req: &Request) -> worker::
         Err(code) => return crate::error::problem_response(code),
     };
     let body = cachet_api::StatsEvents {
-        subject: pick("subject").unwrap_or_default(),
-        dimension: pick("by").unwrap_or_else(|| "outcome".to_string()),
-        window: pick("window").unwrap_or_else(|| "day".to_string()),
-        rows,
+        subject: query.subject.name().to_string(),
+        dimension: query.dimension.name().to_string(),
+        window: query.window.name().to_string(),
+        filters: cachet_api::StatsFilters {
+            kind: query.filters.kind.map(|kind| kind.name().to_string()),
+            outcome: query
+                .filters
+                .outcome
+                .map(|outcome| outcome.render().into_owned()),
+            actor: query.filters.actor.map(|actor| actor.name().to_string()),
+        },
+        rows: shape_rows(&query, now, rows),
     };
     let text = serde_json::to_string(&body).expect("typed bodies serialize");
     Ok(Response::ok(text)?.with_headers(self_headers()?))
 }
 
+/// The collector's own record of its most recent run, if it has one.
+///
+/// Both `/api/self/stats` and `/api/self/health` are projections of this
+/// object, and they differ in what an absent one means: stats has
+/// nothing to project and answers 404, health answers `unknown`, which
+/// is a status.
+async fn read_latest_report(env: &Env) -> std::result::Result<Option<GcReport>, ClientError> {
+    let bucket = env
+        .bucket("CACHE_BUCKET")
+        .map_err(|_| ClientError::StorageUnavailable)?;
+    let object = match bucket.get(GC_LATEST_REPORT_KEY).execute().await {
+        Ok(object) => object,
+        Err(failure) => {
+            log::event(
+                "error",
+                "api.stats_read_failed",
+                &[("error", failure.to_string())],
+            );
+            return Err(ClientError::StorageUnavailable);
+        }
+    };
+    let Some(object) = object else {
+        return Ok(None);
+    };
+    let Some(body) = object.body() else {
+        return Err(ClientError::StorageUnavailable);
+    };
+    let text = body
+        .text()
+        .await
+        .map_err(|_| ClientError::StorageUnavailable)?;
+    match GcReport::parse(&text) {
+        Ok(report) => Ok(Some(report)),
+        Err(failure) => {
+            log::alert("api.latest_report_corrupt");
+            log::event(
+                "error",
+                "api.stats_parse_failed",
+                &[("error", format!("{failure:?}"))],
+            );
+            Err(ClientError::StorageUnavailable)
+        }
+    }
+}
+
+/// `GET /api/self/health`: whether the collector is keeping up, and when
+/// it runs next.
+///
+/// Derived from the same latest-report object `/api/self/stats` reads,
+/// plus the cron the deployment was created with. A deployment that has
+/// never collected answers `unknown` rather than 404, because a console
+/// header renders on every screen and a missing header reads as a broken
+/// console where "no run yet" reads as a young deployment.
+///
+/// # Errors
+///
+/// Propagates a header or body failure as the worker's generic 500.
+pub async fn health(env: &Env, now: UnixMillis, req: &Request) -> worker::Result<Response> {
+    if let Err(code) = verdict::require_admin(env, now, req).await {
+        return crate::error::problem_response(code);
+    }
+    let next_collection_at_ms = env
+        .var(GC_CRON_VAR)
+        .ok()
+        .and_then(|value| DailySchedule::parse(&value.to_string()))
+        .map(|schedule| schedule.next_after_ms(now.as_u64()));
+
+    let latest = match read_latest_report(env).await {
+        Ok(report) => report,
+        Err(code) => return crate::error::problem_response(code),
+    };
+    let body = match latest {
+        None => cachet_api::HealthBody {
+            status: "unknown".to_string(),
+            next_collection_at_ms,
+            latest_run_id: None,
+            latest_finished_at_ms: None,
+            gate: None,
+        },
+        Some(report) => {
+            // why: two cron periods. One missed run is a deploy window or
+            // a platform hiccup; two means the schedule is not firing,
+            // which is the thing an operator wants a colour for.
+            let stale = now.saturating_ms_since(UnixMillis::new(report.finished_at_ms))
+                > 2 * cachet_core::constants::MILLIS_PER_DAY;
+            let healthy = report.gate.is_none() && !stale;
+            cachet_api::HealthBody {
+                status: if healthy { "healthy" } else { "degraded" }.to_string(),
+                next_collection_at_ms,
+                latest_run_id: Some(report.run_id),
+                latest_finished_at_ms: Some(report.finished_at_ms),
+                gate: report.gate,
+            }
+        }
+    };
+    let text = serde_json::to_string(&body).expect("typed bodies serialize");
+    Ok(Response::ok(text)?.with_headers(self_headers()?))
+}
+
+/// `GET /api/whoami`: who this request authenticates as.
+///
+/// Any read credential resolves here, admin or not, because the console
+/// asks this before it renders anything and an org member who is not an
+/// admin still gets an answer: their own login, and `admin: false`. The
+/// alternative was a console that learns its standing by provoking a
+/// 403, which makes a refusal a normal part of loading a page and hides
+/// the real ones.
+///
+/// # Errors
+///
+/// Propagates a header or body failure as the worker's generic 500.
+pub async fn whoami(env: &Env, now: UnixMillis, req: &Request) -> worker::Result<Response> {
+    let identity = match verdict::authorize_read(env, now, req).await {
+        Ok(identity) => identity,
+        Err(code) => return crate::error::problem_response(code),
+    };
+    let login = identity.login().to_string();
+    let body = cachet_api::WhoAmI {
+        admin: verdict::admins(env).iter().any(|admin| admin == &login),
+        credential: identity.credential().to_string(),
+        expires_at_ms: match identity {
+            verdict::ReadIdentity::Session { expires_at_ms, .. } => Some(expires_at_ms),
+            _ => None,
+        },
+        login,
+    };
+    let text = serde_json::to_string(&body).expect("typed bodies serialize");
+    Ok(Response::ok(text)?.with_headers(self_headers()?))
+}
+
+/// Turn a caller's choices into one question, or into nothing.
+///
+/// Every parameter parses into a closed enum or fails, and the assembled
+/// pair is checked too: a bucket finer than its window can hold is a
+/// question with no admissible answer rather than a truncated one.
+fn compose_query(
+    pick: &impl Fn(&str) -> Option<String>,
+) -> Option<cachet_core::stats_query::StatsQuery> {
+    use cachet_core::stats::{StatActor, StatKind, StatOutcome};
+    use cachet_core::stats_query::{QueryDimension, QueryFilters, QuerySubject, QueryWindow};
+
+    let subject = QuerySubject::parse(&pick("subject")?)?;
+    let dimension = QueryDimension::parse(&pick("by").unwrap_or_else(|| "outcome".to_string()))?;
+    let window = QueryWindow::parse(pick("window").as_deref())?;
+    // An unstated filter is absent; a stated one that names nothing is a
+    // refusal, so a typo narrows to nothing loudly instead of quietly
+    // answering the unfiltered question.
+    let filters = QueryFilters {
+        kind: match pick("kind") {
+            None => None,
+            Some(text) => Some(StatKind::parse(&text)?),
+        },
+        outcome: match pick("outcome") {
+            None => None,
+            Some(text) => Some(StatOutcome::parse(&text)?),
+        },
+        actor: match pick("actor") {
+            None => None,
+            Some(text) => Some(StatActor::parse(&text)?),
+        },
+    };
+    cachet_core::stats_query::StatsQuery::new(subject, dimension, window, filters)
+}
+
+/// Answer with the rows the question implies.
+///
+/// A dimension list passes through: the statement already ordered and
+/// bounded it. A series is filled to one row per bucket, because
+/// Analytics Engine returns nothing for a bucket nothing happened in and
+/// a line drawn through the holes claims traffic was smooth when it was
+/// absent.
+fn shape_rows(
+    query: &cachet_core::stats_query::StatsQuery,
+    now: UnixMillis,
+    rows: Vec<cachet_api::StatsRow>,
+) -> Vec<cachet_api::StatsRow> {
+    use cachet_core::stats_query::{SeriesPoint, fill_series};
+    if query.bucket_count().is_none() {
+        return rows;
+    }
+    let observed: Vec<SeriesPoint> = rows
+        .iter()
+        .filter_map(|row| {
+            Some(SeriesPoint {
+                start_secs: row.dimension.parse().ok()?,
+                count: row.count,
+                bytes: row.bytes,
+            })
+        })
+        .collect();
+    fill_series(query, now.as_u64(), &observed)
+        .into_iter()
+        .map(|point| cachet_api::StatsRow {
+            dimension: point.start_secs.to_string(),
+            count: point.count,
+            bytes: point.bytes,
+        })
+        .collect()
+}
+
 /// Run one composed statement against Cloudflare's SQL API.
 async fn run_stats_sql(
+    base: &str,
     account: &str,
     token: &str,
     sql: &str,
@@ -186,7 +404,7 @@ async fn run_stats_sql(
     init.headers.clone_from(&headers);
     init.with_body(Some(sql.to_string().into()));
     let request = worker::Request::new_with_init(
-        &format!("https://api.cloudflare.com/client/v4/accounts/{account}/analytics_engine/sql"),
+        &format!("{base}/accounts/{account}/analytics_engine/sql"),
         &init,
     )
     .map_err(|_| ClientError::StorageUnavailable)?;
@@ -329,38 +547,12 @@ pub async fn stats(env: &Env, now: UnixMillis, req: &Request) -> worker::Result<
     if let Err(code) = verdict::require_admin(env, now, req).await {
         return crate::error::problem_response(code);
     }
-    let bucket = env.bucket("CACHE_BUCKET")?;
-    let object = match bucket.get(GC_LATEST_REPORT_KEY).execute().await {
-        Ok(object) => object,
-        Err(failure) => {
-            log::event(
-                "error",
-                "api.stats_read_failed",
-                &[("error", failure.to_string())],
-            );
-            return crate::error::problem_response(ClientError::StorageUnavailable);
-        }
-    };
-    let Some(object) = object else {
+    let report = match read_latest_report(env).await {
+        Ok(Some(report)) => report,
         // why: a fresh deployment has no report yet; the empty answer is a
         // fact, and 404 is its honest shape rather than fabricated zeros.
-        return crate::error::problem_response(ClientError::NotFound);
-    };
-    let Some(body) = object.body() else {
-        return crate::error::problem_response(ClientError::StorageUnavailable);
-    };
-    let text = body.text().await?;
-    let report = match GcReport::parse(&text) {
-        Ok(report) => report,
-        Err(failure) => {
-            log::alert("api.latest_report_corrupt");
-            log::event(
-                "error",
-                "api.stats_parse_failed",
-                &[("error", format!("{failure:?}"))],
-            );
-            return crate::error::problem_response(ClientError::StorageUnavailable);
-        }
+        Ok(None) => return crate::error::problem_response(ClientError::NotFound),
+        Err(code) => return crate::error::problem_response(code),
     };
     let body = cachet_api::StatsBody {
         based_on_run_id: report.run_id,

@@ -6,8 +6,9 @@
 //! the worker would not answer fails review in the workerd lane first.
 
 use crate::{
-    GcRunList, ProbeAnswer, ProbeBody, ProblemBody, ProjectList, PublicConfig, ReadTokenIssued,
-    RenewalBody, StatsBody, StatsEvents, UploadCreated, UploadedPartBody,
+    GcReportBody, GcRunList, HealthBody, LeaseBody, ProbeAnswer, ProbeBody, ProblemBody,
+    ProjectList, PublicConfig, ReadTokenIssued, RenewalBody, StatsBody, StatsEvents, UploadCreated,
+    UploadedPartBody, WhoAmI,
 };
 
 /// `GET /nix-cache-info`: the nix handshake. Immutable per deployment
@@ -152,22 +153,32 @@ pub fn openapi_get() {}
 /// `GET /api/self/events`: the deployment's own counters, grouped.
 ///
 /// The caller chooses a question rather than composing one: `subject` is
-/// one of `reads`, `writes`, `probes`; `by` names one of the six
-/// dimensions the writers fill; `window` is `day`, `week`, or `month`.
-/// Anything else is refused. The worker builds the SQL from those
-/// choices and runs it against Cloudflare with a token scoped to reading
-/// analytics and nothing else, so no caller text reaches a statement.
-/// Requires an admin credential.
+/// one of `reads`, `writes`, `probes`; `by` names a dimension the
+/// writers fill or a time bucket; `window` is `day`, `week`, or `month`;
+/// and `kind`, `outcome`, and `actor` narrow the answer to one value
+/// each. Anything else is refused, including a bucket finer than its
+/// window can hold. The worker builds the SQL from those choices and
+/// runs it against Cloudflare with a token scoped to reading analytics
+/// and nothing else, so no caller text reaches a statement. Requires an
+/// admin credential.
+///
+/// Grouping by `hour` or `day` answers a series: one row per bucket,
+/// oldest first, zeros included, each row's `dimension` the bucket's
+/// first instant in epoch seconds. Grouping by anything else answers a
+/// dimension list, largest first.
 #[utoipa::path(
     get,
     path = "/api/self/events",
     params(
         ("subject" = String, Query, description = "reads | writes | probes"),
-        ("by" = Option<String>, Query, description = "kind | outcome | actor | repository | reference | project"),
+        ("by" = Option<String>, Query, description = "kind | outcome | actor | repository | reference | hour | day; outcome when unstated"),
         ("window" = Option<String>, Query, description = "day | week | month; day when unstated"),
+        ("kind" = Option<String>, Query, description = "narinfo | nar | part | begin | complete | abort | probe | unknown"),
+        ("outcome" = Option<String>, Query, description = "edge_hit | bucket_hit | miss | stored | answered | an HTTP status"),
+        ("actor" = Option<String>, Query, description = "ci | laptop | browser | anonymous"),
     ),
     responses(
-        (status = 200, description = "The totals, largest first", body = StatsEvents, content_type = "application/json"),
+        (status = 200, description = "The totals: largest first, or oldest first when grouped by time", body = StatsEvents, content_type = "application/json"),
         (status = 400, description = "problem+json; code=malformed_query", body = ProblemBody, content_type = "application/problem+json"),
         (status = 401, description = "problem+json; code=unauthorized", body = ProblemBody, content_type = "application/problem+json"),
         (status = 403, description = "problem+json; code=forbidden_admin", body = ProblemBody, content_type = "application/problem+json"),
@@ -175,6 +186,43 @@ pub fn openapi_get() {}
     )
 )]
 pub fn stats_events() {}
+
+/// `GET /api/whoami`: who this request authenticates as.
+///
+/// The one identity route outside `/api/self`, because it has to answer
+/// for an org member who is not an admin: a console that could only
+/// learn its own standing from a 403 would have to provoke one to render
+/// its first screen. Any read credential resolves here.
+#[utoipa::path(
+    get,
+    path = "/api/whoami",
+    responses(
+        (status = 200, description = "The caller's login and standing", body = WhoAmI, content_type = "application/json"),
+        (status = 400, description = "problem+json; code=malformed_auth", body = ProblemBody, content_type = "application/problem+json"),
+        (status = 401, description = "problem+json; code=unauthorized", body = ProblemBody, content_type = "application/problem+json"),
+    )
+)]
+pub fn whoami() {}
+
+/// `GET /api/self/health`: whether the collector is keeping up.
+///
+/// A projection of the same latest-report object `/api/self/stats`
+/// reads, plus the cron the deployment was created with. A deployment
+/// that has never collected answers `unknown` with a 200 rather than a
+/// 404: this renders in a console header on every screen, and a header
+/// that fails reads as a broken console where "no run yet" reads as a
+/// young deployment. Requires an admin credential.
+#[utoipa::path(
+    get,
+    path = "/api/self/health",
+    responses(
+        (status = 200, description = "The deployment's standing and its next collection", body = HealthBody, content_type = "application/json"),
+        (status = 401, description = "problem+json; code=unauthorized", body = ProblemBody, content_type = "application/problem+json"),
+        (status = 403, description = "problem+json; code=forbidden_admin", body = ProblemBody, content_type = "application/problem+json"),
+        (status = 503, description = "problem+json; code=storage_unavailable", body = ProblemBody, content_type = "application/problem+json"),
+    )
+)]
+pub fn health() {}
 
 /// `POST /api/login/exchange`: trade a GitHub identity for this
 /// deployment's own read credential. The GitHub token is checked for org
@@ -255,7 +303,7 @@ pub fn projects_list() {}
         ("project" = String, Path, description = "The hyphenated owner-repo project name"),
     ),
     responses(
-        (status = 200, description = "The lease document the renewal stored; cache-control no-store", content_type = "application/json"),
+        (status = 200, description = "The lease document the renewal stored; cache-control no-store", body = LeaseBody, content_type = "application/json"),
         (status = 400, description = "problem+json; code=malformed_key", body = ProblemBody, content_type = "application/problem+json"),
         (status = 401, description = "problem+json; code=unauthorized", body = ProblemBody, content_type = "application/problem+json"),
         (status = 404, description = "problem+json; code=not_found", body = ProblemBody, content_type = "application/problem+json"),
@@ -439,7 +487,7 @@ pub fn gc_runs_list() {}
         ("runId" = String, Path, description = "The run id: milliseconds, a dash, sixteen lowercase hex characters"),
     ),
     responses(
-        (status = 200, description = "The run's report document; cache-control no-store", content_type = "application/json"),
+        (status = 200, description = "The run's report document; cache-control no-store", body = GcReportBody, content_type = "application/json"),
         (status = 400, description = "problem+json; code=malformed_key", body = ProblemBody, content_type = "application/problem+json"),
         (status = 401, description = "problem+json; code=unauthorized", body = ProblemBody, content_type = "application/problem+json"),
         (status = 403, description = "problem+json; code=forbidden_admin", body = ProblemBody, content_type = "application/problem+json"),
