@@ -1,0 +1,30 @@
+{
+  "cli_version": "0.10.2",
+  "checkpoint_id": "01M102B7DB97KY8Y2EGN6BM9QS",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "docs/console.md",
+    "web/src/components/ui/primitives.tsx",
+    "web/src/screens/access.tsx",
+    "web/src/screens/collection.tsx",
+    "web/src/screens/overview.tsx"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 24,
+    "cache_creation_tokens": 19612,
+    "cache_read_tokens": 10148263,
+    "output_tokens": 9705,
+    "api_call_count": 12
+  }
+}
