@@ -25,6 +25,22 @@ pub struct PublicConfig {
     /// The deployment's ed25519 public key in nix's `name:base64` form.
     #[serde(rename = "publicKey")]
     pub public_key: String,
+    /// The deployment's name, which is also its stage and its resource
+    /// prefix. Housekeeping rather than protocol identity, and the thing
+    /// a console names in its header so two tabs are told apart.
+    pub deployment: String,
+    /// The worker's crate version.
+    pub version: String,
+    /// The commit the worker was built from, absent when it was built
+    /// outside the release path that stamps one.
+    #[serde(rename = "buildSha", default, skip_serializing_if = "Option::is_none")]
+    pub build_sha: Option<String>,
+    /// A stylesheet the console loads for its licensed faces, absent by
+    /// default. The repository ships neither the fonts nor an address to
+    /// fetch them from; an operator who holds a licence points this at
+    /// their own copy.
+    #[serde(rename = "fontCss", default, skip_serializing_if = "Option::is_none")]
+    pub font_css: Option<String>,
 }
 
 /// The `GET /roots` body: the projects currently holding leases.
@@ -159,6 +175,43 @@ pub struct StatsFilters {
     /// Only this caller class, when one was chosen.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actor: Option<String>,
+}
+
+/// The `GET /api/self/health` answer: whether the deployment is keeping
+/// up with its own collector, and when it next runs.
+///
+/// Admin-gated, because it is derived from collection reports. A console
+/// showing it to an org member who is not an admin omits it rather than
+/// failing: the rest of its header comes from the public config.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct HealthBody {
+    /// `healthy`, `degraded`, or `unknown`.
+    pub status: String,
+    /// When the collector fires next, absent when the deployment's cron
+    /// is a shape the worker does not recognize.
+    #[serde(
+        rename = "nextCollectionAtMs",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub next_collection_at_ms: Option<u64>,
+    /// The run the status was read from, absent before the first one.
+    #[serde(
+        rename = "latestRunId",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub latest_run_id: Option<String>,
+    /// When that run finished.
+    #[serde(
+        rename = "latestFinishedAtMs",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub latest_finished_at_ms: Option<u64>,
+    /// Which gate stopped that run, absent on one that finished.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gate: Option<String>,
 }
 
 /// The `GET /api/self/gc-runs/{runId}` answer: one collection's own
@@ -369,8 +422,9 @@ pub struct ProblemBody {
         routes::stats_get,
         routes::stats_events,
         routes::whoami,
+        routes::health,
     ),
-    components(schemas(PublicConfig, ProjectList, RenewalBody, ProbeBody, ProbeAnswer, ProblemBody, UploadCreated, UploadedPartBody, GcRunList, StatsBody, ReadTokenIssued, LoginExchangeBody, StatsRow, StatsFilters, StatsEvents, WhoAmI, GcReportBody, LeaseBody))
+    components(schemas(PublicConfig, ProjectList, RenewalBody, ProbeBody, ProbeAnswer, ProblemBody, UploadCreated, UploadedPartBody, GcRunList, StatsBody, ReadTokenIssued, LoginExchangeBody, StatsRow, StatsFilters, StatsEvents, WhoAmI, GcReportBody, LeaseBody, HealthBody))
 )]
 pub struct ApiDoc;
 
@@ -400,11 +454,29 @@ mod tests {
             orgs: vec!["org".to_string()],
             host: "cachet.example.com".to_string(),
             public_key: "cachet.example.com-1:AAAA".to_string(),
+            deployment: "production".to_string(),
+            version: "0.1.0".to_string(),
+            build_sha: None,
+            font_css: None,
         };
         let body = serde_json::to_string(&config).expect("serializes");
         assert_eq!(
             body,
-            r#"{"oauthClientId":"id","orgs":["org"],"host":"cachet.example.com","publicKey":"cachet.example.com-1:AAAA"}"#,
+            r#"{"oauthClientId":"id","orgs":["org"],"host":"cachet.example.com","publicKey":"cachet.example.com-1:AAAA","deployment":"production","version":"0.1.0"}"#,
+        );
+        // The two optional fields are absent rather than null, so a
+        // deployment that stamps no commit and licenses no fonts serves
+        // the same document it always did plus its identity.
+        let stamped = PublicConfig {
+            build_sha: Some("a4f31c".to_string()),
+            font_css: Some("https://fonts.example.com/cachet.css".to_string()),
+            ..config
+        };
+        let body = serde_json::to_string(&stamped).expect("serializes");
+        assert!(body.contains(r#""buildSha":"a4f31c""#), "{body}");
+        assert!(
+            body.contains(r#""fontCss":"https://fonts.example.com/cachet.css""#),
+            "{body}"
         );
     }
 }

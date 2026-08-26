@@ -45,6 +45,11 @@ CACHET_GC_GRACE_MS = "0"
 # "counts but cannot report" answer and one with it exercises the query.
 CLOUDFLARE_ACCOUNT_ID = "lane-account"
 CACHET_STATS_DATASET = "cachet_lane"
+# The console header's own inputs: the deployment's name, and the cron it
+# counts down to. The lane's cron below is the same expression, so the
+# countdown the health route answers is the schedule that fires.
+CACHET_DEPLOY_NAME = "cachet-lane"
+CACHET_GC_CRON = "0 5 * * *"
 
 # Every counted thing is written here. The binding is what moves
 # stats::emit off its early return, so the blob and double marshalling

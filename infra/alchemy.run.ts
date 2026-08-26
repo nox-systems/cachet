@@ -14,6 +14,11 @@ import * as Effect from "effect/Effect";
 
 import { loadStageConfig } from "./src/config.ts";
 
+// The collector's schedule, named once: the platform gets it as the
+// worker's trigger and the worker gets it as configuration, so the
+// console's countdown and the cron that fires can never disagree.
+const GC_CRON = "0 5 * * *";
+
 export default Alchemy.Stack(
   "cachet",
   {
@@ -77,6 +82,13 @@ export default Alchemy.Stack(
         ...(cfg.accountId === undefined
           ? {}
           : { CLOUDFLARE_ACCOUNT_ID: cfg.accountId }),
+        // The console's header names the deployment and counts down to
+        // the next collection. The name and the cron live here and
+        // nowhere else the worker can see, so they ride in as
+        // configuration rather than being guessed at request time.
+        CACHET_DEPLOY_NAME: stage,
+        CACHET_GC_CRON: GC_CRON,
+        ...(cfg.fontCss === undefined ? {} : { CACHET_FONT_CSS: cfg.fontCss }),
         CACHET_ORGS: cfg.orgs,
         CACHET_AUDIENCE: cfg.audience,
         CACHET_DEFAULT_BRANCH_REF: cfg.defaultBranchRef,
@@ -95,7 +107,7 @@ export default Alchemy.Stack(
         ),
       },
       // The collector fires daily; GC_ARMED stays unset (armed by default).
-      crons: ["0 5 * * *"],
+      crons: [GC_CRON],
       // The worker's own event stream is the only way to tell an edge hit
       // from a bucket read in production, and without this it goes
       // nowhere: a slow read cannot be diagnosed from the outside.

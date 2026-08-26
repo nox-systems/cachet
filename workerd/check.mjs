@@ -850,6 +850,14 @@ try {
             )
           ).trim();
           assert.equal(body.publicKey, lanePublic);
+          // The console header's identity line reads from here, so an
+          // org member who is not an admin still gets a header.
+          assert.equal(body.deployment, "cachet-lane");
+          assert.match(body.version, /^\d+\.\d+\.\d+$/);
+          // The lane's build stamps no commit and licenses no fonts, and
+          // both are absent rather than null, so a client can tell "not
+          // stamped" from "stamped empty".
+          assert.equal("fontCss" in body, false, JSON.stringify(body));
         },
       );
 
@@ -1935,6 +1943,34 @@ await scenario(
     const laptop = { authorization: `Bearer ${GOOD_LAPTOP_TOKEN}` };
     const member = { authorization: `Bearer ${MEMBER_TOKEN}` };
 
+    await check("the health route reads the run it just landed", async () => {
+      const anon = await fetch(`${base}/api/self/health`);
+      assert.equal(anon.status, 401);
+      const nonAdmin = await fetch(`${base}/api/self/health`, {
+        headers: member,
+      });
+      assert.equal(nonAdmin.status, 403);
+      assert.equal((await nonAdmin.json()).code, "forbidden_admin");
+
+      const res = await fetch(`${base}/api/self/health`, { headers: laptop });
+      const text = await res.text();
+      assert.equal(res.status, 200, text);
+      const body = JSON.parse(text);
+      // The run this scenario just made finished seconds ago and tripped
+      // no gate, which is the whole definition of healthy.
+      assert.equal(body.status, "healthy", text);
+      assert.equal(body.gate, undefined, text);
+      assert.match(body.latestRunId, /^\d+-[0-9a-f]{16}$/);
+      assert.ok(body.latestFinishedAtMs > 0, text);
+      // The countdown is the lane's own cron, 05:00 UTC, and it is
+      // always ahead: a console counting down to a moment already past
+      // would render a negative duration.
+      assert.ok(body.nextCollectionAtMs > Date.now(), text);
+      const next = new Date(body.nextCollectionAtMs);
+      assert.equal(next.getUTCHours(), 5, next.toISOString());
+      assert.equal(next.getUTCMinutes(), 0, next.toISOString());
+    });
+
     await check("the counter route gates before it queries", async () => {
       // The credential behind this route is a Cloudflare API token, so
       // the gate matters more here than on a route that only reads the
@@ -2222,6 +2258,33 @@ try {
         return { res, text: await res.text() };
       };
 
+      await check(
+        "a deployment that has never collected is unknown, not broken",
+        async () => {
+          // This scenario seeds nothing, so there is no latest report.
+          // /api/self/stats answers 404, which is the honest shape for a
+          // projection with nothing to project; health answers 200 with
+          // a status, because it renders in a header on every screen and
+          // a failing header reads as a broken console.
+          const stats = await fetch(`${base}/api/self/stats`, {
+            headers: laptop,
+          });
+          assert.equal(stats.status, 404);
+
+          const res = await fetch(`${base}/api/self/health`, {
+            headers: laptop,
+          });
+          const text = await res.text();
+          assert.equal(res.status, 200, text);
+          const body = JSON.parse(text);
+          assert.equal(body.status, "unknown", text);
+          assert.equal(body.latestRunId, undefined, text);
+          assert.equal(body.gate, undefined, text);
+          // The countdown does not depend on a run having happened.
+          assert.ok(body.nextCollectionAtMs > Date.now(), text);
+        },
+      );
+
       await check("a dimension list is asked for and served back", async () => {
         statsStub.rows = [
           { dimension: "edge_hit", count: 11904, bytes: 44_236_800 },
@@ -2443,9 +2506,15 @@ try {
 
       await check("the push uploads exactly the payload", async () => {
         const payload = path.join(runnerTemp, "lane-payload");
+        // why: the content decides the store path, so it has to be new
+        // every run. It used to be the driver's pid, which the operating
+        // system recycles: a run that drew a pid some earlier run had
+        // already pushed found its path in the snapshot, uploaded
+        // nothing, minted nothing, and failed three checks at once with
+        // nothing in the message to say why.
         await writeFile(
           payload,
-          `cachet workerd lane payload ${process.pid}\n`,
+          `cachet workerd lane payload ${crypto.randomUUID()}\n`,
         );
         const added = spawnSync(
           "nix-store",
@@ -2465,7 +2534,9 @@ try {
         assert.equal(
           stubHits.oidcMint - mintsBefore,
           1,
-          "one mint carries the whole push run",
+          `one mint carries the whole push run, saw ${
+            stubHits.oidcMint - mintsBefore
+          }: ${pushed.stdout}`,
         );
         assert.ok(
           pushed.stdout.includes("cachet: 1 new to cachet"),
@@ -2540,7 +2611,9 @@ try {
           assert.equal(
             stubHits.oidcMint - mintsBefore,
             1,
-            "one mint carries the multipart run, parts included",
+            `one mint carries the multipart run, parts included, saw ${
+              stubHits.oidcMint - mintsBefore
+            }: ${pushed.stdout}`,
           );
           assert.ok(
             pushed.stdout.includes("cachet: uploaded 2 objects"),

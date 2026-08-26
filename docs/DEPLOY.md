@@ -94,6 +94,7 @@ equivalents). These variables define the deployment:
 | `CACHET_DEPLOY_DEFAULT_BRANCH_REF` | no | The ref allowed to renew leases; default `refs/heads/main`. |
 | `CACHET_DEPLOY_DOMAIN` | no | Custom domain override; defaults to the host. |
 | `CACHET_DEPLOY_UI_ORIGIN` | no | Browser login's redirect target; unset answers 204 instead. |
+| `CACHET_DEPLOY_FONT_CSS` | no | A stylesheet the console loads for licensed faces. Unset ships the free ones. |
 | `CACHET_DEPLOY_GC_GRACE_MS` | no | Grace override; default 14 days. Set 0 for throwaway test deployments. |
 | `CACHET_SIGNING_KEY` | yes | The `<host>-1:<base64>` secret from bootstrap. |
 | `CACHET_OAUTH_CLIENT_SECRET` | yes | The OAuth App's client secret. |

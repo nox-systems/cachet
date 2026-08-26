@@ -71,7 +71,10 @@ decision memo, proven by deleting the KV verdict between reads and
 watching the repeat in both directions answer with no GitHub API hit and
 an `auth.memo_hit` event; lease renewal bound to the token's own claims with
 forbidden_ref and forbidden_project refusals; the project listing; the
-public config document; the bulk probe (`POST /api/probe`): the sorted,
+public config document, whose identity fields (the deployment's name, the
+worker's version, and the absence of a build stamp and a font stylesheet
+on a build that has neither) are what a console header reads before it
+knows whether its caller is an admin; the bulk probe (`POST /api/probe`): the sorted,
 deduplicated held-subset answer derived from the bucket enumeration
 itself, with NAR and lease objects proven never to leak in, the answer
 answering equally for laptop and OIDC credentials, and its rejection
@@ -104,6 +107,12 @@ aborts a wholesale sweep with nothing deleted. The reports the first run
 lands then serve through the admin API: the run list, the report read,
 and the stats derivation answer the admin token, 401 the anonymous
 request, and 403 forbidden_admin the org member outside CACHET_ADMINS.
+The health route answers beside them, reading the run that just landed as
+`healthy` with no gate and a countdown to the lane's own cron at 05:00
+UTC that is always ahead of now; a scenario that seeds nothing proves the
+other half, where `/api/self/stats` answers 404 because a projection with
+nothing to project has no honest body and health answers 200 `unknown`
+because it renders in a header on every screen.
 The counter route is gated in the same scenario, which runs with no
 `.dev.vars` and therefore no analytics token: its rows prove the gate and
 the parser refuse before any query runs, that an inadmissible choice

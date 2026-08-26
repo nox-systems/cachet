@@ -36,6 +36,11 @@ export interface StageConfig {
    *  the deploy's own CLOUDFLARE_ACCOUNT_ID, because the worker needs
    *  the same account alchemy authenticates against. */
   accountId: string | undefined;
+  /** A stylesheet the console loads for its licensed faces. Unset by
+   *  default: the repository ships neither the fonts nor an address to
+   *  fetch them from, and an operator who holds a licence points this at
+   *  their own copy. */
+  fontCss: string | undefined;
 }
 
 const REQUIRED = ["HOST", "ORGS", "OAUTH_CLIENT_ID", "ADMINS"] as const;
@@ -124,5 +129,6 @@ export function loadStageConfig(stage: string): StageConfig {
     gcGraceMs: value("GC_GRACE_MS"),
     statsToken,
     accountId,
+    fontCss: value("FONT_CSS"),
   };
 }

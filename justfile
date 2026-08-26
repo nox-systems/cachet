@@ -92,7 +92,11 @@ openapi-check:
 # entry, whose text worker-build emits identically on every build — the
 # stamp is how wasm-only changes still read as a change (ADR 0009).
 wasm:
-    cd crates/cachet-worker && worker-build --profile worker
+    # The commit the bundle was built from, stamped into the binary so the
+    # console's header names it. A build outside a git tree leaves it
+    # empty, and the worker then says nothing rather than naming a commit
+    # it was not built from.
+    cd crates/cachet-worker && CACHET_BUILD_SHA="$(git rev-parse --short=6 HEAD 2>/dev/null || echo '')" worker-build --profile worker
     printf '// cachet-bundle-sha256: %s\n' "$(openssl dgst -sha256 -r crates/cachet-worker/build/index_bg.wasm | cut -d' ' -f1)" >> crates/cachet-worker/build/index.js
 
 # the workerd lane: the built worker under wrangler dev --local, real R2

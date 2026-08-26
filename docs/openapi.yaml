@@ -398,6 +398,44 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/ProblemBody'
+  /api/self/health:
+    get:
+      tags:
+      - routes
+      summary: '`GET /api/self/health`: whether the collector is keeping up.'
+      description: |-
+        A projection of the same latest-report object `/api/self/stats`
+        reads, plus the cron the deployment was created with. A deployment
+        that has never collected answers `unknown` with a 200 rather than a
+        404: this renders in a console header on every screen, and a header
+        that fails reads as a broken console where "no run yet" reads as a
+        young deployment. Requires an admin credential.
+      operationId: health
+      responses:
+        '200':
+          description: The deployment's standing and its next collection
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthBody'
+        '401':
+          description: problem+json; code=unauthorized
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '403':
+          description: problem+json; code=forbidden_admin
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '503':
+          description: problem+json; code=storage_unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
   /api/self/stats:
     get:
       tags:
@@ -1119,6 +1157,47 @@ components:
           items:
             type: string
           description: The run ids in chronological order.
+    HealthBody:
+      type: object
+      description: |-
+        The `GET /api/self/health` answer: whether the deployment is keeping
+        up with its own collector, and when it next runs.
+
+        Admin-gated, because it is derived from collection reports. A console
+        showing it to an org member who is not an admin omits it rather than
+        failing: the rest of its header comes from the public config.
+      required:
+      - status
+      properties:
+        gate:
+          type:
+          - string
+          - 'null'
+          description: Which gate stopped that run, absent on one that finished.
+        latestFinishedAtMs:
+          type:
+          - integer
+          - 'null'
+          format: int64
+          description: When that run finished.
+          minimum: 0
+        latestRunId:
+          type:
+          - string
+          - 'null'
+          description: The run the status was read from, absent before the first one.
+        nextCollectionAtMs:
+          type:
+          - integer
+          - 'null'
+          format: int64
+          description: |-
+            When the collector fires next, absent when the deployment's cron
+            is a shape the worker does not recognize.
+          minimum: 0
+        status:
+          type: string
+          description: '`healthy`, `degraded`, or `unknown`.'
     LeaseBody:
       type: object
       description: |-
@@ -1260,7 +1339,31 @@ components:
       - orgs
       - host
       - publicKey
+      - deployment
+      - version
       properties:
+        buildSha:
+          type:
+          - string
+          - 'null'
+          description: |-
+            The commit the worker was built from, absent when it was built
+            outside the release path that stamps one.
+        deployment:
+          type: string
+          description: |-
+            The deployment's name, which is also its stage and its resource
+            prefix. Housekeeping rather than protocol identity, and the thing
+            a console names in its header so two tabs are told apart.
+        fontCss:
+          type:
+          - string
+          - 'null'
+          description: |-
+            A stylesheet the console loads for its licensed faces, absent by
+            default. The repository ships neither the fonts nor an address to
+            fetch them from; an operator who holds a licence points this at
+            their own copy.
         host:
           type: string
           description: |-
@@ -1277,6 +1380,9 @@ components:
         publicKey:
           type: string
           description: The deployment's ed25519 public key in nix's `name:base64` form.
+        version:
+          type: string
+          description: The worker's crate version.
     ReadTokenIssued:
       type: object
       description: |-

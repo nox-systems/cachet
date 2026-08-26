@@ -174,6 +174,9 @@ async fn fixed_get_routes(
     if path == "/api/public/config" {
         return Some(api::public_config(env));
     }
+    if path == "/api/self/health" {
+        return Some(api::health(env, now, req).await);
+    }
     if path == "/api/whoami" {
         return Some(api::whoami(env, now, req).await);
     }

@@ -6,8 +6,8 @@
 //! the worker would not answer fails review in the workerd lane first.
 
 use crate::{
-    GcReportBody, GcRunList, LeaseBody, ProbeAnswer, ProbeBody, ProblemBody, ProjectList,
-    PublicConfig, ReadTokenIssued, RenewalBody, StatsBody, StatsEvents, UploadCreated,
+    GcReportBody, GcRunList, HealthBody, LeaseBody, ProbeAnswer, ProbeBody, ProblemBody,
+    ProjectList, PublicConfig, ReadTokenIssued, RenewalBody, StatsBody, StatsEvents, UploadCreated,
     UploadedPartBody, WhoAmI,
 };
 
@@ -203,6 +203,26 @@ pub fn stats_events() {}
     )
 )]
 pub fn whoami() {}
+
+/// `GET /api/self/health`: whether the collector is keeping up.
+///
+/// A projection of the same latest-report object `/api/self/stats`
+/// reads, plus the cron the deployment was created with. A deployment
+/// that has never collected answers `unknown` with a 200 rather than a
+/// 404: this renders in a console header on every screen, and a header
+/// that fails reads as a broken console where "no run yet" reads as a
+/// young deployment. Requires an admin credential.
+#[utoipa::path(
+    get,
+    path = "/api/self/health",
+    responses(
+        (status = 200, description = "The deployment's standing and its next collection", body = HealthBody, content_type = "application/json"),
+        (status = 401, description = "problem+json; code=unauthorized", body = ProblemBody, content_type = "application/problem+json"),
+        (status = 403, description = "problem+json; code=forbidden_admin", body = ProblemBody, content_type = "application/problem+json"),
+        (status = 503, description = "problem+json; code=storage_unavailable", body = ProblemBody, content_type = "application/problem+json"),
+    )
+)]
+pub fn health() {}
 
 /// `POST /api/login/exchange`: trade a GitHub identity for this
 /// deployment's own read credential. The GitHub token is checked for org

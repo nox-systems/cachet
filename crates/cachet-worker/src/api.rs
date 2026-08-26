@@ -4,11 +4,13 @@
 //! rides in a secret channel it does not yet have.
 
 use cachet_core::constants::{
-    ACCOUNT_ID_VAR, GC_LATEST_REPORT_KEY, GC_REPORTS_KEY_PREFIX, GC_RUNS_PAGE_LIMIT,
-    STATS_API_DEFAULT, STATS_API_URL_VAR, STATS_DATASET_VAR, STATS_TOKEN_SECRET,
+    ACCOUNT_ID_VAR, DEPLOY_NAME_VAR, FONT_CSS_VAR, GC_CRON_VAR, GC_LATEST_REPORT_KEY,
+    GC_REPORTS_KEY_PREFIX, GC_RUNS_PAGE_LIMIT, STATS_API_DEFAULT, STATS_API_URL_VAR,
+    STATS_DATASET_VAR, STATS_TOKEN_SECRET,
 };
 use cachet_core::error::ClientError;
 use cachet_core::gc::{GcReport, parse_run_id};
+use cachet_core::schedule::DailySchedule;
 use cachet_core::types::UnixMillis;
 use cachet_crypto::ed25519::NixSecretKey;
 use worker::{Env, Request, Response};
@@ -53,6 +55,22 @@ pub fn public_config(env: &Env) -> worker::Result<Response> {
         orgs: config.orgs,
         host,
         public_key,
+        deployment: env
+            .var(DEPLOY_NAME_VAR)
+            .map_or_else(|_| "cachet".to_string(), |value| value.to_string()),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        // why: stamped by the build that produces the deployable bundle,
+        // absent from any other build. A worker compiled outside that
+        // path says nothing here rather than naming a commit it was not
+        // built from.
+        build_sha: option_env!("CACHET_BUILD_SHA")
+            .filter(|sha| !sha.is_empty())
+            .map(ToString::to_string),
+        font_css: env
+            .var(FONT_CSS_VAR)
+            .ok()
+            .map(|value| value.to_string())
+            .filter(|value| !value.is_empty()),
     })
     .expect("the config fields serialize");
     let headers = worker::Headers::new();
@@ -166,6 +184,105 @@ pub async fn stats_events(env: &Env, now: UnixMillis, req: &Request) -> worker::
             actor: query.filters.actor.map(|actor| actor.name().to_string()),
         },
         rows: shape_rows(&query, now, rows),
+    };
+    let text = serde_json::to_string(&body).expect("typed bodies serialize");
+    Ok(Response::ok(text)?.with_headers(self_headers()?))
+}
+
+/// The collector's own record of its most recent run, if it has one.
+///
+/// Both `/api/self/stats` and `/api/self/health` are projections of this
+/// object, and they differ in what an absent one means: stats has
+/// nothing to project and answers 404, health answers `unknown`, which
+/// is a status.
+async fn read_latest_report(env: &Env) -> std::result::Result<Option<GcReport>, ClientError> {
+    let bucket = env
+        .bucket("CACHE_BUCKET")
+        .map_err(|_| ClientError::StorageUnavailable)?;
+    let object = match bucket.get(GC_LATEST_REPORT_KEY).execute().await {
+        Ok(object) => object,
+        Err(failure) => {
+            log::event(
+                "error",
+                "api.stats_read_failed",
+                &[("error", failure.to_string())],
+            );
+            return Err(ClientError::StorageUnavailable);
+        }
+    };
+    let Some(object) = object else {
+        return Ok(None);
+    };
+    let Some(body) = object.body() else {
+        return Err(ClientError::StorageUnavailable);
+    };
+    let text = body
+        .text()
+        .await
+        .map_err(|_| ClientError::StorageUnavailable)?;
+    match GcReport::parse(&text) {
+        Ok(report) => Ok(Some(report)),
+        Err(failure) => {
+            log::alert("api.latest_report_corrupt");
+            log::event(
+                "error",
+                "api.stats_parse_failed",
+                &[("error", format!("{failure:?}"))],
+            );
+            Err(ClientError::StorageUnavailable)
+        }
+    }
+}
+
+/// `GET /api/self/health`: whether the collector is keeping up, and when
+/// it runs next.
+///
+/// Derived from the same latest-report object `/api/self/stats` reads,
+/// plus the cron the deployment was created with. A deployment that has
+/// never collected answers `unknown` rather than 404, because a console
+/// header renders on every screen and a missing header reads as a broken
+/// console where "no run yet" reads as a young deployment.
+///
+/// # Errors
+///
+/// Propagates a header or body failure as the worker's generic 500.
+pub async fn health(env: &Env, now: UnixMillis, req: &Request) -> worker::Result<Response> {
+    if let Err(code) = verdict::require_admin(env, now, req).await {
+        return crate::error::problem_response(code);
+    }
+    let next_collection_at_ms = env
+        .var(GC_CRON_VAR)
+        .ok()
+        .and_then(|value| DailySchedule::parse(&value.to_string()))
+        .map(|schedule| schedule.next_after_ms(now.as_u64()));
+
+    let latest = match read_latest_report(env).await {
+        Ok(report) => report,
+        Err(code) => return crate::error::problem_response(code),
+    };
+    let body = match latest {
+        None => cachet_api::HealthBody {
+            status: "unknown".to_string(),
+            next_collection_at_ms,
+            latest_run_id: None,
+            latest_finished_at_ms: None,
+            gate: None,
+        },
+        Some(report) => {
+            // why: two cron periods. One missed run is a deploy window or
+            // a platform hiccup; two means the schedule is not firing,
+            // which is the thing an operator wants a colour for.
+            let stale = now.saturating_ms_since(UnixMillis::new(report.finished_at_ms))
+                > 2 * cachet_core::constants::MILLIS_PER_DAY;
+            let healthy = report.gate.is_none() && !stale;
+            cachet_api::HealthBody {
+                status: if healthy { "healthy" } else { "degraded" }.to_string(),
+                next_collection_at_ms,
+                latest_run_id: Some(report.run_id),
+                latest_finished_at_ms: Some(report.finished_at_ms),
+                gate: report.gate,
+            }
+        }
     };
     let text = serde_json::to_string(&body).expect("typed bodies serialize");
     Ok(Response::ok(text)?.with_headers(self_headers()?))
@@ -430,38 +547,12 @@ pub async fn stats(env: &Env, now: UnixMillis, req: &Request) -> worker::Result<
     if let Err(code) = verdict::require_admin(env, now, req).await {
         return crate::error::problem_response(code);
     }
-    let bucket = env.bucket("CACHE_BUCKET")?;
-    let object = match bucket.get(GC_LATEST_REPORT_KEY).execute().await {
-        Ok(object) => object,
-        Err(failure) => {
-            log::event(
-                "error",
-                "api.stats_read_failed",
-                &[("error", failure.to_string())],
-            );
-            return crate::error::problem_response(ClientError::StorageUnavailable);
-        }
-    };
-    let Some(object) = object else {
+    let report = match read_latest_report(env).await {
+        Ok(Some(report)) => report,
         // why: a fresh deployment has no report yet; the empty answer is a
         // fact, and 404 is its honest shape rather than fabricated zeros.
-        return crate::error::problem_response(ClientError::NotFound);
-    };
-    let Some(body) = object.body() else {
-        return crate::error::problem_response(ClientError::StorageUnavailable);
-    };
-    let text = body.text().await?;
-    let report = match GcReport::parse(&text) {
-        Ok(report) => report,
-        Err(failure) => {
-            log::alert("api.latest_report_corrupt");
-            log::event(
-                "error",
-                "api.stats_parse_failed",
-                &[("error", format!("{failure:?}"))],
-            );
-            return crate::error::problem_response(ClientError::StorageUnavailable);
-        }
+        Ok(None) => return crate::error::problem_response(ClientError::NotFound),
+        Err(code) => return crate::error::problem_response(code),
     };
     let body = cachet_api::StatsBody {
         based_on_run_id: report.run_id,
