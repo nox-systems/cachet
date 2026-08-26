@@ -1,0 +1,85 @@
+<task-notification>
+<task-id>bf445y8g3</task-id>
+<summary>Monitor event: "cachet PR #27 CI check results"</summary>
+<event>announce: SKIPPED
+build-global-artifacts: SKIPPED
+build-local-artifacts (${{ join(matrix.targets, ', ') }}): SKIPPED
+host: SKIPPED
+plan: SUCCESS</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bf445y8g3</task-id>
+<summary>Monitor event: "cachet PR #27 CI check results"</summary>
+<event>actionlint: SUCCESS
+console: SUCCESS
+deny: SUCCESS
+doc-manifest: SUCCESS
+fmt: SUCCESS
+lane-manifest: SUCCESS
+openapi: SUCCESS
+scripts: SUCCESS</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bf445y8g3</task-id>
+<summary>Monitor event: "cachet PR #27 CI check results"</summary>
+<event>kani: SUCCESS
+wasm: SUCCESS</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bf445y8g3</task-id>
+<summary>Monitor event: "cachet PR #27 CI check results"</summary>
+<event>wasm-hygiene: SUCCESS</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bf445y8g3</task-id>
+<summary>Monitor event: "cachet PR #27 CI check results"</summary>
+<event>clippy: SUCCESS
+golden: SUCCESS
+property: SUCCESS
+unit: SUCCESS</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bf445y8g3</task-id>
+<summary>Monitor event: "cachet PR #27 CI check results"</summary>
+<event>workerd: SUCCESS
+ALL CHECKS COMPLETE</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bf445y8g3</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-shivanshvij-Development-nox-cachet/4406a8f5-e3b8-42e4-a5a2-eef2da85c0c4/tasks/bf445y8g3.output</output-file>
+<status>completed</status>
+<summary>Monitor "cachet PR #27 CI check results" stream ended</summary>
+</task-notification>
+
+---
+
+squash merged into main. How do I deploy it?
+
+---
+
+just do it into main directyl

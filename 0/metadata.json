@@ -1,0 +1,50 @@
+{
+  "cli_version": "0.10.2",
+  "checkpoint_id": "01M0ZXW4QH9K7KENS8VRMEXNQ7",
+  "session_id": "4406a8f5-e3b8-42e4-a5a2-eef2da85c0c4",
+  "strategy": "manual-commit",
+  "created_at": "2026-08-26T20:58:38.281276Z",
+  "branch": "main",
+  "checkpoints_count": 8,
+  "files_touched": [
+    ".github/workflows/deploy.yml",
+    "docs/DEPLOY.md"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-fable-5",
+  "turn_id": "39586c119ce4",
+  "checkpoint_transcript_start": 1812,
+  "transcript_lines_at_start": 1812,
+  "compact_transcript_start": 337,
+  "token_usage": {
+    "input_tokens": 28,
+    "cache_creation_tokens": 9331,
+    "cache_read_tokens": 9229636,
+    "output_tokens": 6285,
+    "api_call_count": 14
+  },
+  "session_metrics": {
+    "turn_count": 11
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-08-26T20:58:37.570335Z",
+    "agent_lines": 12,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 12,
+    "total_lines_changed": 12,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    }
+  ]
+}
