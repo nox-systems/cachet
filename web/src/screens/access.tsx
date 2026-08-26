@@ -3,18 +3,10 @@ import * as stylex from "@stylexjs/stylex";
 import { useState } from "react";
 
 import * as api from "../api/client.ts";
-import { Label, Panel, Prose } from "../components/ui/primitives.tsx";
+import { Label, Panel } from "../components/ui/primitives.tsx";
 import { CheckIcon, CopyIcon } from "../components/icons.tsx";
 import { Failed, LoadingScreen } from "../components/ui/states.tsx";
-import * as format from "../lib/format.ts";
-import {
-  color,
-  font,
-  leading,
-  space,
-  text,
-  weight,
-} from "../styles/tokens.stylex.ts";
+import { color, font, leading, space, text } from "../styles/tokens.stylex.ts";
 
 // Who can reach this deployment and how. The one screen an org member
 // who is not an admin can read, because everything on it is either
@@ -148,13 +140,6 @@ const styles = stylex.create({
     flexShrink: 0,
   },
   copied: { color: color.text },
-  session: {
-    fontFamily: font.ui,
-    fontSize: text.spec,
-    lineHeight: leading.body,
-    color: color.muted,
-  },
-  strong: { color: color.text, fontWeight: weight.bold },
 });
 
 const useCopy = (value: string): [boolean, () => void] => {
@@ -207,12 +192,6 @@ export const Access = () => {
     staleTime: Number.POSITIVE_INFINITY,
     retry: false,
   });
-  const who = useQuery({
-    queryKey: ["whoami"],
-    queryFn: api.getWhoAmI,
-    retry: false,
-  });
-
   if (config.isPending) return <LoadingScreen />;
   if (config.error !== null) return <Failed message={String(config.error)} />;
 
@@ -234,18 +213,13 @@ steps:
 
   return (
     <>
-      <Panel title="Who has access" aside="Set in the deploy config">
+      <Panel title="Who has access">
         <div {...stylex.props(styles.rows)}>
-          <div {...stylex.props(styles.row, styles.rowTop)}>
+          <div {...stylex.props(styles.row)}>
             <Label>Organizations</Label>
-            <div>
-              <span {...stylex.props(styles.value)}>
-                {deployment.orgs.join(", ")}
-              </span>
-              <p {...stylex.props(styles.note)}>
-                Members read. Their CI writes.
-              </p>
-            </div>
+            <span {...stylex.props(styles.value)}>
+              {deployment.orgs.join(", ")}
+            </span>
             <span />
           </div>
 
@@ -270,7 +244,7 @@ steps:
           <pre {...stylex.props(styles.code)}>{action}</pre>
         </Panel>
 
-        <Panel title="Read from a laptop" aside="Tokens last thirty days">
+        <Panel title="Read from a laptop">
           <ol {...stylex.props(styles.steps)}>
             <li {...stylex.props(styles.step)}>
               <span {...stylex.props(styles.stepNumber)}>1</span>
@@ -293,28 +267,8 @@ steps:
               </span>
             </li>
           </ol>
-          <Prose>
-            Run cachet doctor to check the wiring, and cachet logout to revoke
-            the credential before it expires. Laptops can only read; every path
-            in the cache came from CI.
-          </Prose>
         </Panel>
       </div>
-
-      <p {...stylex.props(styles.session)}>
-        {who.data === undefined ? (
-          "You are not signed in to this console."
-        ) : (
-          <>
-            You signed in through GitHub as{" "}
-            <span {...stylex.props(styles.strong)}>{who.data.login}</span>
-            {who.data.admin ? ", an admin of this deployment" : ""}.
-            {who.data.expiresAtMs === undefined
-              ? ""
-              : ` This session expires on ${format.date(who.data.expiresAtMs)}.`}
-          </>
-        )}
-      </p>
     </>
   );
 };

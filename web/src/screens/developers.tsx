@@ -93,12 +93,6 @@ export const Developers = () => {
           <Label>Developer reads this week</Label>
           <Hero>{format.count(totals.count)}</Hero>
         </div>
-        <Prose>
-          Counted from reads whose credential is a laptop token, which is what a
-          person&apos;s machine holds. Those can only read, so every path they
-          found was pushed by CI. Reads from CI and from this console are on the
-          traffic screen.
-        </Prose>
       </Intro>
 
       <Tiles
@@ -133,10 +127,7 @@ export const Developers = () => {
 
       <Panel title="Developer reads by outcome">
         {rows.length === 0 ? (
-          <Prose>
-            Nobody has read from this deployment with a laptop credential in the
-            past week.
-          </Prose>
+          <Prose>Nothing this week.</Prose>
         ) : (
           <Bars
             rows={rows.map((row) => ({

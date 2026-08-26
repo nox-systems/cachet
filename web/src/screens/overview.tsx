@@ -79,9 +79,6 @@ export const Overview = () => {
         <Prose>
           Counted by the last collection, which finished{" "}
           {report === undefined ? "" : format.stamp(report.finishedAtMs)} UTC.
-          {report?.gate === undefined || report.gate === null
-            ? ""
-            : ` It stopped at its ${report.gate} gate and deleted nothing.`}
         </Prose>
       </Intro>
 
@@ -130,10 +127,7 @@ export const Overview = () => {
             )}`}
           >
             {writeRows.length === 0 ? (
-              <Prose>
-                Nothing was pushed this week. Every path in the cache came from
-                CI; laptops can only read.
-              </Prose>
+              <Prose>Nothing was pushed this week.</Prose>
             ) : (
               <Bars
                 rows={writeRows.slice(0, 6).map((row) => ({

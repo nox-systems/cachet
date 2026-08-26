@@ -439,6 +439,9 @@ export const Shell = ({
               {who === undefined
                 ? "Not signed in"
                 : `Signed in as ${who.login}${who.admin ? " (admin)" : ""}`}
+              {who?.expiresAtMs === undefined
+                ? ""
+                : ` · expires ${format.date(who.expiresAtMs)}`}
               {config === undefined ? "" : ` · ${config.host}`}
             </span>
             <span {...stylex.props(styles.footerMark)} aria-label="nox">

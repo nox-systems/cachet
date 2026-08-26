@@ -24,7 +24,8 @@ const styles = stylex.create({
   table: { display: "flex", flexDirection: "column" },
   head: {
     display: "grid",
-    gridTemplateColumns: "16ch 12ch 10ch 9ch 9ch 1fr",
+    gridTemplateColumns:
+      "minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.9fr) minmax(0, 0.9fr) minmax(0, 1fr)",
     gap: space.s4,
     paddingBottom: space.s2,
     borderBottomWidth: "1px",
@@ -33,7 +34,8 @@ const styles = stylex.create({
   },
   row: {
     display: "grid",
-    gridTemplateColumns: "16ch 12ch 10ch 9ch 9ch 1fr",
+    gridTemplateColumns:
+      "minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.9fr) minmax(0, 0.9fr) minmax(0, 1fr)",
     gap: space.s4,
     alignItems: "center",
     paddingBlock: space.s3,
@@ -163,10 +165,8 @@ export const Collection = () => {
           />
           {detail.gate === undefined || detail.gate === null ? null : (
             <Prose>
-              This collection stopped at its <strong>{detail.gate}</strong> gate
-              and deleted nothing. A tripped gate is the collector refusing to
-              proceed on evidence it did not trust, which is the behavior that
-              keeps a bug from emptying the cache.
+              Stopped at the <strong>{detail.gate}</strong> gate. Nothing was
+              deleted.
             </Prose>
           )}
         </Panel>
@@ -223,7 +223,7 @@ const RunRow = ({
           ? "reading"
           : detail.gate == null
             ? "Completed"
-            : `Stopped, ${detail.gate.replaceAll("_", " ")}`}
+            : "Stopped"}
       </span>
     </button>
   );
