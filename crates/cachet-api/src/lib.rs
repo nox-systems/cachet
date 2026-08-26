@@ -257,8 +257,10 @@ pub struct GcReportBody {
     /// How many abandoned uploads it reaped.
     #[serde(rename = "uploadsAborted")]
     pub uploads_aborted: u64,
-    /// Which gate stopped the run, absent on a run that finished.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Which gate stopped the run, null on a run that finished.
+    ///
+    /// Null rather than absent, because the core type serializes it that
+    /// way and this mirror describes those exact bytes.
     pub gate: Option<String>,
 }
 
@@ -506,17 +508,31 @@ mod mirror_tests {
             uploads_aborted: 2,
             gate: Some("sweep_fraction_exceeded".to_string()),
         };
+        // why: the bytes, not the fields. A mirror can decode a body
+        // correctly and still describe it wrongly, which is exactly what
+        // a skip_serializing_if on a field the core type writes as null
+        // does: the document then promises an absent key for a key that
+        // is always present. Comparing serializations catches that.
         let served = serde_json::to_string(&report).expect("the report serializes");
         let mirrored: GcReportBody = serde_json::from_str(&served).expect("the mirror decodes it");
-        assert_eq!(mirrored.run_id, report.run_id);
-        assert_eq!(mirrored.bytes_freed, report.bytes_freed);
-        assert_eq!(mirrored.gate, report.gate);
-        // And back: the mirror's own bytes are bytes the core type reads,
-        // so the schema describes a document nix-side code can consume.
-        let round: cachet_core::gc::GcReport =
-            serde_json::from_str(&serde_json::to_string(&mirrored).expect("the mirror serializes"))
-                .expect("the core type decodes the mirror");
-        assert_eq!(round, report);
+        assert_eq!(
+            serde_json::to_value(&mirrored).expect("the mirror serializes"),
+            serde_json::to_value(&report).expect("the report serializes"),
+            "the mirror describes the bytes the worker serves"
+        );
+        // A tripped gate and a clean run are different bytes, and both
+        // have to round-trip.
+        let clean = cachet_core::gc::GcReport {
+            gate: None,
+            ..report.clone()
+        };
+        let mirrored_clean: GcReportBody =
+            serde_json::from_str(&serde_json::to_string(&clean).expect("serializes"))
+                .expect("the mirror decodes a clean run");
+        assert_eq!(
+            serde_json::to_value(&mirrored_clean).expect("serializes"),
+            serde_json::to_value(&clean).expect("serializes"),
+        );
 
         let lease = cachet_core::lease::LeaseDocument {
             project: "nox-systems-cachet".to_string(),
@@ -530,9 +546,11 @@ mod mirror_tests {
         };
         let served = serde_json::to_string(&lease).expect("the lease serializes");
         let mirrored: LeaseBody = serde_json::from_str(&served).expect("the mirror decodes it");
-        assert_eq!(mirrored.project, lease.project);
-        assert_eq!(mirrored.ref_, lease.ref_);
-        assert_eq!(mirrored.store_paths, lease.store_paths);
+        assert_eq!(
+            serde_json::to_value(&mirrored).expect("the mirror serializes"),
+            serde_json::to_value(&lease).expect("the lease serializes"),
+            "the mirror describes the bytes the worker serves"
+        );
         // The lease's own reader is a hand parser rather than serde, so
         // the round trip goes through that instead.
         let round = cachet_core::lease::LeaseDocument::parse(

@@ -1,0 +1,64 @@
+/* The reset and the ground. Everything else is an atom.
+   The layer order is declared here so StyleX's atoms, which the plugin
+   appends after these, always win over the plain rules below. */
+@layer theme, base;
+
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background: #0a0a0a;
+    color: #e5e5e5;
+    font-family:
+      "Berkeley Mono", "Geist Mono", ui-monospace, SFMono-Regular, monospace;
+    font-size: 13px;
+    line-height: 18px;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* why: the console is a dense grid of numbers, and a number that
+     shifts width as it counts up reads as motion rather than as a
+     number changing. */
+  body {
+    font-variant-numeric: tabular-nums;
+  }
+
+  button,
+  input {
+    font: inherit;
+    color: inherit;
+  }
+
+  a {
+    color: inherit;
+  }
+
+  ::selection {
+    background: #e4002b;
+    color: #ffffff;
+  }
+
+  /* Someone who asked for less motion gets the layout and none of the
+     movement. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}

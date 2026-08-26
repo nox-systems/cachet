@@ -99,6 +99,16 @@ wasm:
     cd crates/cachet-worker && CACHET_BUILD_SHA="$(git rev-parse --short=6 HEAD 2>/dev/null || echo '')" worker-build --profile worker
     printf '// cachet-bundle-sha256: %s\n' "$(openssl dgst -sha256 -r crates/cachet-worker/build/index_bg.wasm | cut -d' ' -f1)" >> crates/cachet-worker/build/index.js
 
+# build the browser console into web/dist, which the deploy uploads as
+# the worker's static assets (ADR 0014)
+web:
+    cd web && bun install --frozen-lockfile && bun run build
+
+# the console lane: the console's pure derivations and its presentational
+# components, under vitest (docs/testing/console.md)
+console:
+    cd web && bun install --frozen-lockfile && bun run typecheck && bun run test
+
 # the workerd lane: the built worker under wrangler dev --local, real R2
 # and Cache API semantics, asserted over real HTTP; the CLI binary rides
 # the same lane, driven by the end-to-end push scenario
@@ -118,10 +128,9 @@ clippy-wasm:
 # deploy one stage end to end: build the bundle, source the stage's env
 # file when present, run the alchemy stack. The operator's two secrets and
 # the CACHET_DEPLOY_* set come from infra/.env.<stage> or the environment.
-deploy stage:
+deploy stage: wasm web
     #!/usr/bin/env bash
     set -euo pipefail
-    just wasm
     cd infra
     bun install --frozen-lockfile --silent
     if [ -f ".env.{{ stage }}" ]; then

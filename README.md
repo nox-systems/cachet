@@ -66,15 +66,25 @@ The action installs nix trusting the cache, snapshots the store before
 your build, and pushes what the build added on success. Signing happens
 server-side; the job needs no secrets beyond its OIDC token.
 
+## For admins
+
+Open `https://<the deployment's host>/` in a browser and sign in with
+GitHub. The console shows what the collector has been doing, what the
+counters recorded, and who can reach the cache; it writes nothing. Admins
+are the logins in `CACHET_DEPLOY_ADMINS`, and an org member outside that
+list sees the access screen alone. A browser session reads the console
+and cannot substitute from the cache.
+
 ## Repository layout
 
 - `crates/`: the workspace. `cachet-core` (pure domain), `cachet-crypto`,
   `cachet-api` (the HTTP surface and the generated OpenAPI document),
   `cachet-worker` (the wasm32 deployable), `cachet-push`, `cachet-cli`.
 - `action/`: the composite GitHub Action consumers wire into CI.
+- `web/`: the browser console the deployment serves at `/console`.
 - `infra/`: the alchemy stack that provisions a deployment.
 - `docs/`: DEPLOY.md (the runbook), security/threat-model.md,
-  testing/ (the lanes), adr/ (decision records),
+  console.md (the console), testing/ (the lanes), adr/ (decision records),
   openapi.yaml (generated, drift-gated).
 - `workerd/`: the truth lane's driver and fixtures.
 

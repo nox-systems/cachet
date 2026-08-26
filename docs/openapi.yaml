@@ -1102,7 +1102,11 @@ components:
           type:
           - string
           - 'null'
-          description: Which gate stopped the run, absent on a run that finished.
+          description: |-
+            Which gate stopped the run, null on a run that finished.
+
+            Null rather than absent, because the core type serializes it that
+            way and this mirror describes those exact bytes.
         inventoryPaths:
           type: integer
           format: int64
