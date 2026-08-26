@@ -125,9 +125,24 @@ deployments keep the 14-day default. Tear a deployment down with
 The `deploy` workflow in this repository runs staging automatically
 after a green `ci` on main, with the grace window pinned to zero in the
 workflow itself so the integration lane can sweep what it seeds.
-Production is manual: Actions > deploy > Run workflow, choosing
-`production`, and the run waits for the `production` environment's
-reviewer approval. Each deployment's GitHub environment carries the same
+
+Production follows a tag. Pushing one that matches the release pattern
+deploys production, because cutting a tag is the release decision and
+nothing in this repository can make it on your behalf: no automation here
+tags anything, so production only ever moves when a person says a commit
+is a release. `ci` runs on main and on pull requests and not on tags, so
+the tag carries no gate result of its own; the job's first step asks
+GitHub what `ci` concluded for exactly that commit and refuses to deploy
+unless the answer is success. Either stage can also be deployed by hand
+from Actions > deploy > Run workflow.
+
+The integration lane runs after staging and never after production. It
+pushes a store path and substitutes it back, which is the point of it,
+and staging deploys with its grace window zeroed so the collector sweeps
+what the lane seeds. Production keeps the fourteen-day default, so the
+same lane would leave a payload in the cache for a fortnight every
+release. Production gets a read-only check instead: the handshake, the
+served public config, and the console's shell. Each deployment's GitHub environment carries the same
 values the local file carries, all of them as environment secrets: the
 `CACHET_DEPLOY_*` set, `CACHET_SIGNING_KEY`,
 `CACHET_OAUTH_CLIENT_SECRET`, `CLOUDFLARE_API_TOKEN`, and

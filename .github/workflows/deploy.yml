@@ -1,8 +1,10 @@
-# Deploys. Staging follows every green ci run on main; production is manual
-# behind the GitHub environment's reviewer gate. Both stages read their
-# configuration from environment secrets (same names as infra/.env.<stage>
-# locally), never from repository-level config, so the two stages can
-# diverge safely.
+# Deploys. Staging follows every green ci run on main. Production follows a
+# tag, because cutting one is the release decision and nothing else in this
+# repository can make it: no automation here tags anything, so production
+# only ever moves when a person says a commit is a release. Either stage can
+# also be deployed by hand. Every stage reads its configuration from
+# environment secrets (same names as infra/.env.<stage> locally), never from
+# repository-level config, so the stages can diverge safely.
 name: deploy
 
 on:
@@ -10,6 +12,11 @@ on:
     workflows: [ci]
     branches: [main]
     types: [completed]
+  push:
+    # The release tag pattern, matching .github/workflows/release.yml so a
+    # tag that ships binaries also ships the deployment they talk to.
+    tags:
+      - "**[0-9]+.[0-9]+.[0-9]+*"
   workflow_dispatch:
     inputs:
       stage:
@@ -24,7 +31,7 @@ on:
 concurrency:
   # why: one deploy per stage at a time, and never cancel a deploy in
   # flight; a half-updated stage is worse than a queued one.
-  group: deploy-${{ github.event_name == 'workflow_dispatch' && inputs.stage || 'cachet-staging' }}
+  group: deploy-${{ github.event_name == 'workflow_dispatch' && inputs.stage || (github.event_name == 'push' && 'production' || 'cachet-staging') }}
   cancel-in-progress: false
 
 permissions:
@@ -94,6 +101,70 @@ jobs:
           cache-url: https://cachet.nox.so
           roots: .#devShells.x86_64-linux.default
       - run: nix develop --command just integration
+
+  production:
+    if: github.event_name == 'push'
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+      # why: the guard below asks GitHub whether ci passed on the commit
+      # this tag names.
+      actions: read
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CACHET_SIGNING_KEY: ${{ secrets.CACHET_SIGNING_KEY }}
+      CACHET_OAUTH_CLIENT_SECRET: ${{ secrets.CACHET_OAUTH_CLIENT_SECRET }}
+      CACHET_DEPLOY_HOST: ${{ secrets.CACHET_DEPLOY_HOST }}
+      CACHET_DEPLOY_ORGS: ${{ secrets.CACHET_DEPLOY_ORGS }}
+      CACHET_DEPLOY_ADMINS: ${{ secrets.CACHET_DEPLOY_ADMINS }}
+      CACHET_DEPLOY_OAUTH_CLIENT_ID: ${{ secrets.CACHET_DEPLOY_OAUTH_CLIENT_ID }}
+      CACHET_DEPLOY_AUDIENCE: ${{ secrets.CACHET_DEPLOY_AUDIENCE }}
+      CACHET_DEPLOY_DEFAULT_BRANCH_REF: ${{ secrets.CACHET_DEPLOY_DEFAULT_BRANCH_REF }}
+      CACHET_DEPLOY_DOMAIN: ${{ secrets.CACHET_DEPLOY_DOMAIN }}
+      CACHET_DEPLOY_STATS_TOKEN: ${{ secrets.CACHET_DEPLOY_STATS_TOKEN }}
+      CACHET_DEPLOY_FONT_CSS: ${{ secrets.CACHET_DEPLOY_FONT_CSS }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # why: ci does not run on tags, it runs on main and on pull requests,
+      # so a tag carries no gate result of its own. A tag is normally cut on
+      # a commit that already went green, and "normally" is not a gate: this
+      # asks GitHub what ci concluded for exactly this commit and refuses a
+      # production deploy when the answer is anything but success.
+      - name: the tagged commit must have passed ci
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          conclusion="$(gh run list --repo "${GITHUB_REPOSITORY}"             --workflow ci --commit "${GITHUB_SHA}" --limit 1             --json conclusion --jq '.[0].conclusion // "none"')"
+          if [ "${conclusion}" != "success" ]; then
+            echo "::error::ci concluded '${conclusion}' for ${GITHUB_SHA}."
+            echo "::error::Tag a commit whose ci run is green, or deploy by hand."
+            exit 1
+          fi
+          echo "ci passed on ${GITHUB_SHA}: deploying production"
+      - name: nix on the cachet cache
+        uses: nox-systems/cachet/action@v0
+        with:
+          cache-url: https://cachet.nox.so
+          roots: .#devShells.x86_64-linux.default
+      - run: nix develop --command just deploy production
+      # why: read-only. The integration lane pushes a store path and reads
+      # it back, which is right against staging (grace is zeroed there, so
+      # the collector sweeps what the lane seeds) and wrong against
+      # production, whose fourteen-day grace would keep every lane payload
+      # for a fortnight. This asks the three questions a deploy can get
+      # wrong without writing anything.
+      - name: the deployment answers
+        run: |
+          set -euo pipefail
+          host="${CACHET_DEPLOY_DOMAIN:-${CACHET_DEPLOY_HOST}}"
+          curl -fsS "https://${host}/nix-cache-info" >/dev/null
+          curl -fsS "https://${host}/api/public/config" | grep -q '"publicKey"'
+          curl -fsS "https://${host}/console" | grep -q '<div id="root">'
+          echo "https://${host}: handshake, config, and console all answer"
 
   manual:
     if: github.event_name == 'workflow_dispatch'
