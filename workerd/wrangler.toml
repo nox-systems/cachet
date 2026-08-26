@@ -40,6 +40,19 @@ CACHET_UI_ORIGIN = "https://ui.lane.invalid"
 # The collector runs armed with grace zeroed: the lane's seeded objects
 # are seconds old and must still be sweepable.
 CACHET_GC_GRACE_MS = "0"
+# The counter route's account and dataset. The token is a secret and
+# enters through .dev.vars, so a scenario without that file exercises the
+# "counts but cannot report" answer and one with it exercises the query.
+CLOUDFLARE_ACCOUNT_ID = "lane-account"
+CACHET_STATS_DATASET = "cachet_lane"
+
+# Every counted thing is written here. The binding is what moves
+# stats::emit off its early return, so the blob and double marshalling
+# runs in every scenario rather than only in unit tests; workerd discards
+# the points, which is all the lane needs from the write half.
+[[analytics_engine_datasets]]
+binding = "CACHET_EVENTS"
+dataset = "cachet_lane"
 
 # The deployment's collector binding; the lane invokes the scheduled
 # handler directly over its dev endpoint.

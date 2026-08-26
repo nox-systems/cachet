@@ -97,12 +97,15 @@ equivalents). These variables define the deployment:
 | `CACHET_DEPLOY_GC_GRACE_MS` | no | Grace override; default 14 days. Set 0 for throwaway test deployments. |
 | `CACHET_SIGNING_KEY` | yes | The `<host>-1:<base64>` secret from bootstrap. |
 | `CACHET_OAUTH_CLIENT_SECRET` | yes | The OAuth App's client secret. |
-| `CACHET_DEPLOY_STATS_TOKEN` | no | A Cloudflare API token scoped to Account Analytics:Read. Without it the deployment counts but cannot report. |
+| `CACHET_DEPLOY_STATS_TOKEN` | no | A Cloudflare API token scoped to Account Analytics:Read. Without it the deployment counts but cannot report. Setting it requires `CLOUDFLARE_ACCOUNT_ID` in the deploy environment too, which the worker then carries: the token authorizes the query and the account id says which account to run it against. |
 
 The deploy also reads `CLOUDFLARE_API_TOKEN` and
 `CLOUDFLARE_ACCOUNT_ID`, unprefixed by choice: they are wrangler and
 alchemy's standard variable names, so every Cloudflare tool in the
-shell reads the same pair rather than a cachet-specific alias.
+shell reads the same pair rather than a cachet-specific alias. The
+account id is bound into the worker as well, because reading the
+deployment's own counters is Cloudflare's SQL API and that API is
+addressed per account.
 
 ## Rehearsing with a second deployment
 
@@ -159,27 +162,55 @@ most questions:
 | `blob3` | Who asked: `ci`, `laptop`, `browser`, `anonymous`. |
 | `blob4` | `owner/repo` of the workflow run, empty for anyone else. |
 | `blob5` | That run's ref, empty for anyone else. |
-| `blob6` | The lease name, where one applies. |
+| `blob6` | Reserved and always empty. |
 | `double1` | How many things the point counts. |
-| `double2` | Bytes, where the answer is bytes. |
+| `double2` | Bytes: what a read served, what a write uploaded, and for a probe how many of the paths it asked about the cache already held. |
 
 An admin reads them through the deployment rather than through
-Cloudflare: `GET /api/self/events` takes `subject` (`reads`, `writes`,
-`probes`), `by` (one of the six dimensions, `outcome` when unstated),
-and `window` (`day`, `week`, `month`), and answers the totals largest
-first.
+Cloudflare. `GET /api/self/events` takes `subject` (`reads`, `writes`,
+`probes`), `by` (a dimension or a time bucket, `outcome` when unstated),
+`window` (`day`, `week`, `month`), and up to three filters: `kind`,
+`outcome`, and `actor`, each naming one value from that column's
+vocabulary.
 
 ```
 curl -sS --netrc-file ~/.netrc \
   "https://<host>/api/self/events?subject=reads&by=actor&window=week"
 ```
 
+Grouping by a column answers a list, largest first. Grouping by `hour`
+or `day` answers a series instead: one row per bucket, oldest first,
+with each row's `dimension` the bucket's first instant in epoch seconds.
+The series is filled, so a bucket nothing happened in is a zero rather
+than a missing row, and a chart drawn from it never runs a straight line
+through an empty hour. A bucket finer than its window can hold is
+refused, because hourly rows over a month is 720 of them against an
+answer capped at 100, and a truncated series is a chart that starts
+partway through its own window without saying so. So `hour` goes with
+`window=day`, and `day` with `week` or `month`.
+
+Filters are what make a question about one caller class answerable.
+Laptop reads split by outcome, which is a question the console's laptop
+screen is entirely made of:
+
+```
+curl -sS --netrc-file ~/.netrc \
+  "https://<host>/api/self/events?subject=reads&by=outcome&window=week&actor=laptop"
+```
+
+`repository`, `reference`, and the lease name can be grouped by and not
+filtered on. A `GROUP BY` names a column, where a filter names a value,
+and those three hold values a pusher chose rather than values from a
+closed set.
+
 The caller chooses a question; it never sends one. The worker composes
-the SQL from those three choices, every part of it a literal or an enum
-value, because the credential behind the route is a Cloudflare API
+the SQL from those choices, every part of it a literal or a value an enum
+produced, because the credential behind the route is a Cloudflare API
 token and a caller who could compose SQL would be composing it with that
 token's authority. A choice the deployment does not offer answers 400
-`malformed_query` rather than falling back to a different question. The
+`malformed_query` rather than falling back to a different question, and
+that includes a filter naming a value nothing writes: narrowing to
+nothing is louder than quietly answering the unfiltered question. The
 route requires an admin: an org member outside `CACHET_ADMINS` answers
 403, an anonymous request 401.
 

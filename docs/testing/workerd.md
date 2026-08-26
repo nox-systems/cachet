@@ -17,19 +17,30 @@ silently never stores surfaces as a failure the way it would in
 production.
 
 Outbound calls have the same treatment. The driver runs a stub server
-that plays three roles: the OIDC JWKS endpoint, holding a per-run RSA
+that plays four roles: the OIDC JWKS endpoint, holding a per-run RSA
 keypair; the OAuth web endpoint, exchanging one known code for a member
-token and one for an outsider token; and the GitHub API endpoints the
+token and one for an outsider token; the GitHub API endpoints the
 verdict path calls (`/user` and org membership), counting hits so the
-scenarios can prove the KV verdict cache serves repeat reads. The worker
-reaches them through the `CACHET_JWKS_URL`, `CACHET_GITHUB_API_URL`, and
-`CACHET_GITHUB_WEB_URL` variables, which the driver passes with
-`wrangler dev --var`; auth scenarios mint RS256 tokens against the
-stub's private key, so a verification that silently skips would fail the
-matrix. The lane's ed25519 signing secret and the OAuth client secret
-enter as `.dev.vars`, the same way a deployment's secrets enter as
-bindings; the file is written before the write scenarios, deleted when
-the lane ends, and gitignored.
+scenarios can prove the KV verdict cache serves repeat reads; and
+Cloudflare's SQL API, which receives the statement the counter route
+composed as plain text and answers rows the scenario chose. The worker
+reaches them through the `CACHET_JWKS_URL`, `CACHET_GITHUB_API_URL`,
+`CACHET_GITHUB_WEB_URL`, and `CACHET_STATS_API_URL` variables, which the
+driver passes with `wrangler dev --var`; auth scenarios mint RS256 tokens
+against the stub's private key, so a verification that silently skips
+would fail the matrix. The lane's ed25519 signing secret, the OAuth
+client secret, and the counter route's analytics token enter as
+`.dev.vars`, the same way a deployment's secrets enter as bindings; the
+file is written before the scenarios that need it, deleted when the lane
+ends, and gitignored.
+
+The lane binds `CACHET_EVENTS`, so `stats::emit` runs its real path in
+every scenario rather than returning early on a missing binding: each
+counted request builds its point and marshals its blobs and doubles.
+workerd discards the point, so what the lane proves is the marshalling
+and not the storage, and it proves it negatively, by asserting that no
+`stats.write_failed` event appears beside the reads and writes that
+produced one.
 
 The lane covers the read path, the write path, and the API surface so
 far: the handshake body and its headers; narinfo and NAR serving with
@@ -66,10 +77,22 @@ itself, with NAR and lease objects proven never to leak in, the answer
 answering equally for laptop and OIDC credentials, and its rejection
 rows (unauthorized, forbidden_org, malformed_probe from bad JSON, bad
 hashes, and over-cap entry lists, and the byte cap's body_too_large);
-and the browser login flow, from the login
+the browser login flow, from the login
 redirect's exact parameters through state consumption (a replayed state
 never reaches the exchange), the outsider's forbidden_org refusal, the
-session cookie's attributes, and logout's session deletion. The served
+session cookie's attributes, and logout's session deletion, with the
+session proven see-only: it answers `/api/whoami` with its own login,
+standing, and expiry and reads the admin surface, and it answers 401
+unauthorized on a narinfo and on a NAR, because a cookie a browser sends
+by itself and holds for a fortnight without re-checking membership must
+not substitute from the cache; and the counter route's answering half,
+where the stub receives the composed statement and the lane asserts it
+whole rather than by substring, since it runs with an account token
+behind it: a dimension list, a filtered question, every filter stacked in
+column order, a daily series gap-filled to one row per day with the
+reported buckets landing where they belong, an hourly series bounded at
+twenty-four, and an upstream refusal answering 503 without repeating what
+upstream said. The served
 OpenAPI document is asserted byte-identical to the committed one, which is
 the served half of the drift bijection (CLAUDE.md §8). The GC scenarios
 invoke the scheduled handler over wrangler's dev endpoint with grace
@@ -81,12 +104,20 @@ aborts a wholesale sweep with nothing deleted. The reports the first run
 lands then serve through the admin API: the run list, the report read,
 and the stats derivation answer the admin token, 401 the anonymous
 request, and 403 forbidden_admin the org member outside CACHET_ADMINS.
+The counter route is gated in the same scenario, which runs with no
+`.dev.vars` and therefore no analytics token: its rows prove the gate and
+the parser refuse before any query runs, that an inadmissible choice
+answers 400 malformed_query (a hostile string, a filter naming nothing, a
+bucket finer than its window can hold), and that a deployment with no
+token answers 503 rather than pretending to report.
 
 Every code in the error table (cachet-core/src/error.rs) has at least one
-wire-level assertion here, with one documented exception:
-storage_unavailable, whose trigger is the platform's own R2 or KV
-failing, has no deterministic stand-in under wrangler --local; its
-problem body is pinned byte-for-byte in the golden lane instead. A
+wire-level assertion here. storage_unavailable is asserted through the
+counter route, whose upstream the driver controls: the stub answers 500
+and the route answers 503 without repeating what upstream said. Its other
+trigger, the platform's own R2 or KV failing, has no deterministic
+stand-in under wrangler --local, so the problem body itself is pinned
+byte-for-byte in the golden lane. A
 uniform Authorization-header contract holds on both paths: a
 present-but-unparseable credential (oversized header, wrong scheme)
 answers 400 malformed_auth, a parseable-but-wrong one answers 401
