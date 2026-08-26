@@ -1,0 +1,1 @@
+Hovering over the line charts... why is that not implemented properly? Are we not using shadcn charts or the tanstack charts?
