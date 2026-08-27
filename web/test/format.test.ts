@@ -33,15 +33,14 @@ describe("count", () => {
   });
 });
 
-describe("percent and perHundred", () => {
+describe("percent", () => {
   it("is no share rather than a division by zero", () => {
     expect(format.percent(5, 0)).toBe("0%");
-    expect(format.perHundred(5, 0)).toBe(0);
   });
 
   it("reads the way the screen says it", () => {
     expect(format.percent(610, 12_480)).toBe("4.9%");
-    expect(format.perHundred(11_904, 12_480)).toBe(95);
+    expect(format.percent(11_904, 12_480)).toBe("95.4%");
   });
 });
 

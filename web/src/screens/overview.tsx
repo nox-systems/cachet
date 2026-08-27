@@ -135,7 +135,7 @@ export const Overview = () => {
                   name: row.dimension === "" ? "unattributed" : row.dimension,
                   value: row.count,
                   figure: format.count(row.count),
-                  aside: format.bytes(row.bytes),
+                  aside: row.bytes > 0 ? format.bytes(row.bytes) : "",
                 }))}
               />
             )}

@@ -31,11 +31,6 @@ export const bytes = (value: number): string => {
 export const percent = (part: number, whole: number): string =>
   whole <= 0 ? "0%" : `${((part / whole) * 100).toFixed(1)}%`;
 
-/** How many of every hundred, which reads better than a percentage for
- *  a hit rate a person is going to say out loud. */
-export const perHundred = (part: number, whole: number): number =>
-  whole <= 0 ? 0 : Math.round((part / whole) * 100);
-
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 

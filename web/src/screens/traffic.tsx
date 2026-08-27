@@ -126,7 +126,7 @@ export const Traffic = () => {
         title={`${capitalize(noun)} by outcome`}
         aside={
           subject === "reads" && outcomeTotal > 0
-            ? `${format.perHundred(served, outcomeTotal)} of every 100 reads were served from the cache`
+            ? `${format.percent(served, outcomeTotal)} cache hit`
             : undefined
         }
       >
@@ -139,7 +139,7 @@ export const Traffic = () => {
               name: format.outcomeLabel(row.dimension),
               value: row.count,
               figure: format.count(row.count),
-              aside: format.bytes(row.bytes),
+              aside: row.bytes > 0 ? format.bytes(row.bytes) : "",
               ...(format.isRefusal(row.dimension)
                 ? { tone: "signal" as const }
                 : {}),

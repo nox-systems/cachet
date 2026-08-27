@@ -135,7 +135,7 @@ export const Developers = () => {
               name: format.outcomeLabel(row.dimension),
               value: row.count,
               figure: format.count(row.count),
-              aside: format.bytes(row.bytes),
+              aside: row.bytes > 0 ? format.bytes(row.bytes) : "",
               ...(format.isRefusal(row.dimension)
                 ? { tone: "signal" as const }
                 : {}),
