@@ -2167,6 +2167,110 @@ await scenario(
   },
 );
 
+// The two ways a root narinfo fails to read, which the collector answers
+// differently on purpose (ADR 0018). Each needs its own boot, because a
+// tripped gate ends the run and one bucket cannot show both answers.
+const leaseNaming = (paths) =>
+  JSON.stringify(
+    {
+      project: "lane-org-lane-repo",
+      renewedAtMs: Date.now(),
+      repository: "lane-org/lane-repo",
+      ref: "refs/heads/main",
+      runId: "41",
+      commitSha: "abc",
+      installables: [],
+      storePaths: paths,
+    },
+    null,
+    2,
+  ) + "\n";
+
+await scenario(
+  "a lease naming an absent root does not stop the collector",
+  async () => [
+    // The lease names a path whose narinfo is not in the bucket: a
+    // project pushed once and swept, or one an operator deleted by hand.
+    // No client can substitute it, because a substitution starts by
+    // fetching that narinfo, so refusing the run protected nothing and
+    // every later run refused for the same reason.
+    [
+      "roots/lane-org-lane-repo",
+      leaseNaming([`/nix/store/${"k".repeat(32)}-gone`]),
+    ],
+    [
+      `${"d".repeat(32)}.narinfo`,
+      await deadNarinfoFor("d".repeat(32), "w".repeat(52)),
+    ],
+    [
+      `nar/${"w".repeat(52)}.nar.zst`,
+      await readFile(path.join(fixturesDir, NAR_FILE)),
+    ],
+  ],
+  async ({ base, events, persist }) => {
+    await check("the absent root is counted and the sweep runs", async () => {
+      assert.ok(
+        await triggerScheduled(base),
+        "the dev endpoint ran the handler",
+      );
+      assert.ok(
+        !events().includes('"event":"gc.gate_tripped"'),
+        `no gate refused the run:\n${events().slice(-800)}`,
+      );
+      const swept = await fetch(`${base}/${"d".repeat(32)}.narinfo`, {
+        headers: READ_AUTH(),
+      });
+      assert.equal(swept.status, 404, "the dead path went");
+      const runId = captureRunId(events);
+      const report = await r2Get(persist, `gc-reports/${runId}.json`);
+      const body = JSON.parse(report.body);
+      assert.equal(body.gate, null, report.body);
+      assert.equal(body.narinfosDeleted, 1, report.body);
+      // The gate used to deliver this signal by stopping everything.
+      // The count says the same thing: a lease is naming a path this
+      // cache no longer holds.
+      assert.equal(body.unreadableDeep, 1, report.body);
+    });
+  },
+);
+
+await scenario(
+  "a lease naming an unparseable root stops the collector",
+  async () => [
+    // This root is present and servable, and its references cannot be
+    // enumerated, so continuing would sweep a closure whose top a client
+    // still reaches.
+    [
+      "roots/lane-org-lane-repo",
+      leaseNaming([`/nix/store/${"k".repeat(32)}-opaque`]),
+    ],
+    [`${"k".repeat(32)}.narinfo`, "this is not a narinfo\n"],
+    [
+      `${"d".repeat(32)}.narinfo`,
+      await deadNarinfoFor("d".repeat(32), "w".repeat(52)),
+    ],
+    [
+      `nar/${"w".repeat(52)}.nar.zst`,
+      await readFile(path.join(fixturesDir, NAR_FILE)),
+    ],
+  ],
+  async ({ base, events, persist }) => {
+    await check("the run aborts with nothing deleted", async () => {
+      assert.ok(
+        await triggerScheduled(base),
+        "the dev endpoint ran the handler",
+      );
+      const spared = await r2Get(persist, `${"d".repeat(32)}.narinfo`);
+      assert.ok(spared.ok, "a refused run deletes nothing");
+      const runId = captureRunId(events);
+      const report = await r2Get(persist, `gc-reports/${runId}.json`);
+      const body = JSON.parse(report.body);
+      assert.equal(body.gate, "unreadable_root_narinfo", report.body);
+      assert.equal(body.narinfosDeleted, 0, report.body);
+    });
+  },
+);
+
 // The bulk probe: one authorized POST answers presence for a run's whole
 // candidate set, derived from a bucket enumeration (delimiter-collapsed,
 // suffix-filtered), so the answer is bucket truth the same way the

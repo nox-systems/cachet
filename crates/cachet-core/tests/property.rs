@@ -366,3 +366,68 @@ fn a_filled_series_is_whole(tc: TestCase) {
         );
     }
 }
+
+/// Walk law: an unparseable root gates the walk, an absent one does not,
+/// and a root the walk read is marked either way.
+///
+/// Marking a root whose read failed keeps the sweep off it, which is what
+/// lets the gate be this narrow. The gate itself fires when a root is
+/// present with references nobody can enumerate, and holds off when a
+/// root's narinfo is gone, because that is a lease naming a path the
+/// cache no longer holds and no later run brings it back (ADR 0018).
+#[hegel::test(test_cases = 256)]
+fn only_an_unparseable_root_gates_the_walk(tc: TestCase) {
+    use cachet_core::gc::{GateTrip, WalkReadError, closure_walk};
+    use cachet_core::types::StorePathHash;
+    use std::collections::BTreeMap;
+
+    // Roots drawn from a fixed alphabet so draws collide sometimes, which
+    // is how a lease naming one path twice reaches the walk.
+    let alphabet = ['a', 'b', 'c', 'd'];
+    let roots: Vec<StorePathHash> = (0..=(tc.draw(gs::integers::<u8>()) % 4))
+        .map(|_| {
+            let letter = alphabet[usize::from(tc.draw(gs::integers::<u8>()) % 4)];
+            StorePathHash::parse(&letter.to_string().repeat(32)).expect("valid")
+        })
+        .collect();
+
+    // One read outcome per letter, so a repeated root reads the same way
+    // twice the way the bucket would answer it.
+    let reads: BTreeMap<char, u8> = alphabet
+        .iter()
+        .map(|letter| (*letter, tc.draw(gs::integers::<u8>()) % 3))
+        .collect();
+    let letter_of = |hash: &StorePathHash| hash.as_str().chars().next().expect("32 characters");
+
+    // A narinfo with no references, so the walk's shape is the root set
+    // and the law is about roots alone.
+    let leaf = |hash: &StorePathHash| {
+        let body = format!(
+            "StorePath: /nix/store/{hash}-pkg\nURL: nar/{}.nar.zst\nNarHash: sha256:0iqi0\nNarSize: 12\nReferences: \n",
+            "x".repeat(52),
+        );
+        Narinfo::parse(&body).expect("a whole narinfo")
+    };
+    let outcome = closure_walk(&roots, |hash| match reads[&letter_of(hash)] {
+        0 => Ok(leaf(hash)),
+        1 => Err(WalkReadError::Absent),
+        _ => Err(WalkReadError::Unparseable),
+    });
+
+    let any_unparseable = roots.iter().any(|hash| reads[&letter_of(hash)] == 2);
+    assert_eq!(
+        matches!(outcome.gate, Some(GateTrip::UnreadableRootNarinfo { .. })),
+        any_unparseable,
+        "gate {:?} over {:?}",
+        outcome.gate,
+        reads,
+    );
+
+    // A gated walk stops at the root that gated it, so only an ungated
+    // walk has read every root in the set.
+    if outcome.gate.is_none() {
+        for hash in &roots {
+            assert!(outcome.marked.contains(hash), "unmarked root {hash}");
+        }
+    }
+}

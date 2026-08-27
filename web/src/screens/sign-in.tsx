@@ -97,15 +97,6 @@ export const SignIn = ({
       {refused === undefined ? null : (
         <p {...stylex.props(styles.prose, styles.refused)}>{refused}</p>
       )}
-      <p {...stylex.props(styles.prose)}>
-        Sign in with GitHub to read this deployment&apos;s collection reports
-        and counters.
-        {config === undefined || config.orgs.length === 0
-          ? ""
-          : ` Membership of ${config.orgs.join(" or ")} is what it checks.`}{" "}
-        A browser session reads this console and nothing else: it cannot
-        substitute from the cache.
-      </p>
       <a href="/_auth/login" {...stylex.props(styles.action)}>
         Sign in with GitHub
       </a>

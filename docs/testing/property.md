@@ -23,6 +23,13 @@ classes in force now:
   and comparing it whole: reserved keys are never swept, marked paths
   are never swept, an upload exactly at the grace boundary is kept, and a
   NAR URL named by any marked narinfo survives.
+- The walk law. Over arbitrary root sets and arbitrary read outcomes,
+  the mark phase aborts when a root narinfo is unparseable, never aborts
+  when one is absent, and leaves no root it read unmarked. Marking a root
+  whose read failed keeps the sweep off it either way, which is what lets
+  the gate be that narrow, and holding off on an absent root is what keeps
+  a lease naming a departed path from stopping every future collection
+  (ADR 0018).
 - The series law. A gap-filled counter answer carries one row per bucket
   its window covers, ascending and contiguous, ending at the bucket the
   request clock falls in, and counts only the buckets the dataset

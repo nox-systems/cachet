@@ -1,7 +1,9 @@
 # ADR 0005: The collector is armed from day one, on the cron
 
 - **Status:** Accepted; point 4's sweep fraction removed by
-  [ADR 0017](0017-the-collector-refuses-on-blindness-not-on-scale.md)
+  [ADR 0017](0017-the-collector-refuses-on-blindness-not-on-scale.md),
+  its unreadable root narrowed by
+  [ADR 0018](0018-only-an-unparseable-root-stops-the-collector.md)
 - **Date:** 2026-08-21
 - **Context doc:** [../../CLAUDE.md](../../CLAUDE.md) §1; [../testing/workerd.md](../testing/workerd.md)
 
@@ -30,12 +32,15 @@ mark phase's inputs are suspect.
 3. Stages recompute at every boundary from bucket truth: inventory and
    leases never persist across ticks; mark/collect/sweep progress does,
    as cursor state.
-4. The gate tripped by an unparseable lease, an unreadable root, or a
-   truncated enumeration aborts the run and lands a report naming the
-   gate. Nothing is deleted when the inputs are not whole. (This point
-   also named a sweep fraction over 25% of inventory; ADR 0017 removed
-   it, because a gate on how much a run may delete could not be
-   satisfied by the run after it.)
+4. The gate tripped by an unparseable lease, an unparseable root
+   narinfo, or a truncated enumeration aborts the run and lands a report
+   naming the gate. Nothing is deleted when the inputs are not whole.
+   (This point also named a sweep fraction over 25% of inventory; ADR
+   0017 removed it, because a gate on how much a run may delete could
+   not be satisfied by the run after it. It said unreadable root rather
+   than unparseable one; ADR 0018 narrowed it, because a root whose
+   narinfo is absent is a path no client can substitute and the refusal
+   was permanent.)
 5. Narinfos delete before their NARs, in batches, so a narinfo never
    dangles a missing NAR at any instant. Orphan NARs (referenced by no
    narinfo) survive; that is a v2 decision, guarded now by the grace

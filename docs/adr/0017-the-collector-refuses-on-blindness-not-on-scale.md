@@ -1,6 +1,8 @@
 # ADR 0017: The collector refuses on blindness, not on scale
 
-- **Status:** Accepted
+- **Status:** Accepted; point 2's unreadable root narrowed to an
+  unparseable one by
+  [ADR 0018](0018-only-an-unparseable-root-stops-the-collector.md)
 - **Date:** 2026-08-26
 - **Context doc:** [0005-gc-on-the-cron.md](0005-gc-on-the-cron.md);
   [../security/threat-model.md](../security/threat-model.md)
@@ -33,7 +35,7 @@ built them.
 1. The sweep fraction gate is removed, along with its constants, its
    `GateTrip` variant, and its report value.
 2. The gates that remain are the ones that fire on blindness: an
-   unreadable root narinfo, an unparseable lease, a truncated inventory
+   unparseable root narinfo, an unparseable lease, a truncated inventory
    or lease listing, an exhausted walk budget, and a corrupt generation
    document. Each of those means the collector's picture of what is live
    is incomplete, which is the condition worth refusing on.

@@ -217,12 +217,29 @@ impl ClosureWalker {
             self.outcome.marked.insert(hash.clone());
             self.outcome.marked_urls.insert(hash, url);
         } else {
-            let is_root = self.roots.contains(&hash);
+            // Marking happens for either failure, so the sweep never
+            // touches this path. The failure decides only whether the
+            // walk goes on.
             self.outcome.marked.insert(hash.clone());
-            if is_root {
+            let absent = read == Err(WalkReadError::Absent);
+            if self.roots.contains(&hash) && !absent {
+                // why: only unparseable. A root whose narinfo will not
+                // parse is present and servable, and its references
+                // cannot be enumerated, so continuing would sweep a
+                // closure whose top a client still reaches.
                 self.outcome.gate = Some(GateTrip::UnreadableRootNarinfo { hash });
                 return;
             }
+            // why: an absent root does not gate, and used to. A lease
+            // naming a path whose narinfo is gone describes something
+            // this cache no longer holds, and no client can substitute
+            // it, because a substitution starts by fetching that
+            // narinfo. Refusing there protected nothing and was
+            // permanent: the lease keeps naming the path, the narinfo
+            // stays gone, and every run tripped until somebody pushed
+            // the project again or edited the lease by hand. Counting it
+            // matches how an absent reference deeper in the closure has
+            // always been handled (ADR 0018).
             self.outcome.unreadable_deep += 1;
         }
     }
@@ -384,7 +401,9 @@ pub struct GcReport {
     /// Paths marked reachable.
     #[serde(rename = "markedPaths")]
     pub marked_paths: u64,
-    /// Deep narinfo reads that failed during the walk.
+    /// Narinfo reads that failed during the walk without stopping it: a
+    /// reference at any depth, and a root whose narinfo is absent
+    /// (ADR 0018).
     #[serde(rename = "unreadableDeep")]
     pub unreadable_deep: u64,
     /// Narinfo objects deleted.
@@ -779,13 +798,33 @@ mod tests {
     }
 
     #[test]
-    fn a_root_read_failure_trips_the_abortion_gate() {
+    fn an_unparseable_root_trips_the_abortion_gate() {
         let hash = StorePathHash::parse(&"a".repeat(32)).unwrap();
-        let outcome = closure_walk(&[hash], |_| Err(WalkReadError::Absent));
+        let outcome = closure_walk(std::slice::from_ref(&hash), |_| {
+            Err(WalkReadError::Unparseable)
+        });
         assert!(matches!(
             outcome.gate,
             Some(GateTrip::UnreadableRootNarinfo { .. })
         ));
+        // Marking is what keeps the sweep off a root the walk could not
+        // read. The gate decides whether the walk goes on, never whether
+        // the path survives.
+        assert!(outcome.marked.contains(&hash));
+    }
+
+    #[test]
+    fn an_absent_root_is_counted_rather_than_refused() {
+        // This gate used to fire here too, and could never stop firing: a
+        // lease naming a path whose narinfo is gone keeps naming it, and
+        // no later run brings the narinfo back (ADR 0018). Refusing also
+        // protected nothing, because no client can substitute a path
+        // whose narinfo is absent.
+        let hash = StorePathHash::parse(&"a".repeat(32)).unwrap();
+        let outcome = closure_walk(std::slice::from_ref(&hash), |_| Err(WalkReadError::Absent));
+        assert_eq!(outcome.gate, None);
+        assert_eq!(outcome.unreadable_deep, 1);
+        assert!(outcome.marked.contains(&hash));
     }
 
     #[test]
