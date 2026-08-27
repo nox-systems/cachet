@@ -1,0 +1,29 @@
+<task-notification>
+<task-id>bsmk9xi1a</task-id>
+<summary>Monitor event: "v0.1.1 release and production deploy"</summary>
+<event>production deploy: success</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bsmk9xi1a</task-id>
+<summary>Monitor event: "v0.1.1 release and production deploy"</summary>
+<event>production deploy: success</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bpmp1e8vu</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-shivanshvij-Development-nox-cachet/4406a8f5-e3b8-42e4-a5a2-eef2da85c0c4/tasks/bpmp1e8vu.output</output-file>
+<status>completed</status>
+<summary>Background command "Wait for the release build and list its assets" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+> Stopped at the unreadable_root_narinfo gate. Nothing was deleted.

@@ -1,0 +1,35 @@
+{
+  "cli_version": "0.10.2",
+  "checkpoint_id": "01M10B9ERYQ2J8C10F0HQ7389T",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 4,
+  "files_touched": [
+    "crates/cachet-core/src/gc.rs",
+    "crates/cachet-core/tests/property.rs",
+    "docs/adr/0005-gc-on-the-cron.md",
+    "docs/adr/0017-the-collector-refuses-on-blindness-not-on-scale.md",
+    "docs/adr/0018-only-an-unparseable-root-stops-the-collector.md",
+    "docs/security/threat-model.md",
+    "docs/testing/property.md",
+    "docs/testing/workerd.md",
+    "web/src/screens/sign-in.tsx",
+    "workerd/check.mjs"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 214,
+    "cache_creation_tokens": 157036,
+    "cache_read_tokens": 32999095,
+    "output_tokens": 44689,
+    "api_call_count": 107
+  }
+}
