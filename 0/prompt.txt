@@ -1,0 +1,16 @@
+why is https://cachet.staging.nox.so/console/ showing degraded?
+
+---
+
+> 54 of every 100 reads were served from the cache
+Bro just write 54% Cache Hit
+
+---
+
+bruh
+
+---
+
+also wtf is this: > Missing from the cache
+19
+0 B
