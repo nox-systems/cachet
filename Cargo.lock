@@ -650,9 +650,9 @@ checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
 name = "hegeltest"
-version = "0.31.0"
+version = "0.39.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "afbd26d7e72f9cbaa4aa91c66238b719648304eccfb575ecaa6249c06c871744"
+checksum = "a7de1ecb6d3b65018c35eee2a1b5829b8e0eef18320bfce4c377feb61c0c484f"
 dependencies = [
  "crc32fast",
  "dashu-int",
@@ -660,17 +660,17 @@ dependencies = [
  "hegeltest-macros",
  "miniz_oxide",
  "parking_lot",
- "paste",
  "rand 0.10.2",
  "rustc-hash",
+ "serde_json",
  "tempfile",
 ]
 
 [[package]]
 name = "hegeltest-c"
-version = "0.33.0"
+version = "0.36.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "101cc1c60825495e3e04148884bcc9ddf3abae148fcbd45a31663a28916d2b3a"
+checksum = "dd411f5d9546d7d476d58938a044d2a3677f7ce78c11c47fb65de985b5b4b5d0"
 dependencies = [
  "dashu-int",
  "hashbrown",
@@ -685,9 +685,9 @@ dependencies = [
 
 [[package]]
 name = "hegeltest-macros"
-version = "0.31.0"
+version = "0.39.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a2cdbd830ec7a11d770fdf1ceacf7c42b2ee697f05583f6e5480c0b58fb963d8"
+checksum = "3f06db3f261f256865618edaac55309fcbdc52f7e0b4dd57b2a17260c52a767c"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1137,12 +1137,6 @@ dependencies = [
  "smallvec",
  "windows-link",
 ]
-
-[[package]]
-name = "paste"
-version = "1.0.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
 name = "pem-rfc7468"
