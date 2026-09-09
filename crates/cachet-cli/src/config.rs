@@ -121,6 +121,27 @@ pub fn forget_login(dir: &Path, host: &str) -> Result<(), CliError> {
     }
 }
 
+/// Forget the remembered default when it names this deployment, so a
+/// later command without `--cache-url` asks rather than reaching for a
+/// cache this machine no longer uses. A default naming another cache is
+/// left alone.
+pub fn forget_default_url(dir: &Path, base_url: &str) -> Result<(), CliError> {
+    let wanted = base_url.trim_end_matches('/');
+    let names_this = read_default_url(dir).is_some_and(|url| url.trim_end_matches('/') == wanted);
+    if !names_this {
+        return Ok(());
+    }
+    let path = default_url_path(dir);
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(failure) if failure.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(failure) => Err(CliError(format!(
+            "could not remove {}: {failure}",
+            path.display()
+        ))),
+    }
+}
+
 /// The stored credential for one deployment, if this machine has one.
 ///
 /// # Errors
@@ -255,6 +276,28 @@ mod tests {
                 .mode();
             assert_eq!(mode & 0o777, 0o600, "tokens are owner-only");
         }
+    }
+
+    #[test]
+    fn forgetting_the_default_only_when_it_names_this_cache() {
+        let dir = tempfile::tempdir().expect("dir");
+        store_login(
+            dir.path(),
+            "cache.example.com",
+            "https://cache.example.com",
+            "cachet_secret",
+            "octocat",
+        )
+        .expect("store");
+        forget_default_url(dir.path(), "https://other.example.com").expect("forget");
+        assert_eq!(
+            read_default_url(dir.path()),
+            Some("https://cache.example.com".to_string()),
+            "another cache's default is not this cache's to remove"
+        );
+        forget_default_url(dir.path(), "https://cache.example.com/").expect("forget");
+        assert_eq!(read_default_url(dir.path()), None);
+        forget_default_url(dir.path(), "https://cache.example.com").expect("a rerun is fine");
     }
 
     #[test]

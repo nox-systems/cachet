@@ -40,6 +40,14 @@ enum Command {
         #[arg(long)]
         cache_url: Option<String>,
     },
+    /// Remove a cache from this machine: revoke and delete the credential,
+    /// drop its netrc line, its substituter, and its trusted keys, then
+    /// restart the daemon. Works when the deployment no longer exists.
+    Forget {
+        /// The cache's base URL; defaults to the one logged into.
+        #[arg(long)]
+        cache_url: Option<String>,
+    },
     /// Probe the read wiring against a deployment and report what holds.
     Doctor {
         /// The cache's base URL; defaults to the one logged into.
@@ -74,6 +82,7 @@ async fn main() -> ExitCode {
         Command::Login { cache_url } => run(&login(vars, cache_url).await),
         Command::Setup { cache_url } => run(&setup(vars, cache_url).await),
         Command::Logout { cache_url } => run(&logout(vars, cache_url).await),
+        Command::Forget { cache_url } => run(&forget(vars, cache_url).await),
         Command::Doctor { cache_url } => doctor(vars, cache_url).await,
         Command::Keygen { name, out_dir } => run(&keygen(&name, out_dir.as_deref())),
         Command::Push { snapshot_only } => {
@@ -166,7 +175,52 @@ async fn logout(
         }
     }
     config::forget_login(&dir, &config.host)?;
-    println!("cachet: run `cachet setup` to drop it from this machine's nix");
+    println!("cachet: run `cachet forget` to remove it from this machine's nix");
+    Ok(())
+}
+
+/// Forgetting a cache: revoke the credential when there is one and the
+/// deployment answers, remove the local copy either way, unwire the
+/// daemon, and restart it. Nothing here needs the deployment to exist,
+/// which is the point: a cache that was uninstalled still has to come off
+/// the laptops that used it.
+async fn forget(
+    vars: Vec<(String, String)>,
+    cache_url: Option<String>,
+) -> Result<(), cachet_cli::CliError> {
+    let dir = config::state_dir(&vars)?;
+    let url = config::resolve_cache_url(cache_url.as_deref(), &dir)?;
+    let host = config::host_of(&url)?;
+    if let Some(token) = config::read_token(&dir, &host)? {
+        let client = cachet_cli::http_client()?;
+        match cachet_cli::login::revoke_read_token(&client, &url, &token).await {
+            Ok(()) => println!("cachet: {host} revoked this machine's credential"),
+            Err(failure) => {
+                eprintln!("cachet: could not reach {host} to revoke: {failure}");
+                eprintln!("  the local copy is removed anyway; it expires on its own.");
+            }
+        }
+        config::forget_login(&dir, &host)?;
+    }
+    config::forget_default_url(&dir, &url)?;
+    let paths = resolve_setup_paths(&vars);
+    let run = privileged_runner(&vars);
+    let install = installer(&run);
+    let report = cachet_cli::setup::run_forget(
+        &paths,
+        &cachet_cli::setup::ForgetInput {
+            cache_url: url.clone(),
+        },
+        &run,
+        &install,
+    )?;
+    if report.wrote.is_empty() {
+        println!("cachet: this machine had no wiring for {host}");
+    }
+    for path in &report.wrote {
+        println!("cachet: {host} removed from {}", path.display());
+    }
+    print_reload(&report.reload);
     Ok(())
 }
 
@@ -310,7 +364,16 @@ fn print_setup_report(host: &str, report: &cachet_cli::setup::SetupReport) {
     for path in wrote {
         println!("cachet: wrote {}", path.display());
     }
-    match &report.reload {
+    print_reload(&report.reload);
+}
+
+/// How the daemon restart went, in the words both setup and forget end
+/// with.
+fn print_reload(reload: &cachet_cli::setup::ReloadOutcome) {
+    match reload {
+        cachet_cli::setup::ReloadOutcome::Unneeded => {
+            println!("cachet: nothing changed, so the daemon was left running as it was");
+        }
         cachet_cli::setup::ReloadOutcome::Systemd => {
             println!(
                 "cachet: nix-daemon restarted with systemctl, so the new configuration is live"

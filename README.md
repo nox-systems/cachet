@@ -38,6 +38,12 @@ and setting up against a second deployment leaves the first alone. Pass
 use the one you logged into last. Different deployments can be different
 GitHub accounts.
 
+`cachet forget` removes a cache from this machine: it revokes and deletes
+the credential, drops the netrc line, the substituter, and the cache's
+trusted keys, and restarts the daemon. It works whether or not the cache
+still exists, so a deployment that was uninstalled can still be cleaned
+off the laptops that used it.
+
 Both nix installs work. On a machine running Determinate Nix, `setup`
 registers the credential the way Determinate's daemon reads it and
 restarts through `determinate-nixd`; on plain nix it writes `netrc-file`

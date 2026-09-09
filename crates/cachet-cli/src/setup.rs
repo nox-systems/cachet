@@ -63,6 +63,17 @@ pub struct SetupPaths {
 /// names.
 #[must_use]
 pub fn netrc_replace_block(existing: &str, host: &str, token: &str) -> String {
+    let (mut rewritten, _) = netrc_drop_blocks(existing, host);
+    let _ = writeln!(rewritten, "machine {host} login cachet password {token}");
+    rewritten
+}
+
+/// Drop every block naming `host`, keep every other block byte-verbatim,
+/// and say whether anything was dropped. The kept text ends in exactly one
+/// newline, or is empty. This is the whole of what `forget` does to the
+/// netrc and the first half of what `setup` does.
+#[must_use]
+pub fn netrc_drop_blocks(existing: &str, host: &str) -> (String, bool) {
     #[derive(Debug, PartialEq)]
     enum Kind {
         Preamble,
@@ -110,20 +121,21 @@ pub fn netrc_replace_block(existing: &str, host: &str, token: &str) -> String {
     }
 
     let mut out = String::new();
+    let mut dropped = false;
     for (kind, span) in spans {
         if matches!(kind, Kind::Machine(ref name) if name == host) {
+            dropped = true;
             continue;
         }
         out.push_str(span);
     }
     let trimmed = out.trim_end();
-    let mut rewritten = if trimmed.is_empty() {
+    let kept = if trimmed.is_empty() {
         String::new()
     } else {
         format!("{trimmed}\n")
     };
-    let _ = writeln!(rewritten, "machine {host} login cachet password {token}");
-    rewritten
+    (kept, dropped)
 }
 
 /// The keys setup owns in the included config: every line naming one is
@@ -214,6 +226,72 @@ pub fn merge_custom_conf(
     out
 }
 
+/// Remove one cache from the included config: its substituter, and every
+/// trusted key named `<host>-<n>`, which is how `cachet keygen` names a
+/// deployment's keys. Everything else survives byte-verbatim, `netrc-file`
+/// and `trusted-users` included, because other caches on this machine
+/// may still need them. A managed line left with no words is dropped
+/// rather than written empty. The flag says whether anything changed, so
+/// a machine that never had this cache is left untouched and unrestarted.
+#[must_use]
+pub fn forget_custom_conf(existing: &str, substituter: &str, host: &str) -> (String, bool) {
+    let mut out = String::new();
+    let mut changed = false;
+    for line in existing.lines() {
+        let trimmed = line.trim();
+        let managed = ["extra-substituters", "extra-trusted-public-keys"]
+            .iter()
+            .find_map(|name| {
+                trimmed
+                    .strip_prefix(name)
+                    .filter(|rest| rest.trim_start().starts_with('='))
+                    .map(|rest| (*name, rest.trim_start()[1..].trim()))
+            });
+        let Some((name, value)) = managed else {
+            let _ = writeln!(out, "{line}");
+            continue;
+        };
+        let words: Vec<&str> = value.split_whitespace().collect();
+        let kept: Vec<&str> = words
+            .iter()
+            .copied()
+            .filter(|word| !forgets(name, word, substituter, host))
+            .collect();
+        if kept.len() != words.len() {
+            changed = true;
+        }
+        if !kept.is_empty() {
+            let _ = writeln!(out, "{name} = {}", kept.join(" "));
+        }
+    }
+    (out, changed)
+}
+
+/// Whether one word of a managed line belongs to the cache being
+/// forgotten.
+fn forgets(name: &str, word: &str, substituter: &str, host: &str) -> bool {
+    match name {
+        "extra-substituters" => word.trim_end_matches('/') == substituter.trim_end_matches('/'),
+        _ => key_belongs_to(word, host),
+    }
+}
+
+/// Whether a trusted key word (`name:base64`) is one of this host's: its
+/// name is `<host>-<digits>`, the shape `cachet keygen --name <host>-1`
+/// writes and a rotation increments.
+fn key_belongs_to(word: &str, host: &str) -> bool {
+    let Some((name, _)) = word.split_once(':') else {
+        return false;
+    };
+    let Some(suffix) = name
+        .strip_prefix(host)
+        .and_then(|rest| rest.strip_prefix('-'))
+    else {
+        return false;
+    };
+    !suffix.is_empty() && suffix.bytes().all(|byte| byte.is_ascii_digit())
+}
+
 /// Register the daemon netrc under Determinate's
 /// `additionalNetrcSources`, preserving whatever else the file holds.
 /// determinate-nixd rewrites the daemon's `netrc-file` after the config
@@ -275,6 +353,8 @@ pub enum ReloadOutcome {
     DeterminateInit,
     /// Nothing worked; the operator restart lines already printed.
     Failed,
+    /// Nothing changed, so nothing was restarted.
+    Unneeded,
 }
 
 /// One privileged command, injected so tests script it and main runs
@@ -404,9 +484,171 @@ pub fn run_setup(
     })
 }
 
+/// What `forget` needs: which cache, by URL. The host is derived from it
+/// the way `setup` derives it, so the two agree on which netrc block and
+/// which keys are this cache's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForgetInput {
+    /// The cache's base URL.
+    pub cache_url: String,
+}
+
+/// The whole of `forget` on the machine: drop the netrc block, the
+/// substituter, and the host's keys, then restart the daemon when
+/// anything changed. The Determinate registration stays, because it names
+/// the netrc file rather than any one cache, and the netrc may still hold
+/// other machines. Nothing here reaches the deployment, so a cache that
+/// no longer exists is forgotten the same way as one that does.
+///
+/// # Errors
+///
+/// [`CliError`] on the first write failure; the daemon reload is
+/// best-effort because its failure mode is diagnosed, not fatal.
+pub fn run_forget(
+    paths: &SetupPaths,
+    input: &ForgetInput,
+    run: &Privileged<'_>,
+    install: &dyn Fn(&Path, &str, u32) -> Result<(), String>,
+) -> Result<SetupReport, CliError> {
+    let host = crate::config::host_of(&input.cache_url)?;
+    let mut wrote = Vec::new();
+
+    if let Ok(existing) = std::fs::read_to_string(&paths.netrc) {
+        let (netrc, dropped) = netrc_drop_blocks(&existing, &host);
+        if dropped {
+            install(&paths.netrc, &netrc, 0o600).map_err(|failure| {
+                CliError(format!(
+                    "could not write {}: {failure}",
+                    paths.netrc.display()
+                ))
+            })?;
+            wrote.push(paths.netrc.clone());
+        }
+    }
+
+    if let Ok(existing) = std::fs::read_to_string(&paths.nix_custom_conf) {
+        let (conf, changed) = forget_custom_conf(&existing, &input.cache_url, &host);
+        if changed {
+            install(&paths.nix_custom_conf, &conf, 0o644).map_err(|failure| {
+                CliError(format!(
+                    "could not write {}: {failure}",
+                    paths.nix_custom_conf.display()
+                ))
+            })?;
+            wrote.push(paths.nix_custom_conf.clone());
+        }
+    }
+
+    let reload = if wrote.is_empty() {
+        ReloadOutcome::Unneeded
+    } else {
+        reload_daemon(paths, run)
+    };
+    Ok(SetupReport {
+        wrote,
+        reload,
+        determinate: paths.determinate,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn netrc_drop_removes_the_host_block_and_says_so() {
+        let existing = concat!(
+            "machine other.example.com login a password b\n",
+            "machine cache.example.com\n    login cachet\n    password old-token\n",
+            "default login anon password none\n",
+        );
+        let (kept, dropped) = netrc_drop_blocks(existing, "cache.example.com");
+        assert!(dropped);
+        assert_eq!(
+            kept,
+            concat!(
+                "machine other.example.com login a password b\n",
+                "default login anon password none\n",
+            )
+        );
+        // A machine that never had this cache is left as it was, and the
+        // flag is what keeps forget from restarting the daemon for nothing.
+        let (again, dropped) = netrc_drop_blocks(&kept, "cache.example.com");
+        assert!(!dropped);
+        assert_eq!(again, kept);
+        assert_eq!(
+            netrc_drop_blocks("", "cache.example.com"),
+            (String::new(), false)
+        );
+    }
+
+    #[test]
+    fn forget_removes_the_substituter_and_the_hosts_keys_and_nothing_else() {
+        let existing = concat!(
+            "cores = 8\n",
+            "netrc-file = /etc/nix/netrc\n",
+            "extra-substituters = https://cache.nixos.org https://cache.example.com https://other.example.com\n",
+            "extra-trusted-public-keys = cache.nixos.org-1:aaaa cache.example.com-1:bbbb other.example.com-1:cccc cache.example.com-2:dddd\n",
+            "trusted-users = root tester\n",
+        );
+        let (forgotten, changed) =
+            forget_custom_conf(existing, "https://cache.example.com/", "cache.example.com");
+        assert!(changed);
+        assert_eq!(
+            forgotten,
+            concat!(
+                "cores = 8\n",
+                "netrc-file = /etc/nix/netrc\n",
+                "extra-substituters = https://cache.nixos.org https://other.example.com\n",
+                "extra-trusted-public-keys = cache.nixos.org-1:aaaa other.example.com-1:cccc\n",
+                "trusted-users = root tester\n",
+            ),
+            "every rotation's key goes; other caches and the daemon's own lines stay"
+        );
+        let (again, changed) =
+            forget_custom_conf(&forgotten, "https://cache.example.com", "cache.example.com");
+        assert!(!changed, "a rerun changes nothing");
+        assert_eq!(again, forgotten);
+    }
+
+    #[test]
+    fn forget_drops_a_managed_line_it_emptied() {
+        let existing = concat!(
+            "extra-substituters = https://cache.example.com\n",
+            "extra-trusted-public-keys = cache.example.com-1:bbbb\n",
+            "trusted-users = root tester\n",
+        );
+        let (forgotten, changed) =
+            forget_custom_conf(existing, "https://cache.example.com", "cache.example.com");
+        assert!(changed);
+        assert_eq!(forgotten, "trusted-users = root tester\n");
+    }
+
+    #[test]
+    fn a_key_belongs_to_a_host_only_by_cachets_naming() {
+        assert!(key_belongs_to(
+            "cache.example.com-1:bbbb",
+            "cache.example.com"
+        ));
+        assert!(key_belongs_to(
+            "cache.example.com-12:bbbb",
+            "cache.example.com"
+        ));
+        // A longer host that starts with this one is somebody else's.
+        assert!(!key_belongs_to(
+            "cache.example.community-1:bbbb",
+            "cache.example.com"
+        ));
+        assert!(!key_belongs_to(
+            "cache.example.com-x:bbbb",
+            "cache.example.com"
+        ));
+        assert!(!key_belongs_to(
+            "cache.example.com-:bbbb",
+            "cache.example.com"
+        ));
+        assert!(!key_belongs_to("cache.example.com-1", "cache.example.com"));
+    }
 
     #[test]
     fn netrc_replacement_is_block_aware() {
