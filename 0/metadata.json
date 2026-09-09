@@ -1,0 +1,131 @@
+{
+  "cli_version": "0.10.2",
+  "checkpoint_id": "01M22KDFN279KZGCG3G6SGZXF0",
+  "session_id": "4406a8f5-e3b8-42e4-a5a2-eef2da85c0c4",
+  "strategy": "manual-commit",
+  "created_at": "2026-09-09T08:09:17.584642Z",
+  "branch": "main",
+  "checkpoints_count": 2,
+  "save_step_count": 2,
+  "files_touched": [
+    ".github/workflows/deploy.yml",
+    "crates/cachet-api/src/lib.rs",
+    "crates/cachet-cli/src/doctor.rs",
+    "crates/cachet-cli/src/main.rs",
+    "crates/cachet-cli/src/setup.rs",
+    "crates/cachet-core/src/constants.rs",
+    "crates/cachet-deploy/src/manifest.rs",
+    "crates/cachet-deploy/src/plan.rs",
+    "crates/cachet-deploy/src/roster.rs",
+    "crates/cachet-deploy/tests/golden.rs",
+    "crates/cachet-deploy/tests/snapshots/golden__manifest_template.snap",
+    "crates/cachet-deploy/tests/snapshots/golden__plan_full.snap",
+    "crates/cachet-worker/src/api.rs",
+    "deploy-manifest.json",
+    "docs/DEPLOY.md",
+    "docs/adr/0021-a-deployment-advertises-its-previous-public-keys.md",
+    "docs/adr/README.md",
+    "docs/console.md",
+    "docs/openapi.yaml",
+    "docs/testing/workerd.md",
+    "infra/alchemy.run.ts",
+    "infra/src/config.ts",
+    "scripts/bootstrap.sh",
+    "web/src/api/schema.ts",
+    "web/src/screens/access.tsx",
+    "web/test/schema.test.ts",
+    "workerd/check.mjs"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-fable-5-1",
+  "turn_id": "e54c608abe1a",
+  "checkpoint_transcript_start": 6099,
+  "transcript_lines_at_start": 6099,
+  "compact_transcript_start": 1120,
+  "token_usage": {
+    "input_tokens": 22677,
+    "cache_creation_tokens": 119651,
+    "cache_read_tokens": 12363002,
+    "output_tokens": 58195,
+    "api_call_count": 18,
+    "subagent_tokens": {
+      "input_tokens": 392,
+      "cache_creation_tokens": 963316,
+      "cache_read_tokens": 16549926,
+      "output_tokens": 207286,
+      "api_call_count": 196
+    }
+  },
+  "skill_events_version": 1,
+  "skill_events": [
+    {
+      "id": "claude-skill-toolu_01UDm3bjNFgMGGALBxwXNssp",
+      "event_type": "tool_invocation",
+      "skill": {
+        "name": "dataviz"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "skill_tool_use",
+        "confidence": "explicit"
+      },
+      "turn_id": "e54c608abe1a",
+      "transcript_anchor": {
+        "unit": "line",
+        "start": 2444,
+        "end": 2445,
+        "entry_ids": [
+          "b6de5149-98d6-4dfa-ae51-4fbf7c1adc81"
+        ],
+        "tool_use_id": "toolu_01UDm3bjNFgMGGALBxwXNssp"
+      },
+      "native": {
+        "tool_name": "Skill",
+        "tool_use_id": "toolu_01UDm3bjNFgMGGALBxwXNssp"
+      },
+      "collapse": {
+        "target": "tool_pair",
+        "label": "Skill: dataviz",
+        "default_collapsed": true
+      }
+    }
+  ],
+  "session_metrics": {
+    "turn_count": 9
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 1,
+      "user_lines_removed": 3,
+      "agent_lines_added": 397,
+      "agent_lines_removed": 22,
+      "user_added_per_file": {
+        ".claude/settings.json": 1
+      },
+      "user_removed_per_file": {
+        ".claude/settings.json": 3
+      }
+    },
+    {
+      "checkpoint_number": 3,
+      "user_lines_added": 1,
+      "user_lines_removed": 3,
+      "agent_lines_added": 410,
+      "agent_lines_removed": 25,
+      "user_added_per_file": {
+        ".claude/settings.json": 1
+      },
+      "user_removed_per_file": {
+        ".claude/settings.json": 3
+      }
+    }
+  ]
+}

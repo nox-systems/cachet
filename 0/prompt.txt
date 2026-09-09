@@ -1,0 +1,7 @@
+<task-notification>
+<task-id>ba981ke4q</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-shivanshvij-Development-nox-cachet/4227b1a5-1031-4e79-bdb9-58e803c486c1/tasks/ba981ke4q.output</output-file>
+<status>completed</status>
+<summary>Background command "Run the workerd lane (wasm build plus every scenario) in the background" completed (exit code 0)</summary>
+</task-notification>

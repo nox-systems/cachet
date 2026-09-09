@@ -1,0 +1,59 @@
+{
+  "cli_version": "0.10.2",
+  "checkpoint_id": "01M22KDFN279KZGCG3G6SGZXF0",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 2,
+  "files_touched": [
+    ".github/workflows/deploy.yml",
+    "crates/cachet-api/src/lib.rs",
+    "crates/cachet-cli/src/doctor.rs",
+    "crates/cachet-cli/src/main.rs",
+    "crates/cachet-cli/src/setup.rs",
+    "crates/cachet-core/src/constants.rs",
+    "crates/cachet-deploy/src/manifest.rs",
+    "crates/cachet-deploy/src/plan.rs",
+    "crates/cachet-deploy/src/roster.rs",
+    "crates/cachet-deploy/tests/golden.rs",
+    "crates/cachet-deploy/tests/snapshots/golden__manifest_template.snap",
+    "crates/cachet-deploy/tests/snapshots/golden__plan_full.snap",
+    "crates/cachet-worker/src/api.rs",
+    "deploy-manifest.json",
+    "docs/DEPLOY.md",
+    "docs/adr/0021-a-deployment-advertises-its-previous-public-keys.md",
+    "docs/adr/README.md",
+    "docs/console.md",
+    "docs/openapi.yaml",
+    "docs/testing/workerd.md",
+    "infra/alchemy.run.ts",
+    "infra/src/config.ts",
+    "scripts/bootstrap.sh",
+    "web/src/api/schema.ts",
+    "web/src/screens/access.tsx",
+    "web/test/schema.test.ts",
+    "workerd/check.mjs"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 22677,
+    "cache_creation_tokens": 119651,
+    "cache_read_tokens": 12363002,
+    "output_tokens": 58195,
+    "api_call_count": 18,
+    "subagent_tokens": {
+      "input_tokens": 392,
+      "cache_creation_tokens": 963316,
+      "cache_read_tokens": 16549926,
+      "output_tokens": 207286,
+      "api_call_count": 196
+    }
+  }
+}
