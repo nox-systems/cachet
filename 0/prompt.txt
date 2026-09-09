@@ -1,0 +1,6 @@
+<task-notification>
+<task-id>b3mb5vub4</task-id>
+<summary>Monitor event: "ci and staging deploy for the hourly cron"</summary>
+<event>ci 912e5b0: failure</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
