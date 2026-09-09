@@ -94,6 +94,7 @@ equivalents). These variables define the deployment:
 | `CACHET_DEPLOY_DEFAULT_BRANCH_REF` | no | The ref allowed to renew leases; default `refs/heads/main`. |
 | `CACHET_DEPLOY_DOMAIN` | no | Custom domain override; defaults to the host. |
 | `CACHET_DEPLOY_FONT_CSS` | no | A stylesheet the console loads for licensed faces. Unset ships the free ones. |
+| `CACHET_DEPLOY_PREVIOUS_PUBLIC_KEYS` | no | Public keys from earlier rotations, comma-joined in nix's `name:base64` form. The config document lists them so a laptop set up after a rotation trusts what older narinfos carry. |
 | `CACHET_DEPLOY_GC_GRACE_MS` | no | Grace override; default 14 days. Set 0 for throwaway test deployments. |
 | `CACHET_SIGNING_KEY` | yes | The `<host>-1:<base64>` secret from bootstrap. |
 | `CACHET_OAUTH_CLIENT_SECRET` | yes | The OAuth App's client secret. |
@@ -363,7 +364,12 @@ bucket, which is deployment-scoped, so a rollback never strands state.
 
 Rotate the signing key by running `cachet keygen --name <host>-2` (the
 suffix increments), replacing `CACHET_SIGNING_KEY` in the env file and in
-the CI secrets, and redeploying. Deployments with clients configured
-before the rotation must add the new public key: `cachet setup`
-refreshes the trusted key list from the deployment's public config on
-re-run.
+the CI secrets, adding the old public key to
+`CACHET_DEPLOY_PREVIOUS_PUBLIC_KEYS` (comma-joined when there is more
+than one), and redeploying. The deployment then advertises both keys in
+its public config. `cachet setup` trusts every key the document lists
+and never drops one, so a laptop configured before the rotation gains
+the new key on re-run, and a laptop configured after it trusts the old
+key too, which every narinfo signed before the rotation still carries.
+Without the var, a fresh laptop reads the paths pushed before the
+rotation as unverifiable until they are pushed again (ADR 0021).

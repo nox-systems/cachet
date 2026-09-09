@@ -48,6 +48,9 @@ export const PublicConfig = Schema.Struct({
   orgs: Schema.Array(Schema.String),
   host: Schema.String,
   publicKey: Schema.String,
+  // Absent on a deployment that never rotated: the keys it signed with
+  // before, which setup trusts beside the current one (ADR 0021).
+  previousPublicKeys: Schema.optional(Schema.Array(Schema.String)),
   deployment: Schema.String,
   version: Schema.String,
   buildSha: Schema.optional(Schema.String),

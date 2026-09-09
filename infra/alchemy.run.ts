@@ -111,6 +111,11 @@ export default Alchemy.Stack(
         CACHET_DEPLOY_NAME: stage,
         CACHET_GC_CRON: GC_CRON,
         ...(cfg.fontCss === undefined ? {} : { CACHET_FONT_CSS: cfg.fontCss }),
+        // The keys a rotation retired, still advertised so a laptop set up
+        // afterwards trusts what older narinfos carry (ADR 0021).
+        ...(cfg.previousPublicKeys === undefined
+          ? {}
+          : { CACHET_PREVIOUS_PUBLIC_KEYS: cfg.previousPublicKeys }),
         CACHET_ORGS: cfg.orgs,
         CACHET_AUDIENCE: cfg.audience,
         CACHET_DEFAULT_BRANCH_REF: cfg.defaultBranchRef,

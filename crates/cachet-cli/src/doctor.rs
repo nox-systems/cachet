@@ -107,10 +107,17 @@ async fn probe_config(
 ) -> (Probe, Option<cachet_api::PublicConfig>) {
     match crate::login::fetch_public_config(client, cache_url).await {
         Ok(config) => {
+            // A rotated deployment advertises the keys it signed with
+            // before, and setup trusts them all; the count says whether
+            // this one has (ADR 0021).
+            let previous = match config.previous_public_keys.len() {
+                0 => String::new(),
+                count => format!(" and {count} previous"),
+            };
             let probe = Probe::pass(
                 "the public config serves",
                 format!(
-                    "host {}, orgs [{}], key {}",
+                    "host {}, orgs [{}], key {}{previous}",
                     config.host,
                     config.orgs.join(", "),
                     config.public_key.split(':').next().unwrap_or("?")

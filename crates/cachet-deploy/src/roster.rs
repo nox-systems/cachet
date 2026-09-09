@@ -106,6 +106,8 @@ pub mod names {
     pub const CACHET_GC_ARMED: &str = "CACHET_GC_ARMED";
     /// The console's licensed-face stylesheet.
     pub const CACHET_FONT_CSS: &str = "CACHET_FONT_CSS";
+    /// Public keys from earlier rotations.
+    pub const CACHET_PREVIOUS_PUBLIC_KEYS: &str = "CACHET_PREVIOUS_PUBLIC_KEYS";
     /// The Analytics Engine dataset's name.
     pub const CACHET_STATS_DATASET: &str = "CACHET_STATS_DATASET";
     /// The account the counter route queries under.
@@ -152,6 +154,8 @@ pub mod env {
     pub const GC_GRACE_MS: &str = "CACHET_DEPLOY_GC_GRACE_MS";
     /// Supplies `CACHET_FONT_CSS`.
     pub const FONT_CSS: &str = "CACHET_DEPLOY_FONT_CSS";
+    /// Supplies `CACHET_PREVIOUS_PUBLIC_KEYS`.
+    pub const PREVIOUS_PUBLIC_KEYS: &str = "CACHET_DEPLOY_PREVIOUS_PUBLIC_KEYS";
     /// Supplies `CACHET_STATS_TOKEN`. The name changes across the
     /// boundary, and it once did not: the deploy then re-read a variable
     /// nothing had set (`infra/alchemy.run.ts`).
@@ -261,6 +265,14 @@ pub const BINDINGS: &[Binding] = &[
         env: Some(env::FONT_CSS),
         default: None,
         summary: "a stylesheet the console loads for licensed faces; unset ships the free ones",
+    },
+    Binding {
+        name: names::CACHET_PREVIOUS_PUBLIC_KEYS,
+        kind: BindingKind::Var,
+        requirement: Requirement::Optional,
+        env: Some(env::PREVIOUS_PUBLIC_KEYS),
+        default: None,
+        summary: "public keys from earlier rotations, comma-joined, so a laptop set up after one trusts older narinfos",
     },
     Binding {
         name: names::CACHET_STATS_DATASET,

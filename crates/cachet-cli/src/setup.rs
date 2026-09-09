@@ -22,6 +22,10 @@ pub struct SetupInput {
     pub cache_url: String,
     /// The deployment's public key in nix's `name:base64` form.
     pub public_key: String,
+    /// Public keys from earlier rotations, which the deployment advertises
+    /// beside the current one so a laptop set up after a rotation trusts
+    /// what older narinfos carry (ADR 0021).
+    pub previous_public_keys: Vec<String>,
     /// The read token `cachet login` stored.
     pub token: String,
     /// The invoking account's login. The daemon's `trusted-users` must
@@ -141,7 +145,7 @@ pub fn merge_custom_conf(
     existing: &str,
     netrc_path: Option<&str>,
     substituter: &str,
-    key: &str,
+    keys: &[&str],
     login: &str,
 ) -> String {
     let mut kept: Vec<&str> = Vec::new();
@@ -179,9 +183,11 @@ pub fn merge_custom_conf(
     if !substituters.iter().any(|word| word == substituter) {
         substituters.push(substituter.to_string());
     }
-    let mut keys = existing_keys;
-    if !key.is_empty() && !keys.iter().any(|word| word == key) {
-        keys.push(key.to_string());
+    let mut trusted = existing_keys;
+    for key in keys.iter().filter(|key| !key.is_empty()) {
+        if !trusted.iter().any(|word| word == key) {
+            trusted.push((*key).to_string());
+        }
     }
     // why: root first because daemons already name it, the invoking login
     // because restricted key settings only reach the evaluator for users
@@ -201,8 +207,8 @@ pub fn merge_custom_conf(
         let _ = writeln!(out, "netrc-file = {path}");
     }
     let _ = writeln!(out, "extra-substituters = {}", substituters.join(" "));
-    if !keys.is_empty() {
-        let _ = writeln!(out, "extra-trusted-public-keys = {}", keys.join(" "));
+    if !trusted.is_empty() {
+        let _ = writeln!(out, "extra-trusted-public-keys = {}", trusted.join(" "));
     }
     let _ = writeln!(out, "trusted-users = {}", users.join(" "));
     out
@@ -369,11 +375,17 @@ pub fn run_setup(
     } else {
         Some(paths.netrc.to_string_lossy().into_owned())
     };
+    // The current key first, then every key the deployment signed with
+    // before, so a laptop set up after a rotation verifies what older
+    // narinfos carry (ADR 0021).
+    let keys: Vec<&str> = std::iter::once(input.public_key.as_str())
+        .chain(input.previous_public_keys.iter().map(String::as_str))
+        .collect();
     let conf = merge_custom_conf(
         &existing_conf,
         netrc_line.as_deref(),
         &input.cache_url,
-        &input.public_key,
+        &keys,
         &input.login,
     );
     install(&paths.nix_custom_conf, &conf, 0o644).map_err(|failure| {
@@ -446,7 +458,7 @@ mod tests {
             existing,
             Some("/etc/nix/netrc"),
             "https://cache.example.com",
-            "cache.example.com-1:bbbb",
+            &["cache.example.com-1:bbbb"],
             "tester",
         );
         assert_eq!(
@@ -464,7 +476,7 @@ mod tests {
             &merged,
             Some("/etc/nix/netrc"),
             "https://cache.example.com",
-            "cache.example.com-1:bbbb",
+            &["cache.example.com-1:bbbb"],
             "tester",
         );
         assert_eq!(merged, again, "a rerun changes nothing");
@@ -472,7 +484,7 @@ mod tests {
 
     #[test]
     fn custom_conf_under_determinate_omits_netrc_file() {
-        let merged = merge_custom_conf("", None, "https://cache.example.com", "k-1:v", "tester");
+        let merged = merge_custom_conf("", None, "https://cache.example.com", &["k-1:v"], "tester");
         assert!(!merged.contains("netrc-file"));
         assert!(merged.contains("extra-substituters = https://cache.example.com\n"));
         assert!(merged.contains("extra-trusted-public-keys = k-1:v\n"));
@@ -488,7 +500,7 @@ mod tests {
             "trusted-users = @admin existing\n",
             None,
             "https://cache.example.com",
-            "k-1:v",
+            &["k-1:v"],
             "tester",
         );
         assert_eq!(
@@ -499,6 +511,27 @@ mod tests {
                 "trusted-users = @admin existing root tester\n",
             ),
             "operator-listed users keep their order; root and the login join once"
+        );
+    }
+
+    #[test]
+    fn previous_keys_join_the_trusted_list_once_and_in_order() {
+        // A rotated deployment advertises the key it signs with now and
+        // the ones it signed with before. A laptop set up after the
+        // rotation needs all of them, or every path pushed before it
+        // reads as unverifiable (ADR 0021).
+        let merged = merge_custom_conf(
+            "extra-trusted-public-keys = cache.example.com-1:aaaa\n",
+            None,
+            "https://cache.example.com",
+            &["cache.example.com-2:bbbb", "cache.example.com-1:aaaa"],
+            "tester",
+        );
+        assert!(
+            merged.contains(
+                "extra-trusted-public-keys = cache.example.com-1:aaaa cache.example.com-2:bbbb\n"
+            ),
+            "{merged}"
         );
     }
 

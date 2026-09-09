@@ -895,6 +895,13 @@ try {
           // both are absent rather than null, so a client can tell "not
           // stamped" from "stamped empty".
           assert.equal("fontCss" in body, false, JSON.stringify(body));
+          // An unrotated deployment lists no previous keys, absent rather
+          // than empty, so it serves the document it always did.
+          assert.equal(
+            "previousPublicKeys" in body,
+            false,
+            JSON.stringify(body),
+          );
         },
       );
 
@@ -1815,6 +1822,57 @@ try {
         },
       );
     },
+  );
+
+  // A rotated deployment advertises the keys it signed with before, so a
+  // laptop set up after the rotation trusts what older narinfos carry
+  // (ADR 0021). The fixture's public key stands in for a retired one.
+  // These boot inside the .dev.vars bracket because the document needs
+  // the signing secret to answer at all.
+  const retiredKey = (
+    await readFile(path.join(fixturesDir, "public"), "utf8")
+  ).trim();
+
+  await scenario(
+    "a rotated deployment lists its previous public keys",
+    async () => [],
+    async ({ base }) => {
+      await check(
+        "the config carries the retired key beside the live one",
+        async () => {
+          const res = await fetch(`${base}/api/public/config`);
+          assert.equal(res.status, 200);
+          const body = await res.json();
+          // Trimmed and with the empty entry dropped: the var is a comma
+          // list an operator types, and the worker reads it the way the
+          // deploy grammar normalizes it.
+          assert.deepEqual(body.previousPublicKeys, [retiredKey]);
+          assert.notEqual(body.publicKey, retiredKey);
+        },
+      );
+    },
+    { CACHET_PREVIOUS_PUBLIC_KEYS: ` ${retiredKey} , ` },
+  );
+
+  await scenario(
+    "a malformed previous key refuses the whole config",
+    async () => [],
+    async ({ base, events }) => {
+      // cachet setup writes every listed key into the daemon's trusted
+      // keys, and nix refuses a configuration holding a malformed one, so
+      // the document refuses first and names the var to fix.
+      await check(
+        "the config answers auth_unavailable and names the var",
+        async () => {
+          const res = await fetch(`${base}/api/public/config`);
+          assert.equal(res.status, 503);
+          const body = await res.json();
+          assert.equal(body.code, "auth_unavailable");
+          await untilEvent(events, '"event":"api.previous_key_malformed"');
+        },
+      );
+    },
+    { CACHET_PREVIOUS_PUBLIC_KEYS: "cachet.lane.invalid-1:not-base64" },
   );
 } finally {
   await rm(devVarsPath, { force: true });

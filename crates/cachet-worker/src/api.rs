@@ -5,14 +5,14 @@
 
 use cachet_core::constants::{
     ACCOUNT_ID_VAR, DEPLOY_NAME_VAR, FONT_CSS_VAR, GC_CRON_VAR, GC_LATEST_REPORT_KEY,
-    GC_REPORTS_KEY_PREFIX, GC_RUNS_PAGE_LIMIT, STATS_API_DEFAULT, STATS_API_URL_VAR,
-    STATS_DATASET_VAR, STATS_TOKEN_SECRET,
+    GC_REPORTS_KEY_PREFIX, GC_RUNS_PAGE_LIMIT, PREVIOUS_PUBLIC_KEYS_VAR, STATS_API_DEFAULT,
+    STATS_API_URL_VAR, STATS_DATASET_VAR, STATS_TOKEN_SECRET,
 };
 use cachet_core::error::ClientError;
 use cachet_core::gc::{GcReport, parse_run_id};
 use cachet_core::schedule::Schedule;
 use cachet_core::types::UnixMillis;
-use cachet_crypto::ed25519::NixSecretKey;
+use cachet_crypto::ed25519::{NixSecretKey, parse_public_key};
 use worker::{Env, Request, Response};
 
 use crate::{auth, log, verdict};
@@ -25,13 +25,21 @@ pub fn public_config(env: &Env) -> worker::Result<Response> {
         Ok(config) => config,
         Err(code) => return crate::error::problem_response(code),
     };
+    // why the event: the answer is auth_unavailable either way, and the
+    // answer must never be the only evidence. A deployment missing one of
+    // these serves a 503 that reads like an outage; the event names the
+    // binding to set.
+    let missing = |name: &str| {
+        log::event("error", "api.config_missing", &[("name", name.to_string())]);
+        crate::error::problem_response(ClientError::AuthUnavailable)
+    };
     let client_id = match env.var("CACHET_OAUTH_CLIENT_ID") {
         Ok(client_id) => client_id.to_string(),
-        Err(_) => return crate::error::problem_response(ClientError::AuthUnavailable),
+        Err(_) => return missing("CACHET_OAUTH_CLIENT_ID"),
     };
     let host = match env.var("CACHET_HOST") {
         Ok(host) => host.to_string(),
-        Err(_) => return crate::error::problem_response(ClientError::AuthUnavailable),
+        Err(_) => return missing("CACHET_HOST"),
     };
     let public_key = match env.secret("CACHET_SIGNING_KEY") {
         Ok(secret) => match NixSecretKey::parse(&secret.to_string()) {
@@ -45,8 +53,35 @@ pub fn public_config(env: &Env) -> worker::Result<Response> {
                 return crate::error::problem_response(ClientError::AuthUnavailable);
             }
         },
-        Err(_) => return crate::error::problem_response(ClientError::AuthUnavailable),
+        Err(_) => return missing("CACHET_SIGNING_KEY"),
     };
+    // why each key parses before it is served: `cachet setup` writes every
+    // key this document lists into the daemon's trusted keys, and nix
+    // refuses a configuration holding a malformed one, so a typo in the
+    // var would break a laptop's nix rather than one cache. The document
+    // refuses instead, and the event names the var to fix.
+    let mut previous_public_keys = Vec::new();
+    if let Ok(listed) = env.var(PREVIOUS_PUBLIC_KEYS_VAR) {
+        let listed = listed.to_string();
+        for key in listed
+            .split(',')
+            .map(str::trim)
+            .filter(|key| !key.is_empty())
+        {
+            if let Err(failure) = parse_public_key(key) {
+                crate::log::event(
+                    "error",
+                    "api.previous_key_malformed",
+                    &[
+                        ("name", PREVIOUS_PUBLIC_KEYS_VAR.to_string()),
+                        ("error", format!("{failure:?}")),
+                    ],
+                );
+                return crate::error::problem_response(ClientError::AuthUnavailable);
+            }
+            previous_public_keys.push(key.to_string());
+        }
+    }
     log::event("info", "api.public_config", &[]);
     // The body is cachet-api's shared type: the served wire and the
     // published OpenAPI schema cannot drift apart here.
@@ -55,6 +90,7 @@ pub fn public_config(env: &Env) -> worker::Result<Response> {
         orgs: config.orgs,
         host,
         public_key,
+        previous_public_keys,
         deployment: env
             .var(DEPLOY_NAME_VAR)
             .map_or_else(|_| "cachet".to_string(), |value| value.to_string()),

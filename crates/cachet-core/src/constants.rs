@@ -117,6 +117,13 @@ pub const GC_CRON_VAR: &str = "CACHET_GC_CRON";
 /// and the repository ships neither the fonts nor an address for them.
 pub const FONT_CSS_VAR: &str = "CACHET_FONT_CSS";
 
+/// Public keys from earlier rotations, comma-joined in nix's
+/// `name:base64` form. A laptop configured after a rotation trusts only
+/// what the config document lists, and every narinfo signed before the
+/// rotation carries the earlier key, so the deployment keeps advertising
+/// it (ADR 0021).
+pub const PREVIOUS_PUBLIC_KEYS_VAR: &str = "CACHET_PREVIOUS_PUBLIC_KEYS";
+
 /// The prefix every read credential this deployment issues carries. It
 /// is what lets the read path tell an issued token from an OIDC token
 /// and from a GitHub token without trying each verifier in turn.

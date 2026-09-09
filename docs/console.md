@@ -59,7 +59,8 @@ results; a run that tripped a gate says so in the signal colour.
 Selecting a run shows its whole report.
 
 **Access** answers who can reach this deployment and how. The
-organizations, the public key, the OAuth client id, the workflow snippet
+organizations, the public key and any earlier keys a rotation left
+advertised, the OAuth client id, the workflow snippet
 CI needs, and the three commands a laptop runs; every command and key
 copies on click. It closes by naming the reader's own session and when it
 expires.

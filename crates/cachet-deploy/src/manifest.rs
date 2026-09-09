@@ -573,6 +573,10 @@ fn wizard(name: &str) -> Option<Wizard> {
             "Font stylesheet",
             "A stylesheet serving licensed faces for the console. Unset ships the free ones.",
         ),
+        names::CACHET_PREVIOUS_PUBLIC_KEYS => plain(
+            "Previous public keys",
+            "Public keys from earlier rotations, comma-joined. A laptop set up after a rotation trusts every key listed here, so paths signed before it still verify.",
+        ),
         names::CLOUDFLARE_ACCOUNT_ID => plain(
             "Cloudflare account id",
             "The account the counter route queries. Needed with the stats token.",

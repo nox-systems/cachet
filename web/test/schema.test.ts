@@ -31,6 +31,19 @@ describe("PublicConfig", () => {
     expect(config.fontCss).toBeUndefined();
   });
 
+  it("reads the previous keys a rotated deployment advertises", () => {
+    const config = decode(wire.PublicConfig, {
+      oauthClientId: "id",
+      orgs: ["nox-systems"],
+      host: "cachet.example.com",
+      publicKey: "cachet.example.com-2:BBBB",
+      previousPublicKeys: ["cachet.example.com-1:AAAA"],
+      deployment: "production",
+      version: "0.1.0",
+    });
+    expect(config.previousPublicKeys).toEqual(["cachet.example.com-1:AAAA"]);
+  });
+
   it("refuses a body missing a field the console reads", () => {
     expect(() =>
       decode(wire.PublicConfig, { orgs: [], host: "h", publicKey: "k" }),

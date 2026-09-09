@@ -14,11 +14,12 @@ use cachet_deploy::{DeployError, Manifest, plan};
 /// The values that are not plain words, by deploy-time name. Everything
 /// else takes a word, because the plan shape-checks only the host, the
 /// domain, and the grace window and passes the rest through.
-const SHAPED: [(&str, &str); 5] = [
+const SHAPED: [(&str, &str); 6] = [
     (deploy::HOST, "cache.acme.example"),
     (deploy::ORGS, "acme, acme-labs"),
     (deploy::ADMINS, "ada,grace"),
     (deploy::GC_GRACE_MS, "0"),
+    (deploy::PREVIOUS_PUBLIC_KEYS, "cache.acme.example-1:AAAA"),
     (
         deploy::CLOUDFLARE_ACCOUNT_ID,
         "0123456789abcdef0123456789abcdef",

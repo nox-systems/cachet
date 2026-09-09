@@ -72,6 +72,11 @@ expression: built
       "derived": false
     },
     {
+      "name": "CACHET_PREVIOUS_PUBLIC_KEYS",
+      "value": "cache.acme.example-1:AAAA",
+      "derived": false
+    },
+    {
       "name": "CACHET_STATS_DATASET",
       "value": "cachet_production",
       "derived": true

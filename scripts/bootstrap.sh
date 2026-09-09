@@ -178,6 +178,10 @@ CACHET_SIGNING_KEY=${signing_key}
 # Optional. A stylesheet the console loads for licensed faces; unset, it
 # renders the open-licensed ones it ships.
 #CACHET_DEPLOY_FONT_CSS=
+# Optional. Public keys from earlier rotations, comma-joined, which the
+# deployment advertises so a laptop set up after a rotation trusts what
+# older narinfos carry (docs/DEPLOY.md, key rotation).
+#CACHET_DEPLOY_PREVIOUS_PUBLIC_KEYS=
 ENV
 chmod 600 "${env_file}.tmp"
 mv "${env_file}.tmp" "${env_file}"

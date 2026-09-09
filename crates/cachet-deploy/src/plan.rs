@@ -282,6 +282,19 @@ fn shaped(name: &str, env_name: &'static str, value: &str) -> Result<String, Dep
             .parse::<u64>()
             .map(|_| value.to_owned())
             .map_err(|_| DeployError::Malformed(env_name)),
+        names::CACHET_PREVIOUS_PUBLIC_KEYS => {
+            let listed = comma_list(value);
+            // The worker decodes each key before serving it; the plan
+            // refuses the one shape it can see without a decoder, a word
+            // with no name half in front of the colon.
+            if listed
+                .split(',')
+                .any(|key| !key.contains(':') || key.starts_with(':'))
+            {
+                return Err(DeployError::Malformed(env_name));
+            }
+            Ok(listed)
+        }
         _ => Ok(value.to_owned()),
     }
 }
@@ -491,6 +504,35 @@ mod tests {
             )],
         );
         assert!(plan("production", &alone).is_ok());
+    }
+
+    #[test]
+    fn previous_public_keys_normalize_and_a_nameless_one_refuses() {
+        let env = with(
+            &minimum(),
+            &[(
+                deploy::PREVIOUS_PUBLIC_KEYS,
+                " cache.example.com-1:AAAA , cache.example.com-2:BBBB ",
+            )],
+        );
+        let built = plan("production", &env).expect("plans");
+        let keys = built
+            .vars
+            .iter()
+            .find(|var| var.name == names::CACHET_PREVIOUS_PUBLIC_KEYS)
+            .expect("planned");
+        assert_eq!(
+            keys.value,
+            "cache.example.com-1:AAAA,cache.example.com-2:BBBB"
+        );
+        for bad in ["AAAA", ":AAAA", "cache.example.com-1:AAAA,BBBB"] {
+            let env = with(&minimum(), &[(deploy::PREVIOUS_PUBLIC_KEYS, bad)]);
+            assert_eq!(
+                plan("production", &env).unwrap_err(),
+                DeployError::Malformed(deploy::PREVIOUS_PUBLIC_KEYS),
+                "{bad}"
+            );
+        }
     }
 
     #[test]

@@ -39,6 +39,10 @@ export interface StageConfig {
    *  fetch them from, and an operator who holds a licence points this at
    *  their own copy. */
   fontCss: string | undefined;
+  /** Public keys from earlier rotations, comma-joined, which the
+   *  deployment advertises so a laptop set up after a rotation trusts what
+   *  older narinfos carry (ADR 0021). */
+  previousPublicKeys: string | undefined;
 }
 
 const REQUIRED = ["HOST", "ORGS", "OAUTH_CLIENT_ID", "ADMINS"] as const;
@@ -127,5 +131,6 @@ export function loadStageConfig(stage: string): StageConfig {
     statsToken,
     accountId,
     fontCss: value("FONT_CSS"),
+    previousPublicKeys: value("PREVIOUS_PUBLIC_KEYS"),
   };
 }

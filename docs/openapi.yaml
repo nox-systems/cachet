@@ -1381,6 +1381,15 @@ components:
           items:
             type: string
           description: The GitHub orgs this deployment serves.
+        previousPublicKeys:
+          type: array
+          items:
+            type: string
+          description: |-
+            Public keys from earlier rotations, in the same form. A client
+            configured after a rotation trusts these too, so every narinfo
+            signed before it still verifies. Absent when the deployment has
+            never rotated (ADR 0021).
         publicKey:
           type: string
           description: The deployment's ed25519 public key in nix's `name:base64` form.

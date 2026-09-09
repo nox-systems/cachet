@@ -59,6 +59,7 @@ jobs:
       CACHET_DEPLOY_DOMAIN: ${{ secrets.CACHET_DEPLOY_DOMAIN }}
       CACHET_DEPLOY_STATS_TOKEN: ${{ secrets.CACHET_DEPLOY_STATS_TOKEN }}
       CACHET_DEPLOY_FONT_CSS: ${{ secrets.CACHET_DEPLOY_FONT_CSS }}
+      CACHET_DEPLOY_PREVIOUS_PUBLIC_KEYS: ${{ secrets.CACHET_DEPLOY_PREVIOUS_PUBLIC_KEYS }}
       # why: zeroed grace is a test-rig property (the integration lane
       # sweeps what it seeds), so the workflow says it outright instead of
       # riding a stage-name default in config.
@@ -126,6 +127,7 @@ jobs:
       CACHET_DEPLOY_DOMAIN: ${{ secrets.CACHET_DEPLOY_DOMAIN }}
       CACHET_DEPLOY_STATS_TOKEN: ${{ secrets.CACHET_DEPLOY_STATS_TOKEN }}
       CACHET_DEPLOY_FONT_CSS: ${{ secrets.CACHET_DEPLOY_FONT_CSS }}
+      CACHET_DEPLOY_PREVIOUS_PUBLIC_KEYS: ${{ secrets.CACHET_DEPLOY_PREVIOUS_PUBLIC_KEYS }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # why: ci does not run on tags, it runs on main and on pull requests,
@@ -189,6 +191,7 @@ jobs:
       CACHET_DEPLOY_DOMAIN: ${{ secrets.CACHET_DEPLOY_DOMAIN }}
       CACHET_DEPLOY_STATS_TOKEN: ${{ secrets.CACHET_DEPLOY_STATS_TOKEN }}
       CACHET_DEPLOY_FONT_CSS: ${{ secrets.CACHET_DEPLOY_FONT_CSS }}
+      CACHET_DEPLOY_PREVIOUS_PUBLIC_KEYS: ${{ secrets.CACHET_DEPLOY_PREVIOUS_PUBLIC_KEYS }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: nix on the cachet cache

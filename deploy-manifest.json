@@ -175,6 +175,17 @@
       }
     },
     {
+      "name": "CACHET_PREVIOUS_PUBLIC_KEYS",
+      "requirement": "optional",
+      "value": "$VAR(CACHET_PREVIOUS_PUBLIC_KEYS)",
+      "env": "CACHET_DEPLOY_PREVIOUS_PUBLIC_KEYS",
+      "summary": "public keys from earlier rotations, comma-joined, so a laptop set up after one trusts older narinfos",
+      "wizard": {
+        "label": "Previous public keys",
+        "help": "Public keys from earlier rotations, comma-joined. A laptop set up after a rotation trusts every key listed here, so paths signed before it still verify."
+      }
+    },
+    {
       "name": "CACHET_STATS_DATASET",
       "requirement": "derived",
       "value": "$RESOURCE_NAME_UNDERSCORED",

@@ -25,6 +25,16 @@ pub struct PublicConfig {
     /// The deployment's ed25519 public key in nix's `name:base64` form.
     #[serde(rename = "publicKey")]
     pub public_key: String,
+    /// Public keys from earlier rotations, in the same form. A client
+    /// configured after a rotation trusts these too, so every narinfo
+    /// signed before it still verifies. Absent when the deployment has
+    /// never rotated (ADR 0021).
+    #[serde(
+        rename = "previousPublicKeys",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub previous_public_keys: Vec<String>,
     /// The deployment's name, which is also its stage and its resource
     /// prefix. Housekeeping rather than protocol identity, and the thing
     /// a console names in its header so two tabs are told apart.
@@ -458,6 +468,7 @@ mod tests {
             public_key: "cachet.example.com-1:AAAA".to_string(),
             deployment: "production".to_string(),
             version: "0.1.0".to_string(),
+            previous_public_keys: Vec::new(),
             build_sha: None,
             font_css: None,
         };
@@ -465,6 +476,21 @@ mod tests {
         assert_eq!(
             body,
             r#"{"oauthClientId":"id","orgs":["org"],"host":"cachet.example.com","publicKey":"cachet.example.com-1:AAAA","deployment":"production","version":"0.1.0"}"#,
+        );
+        // A rotated deployment lists the keys it signed with before, so a
+        // client configured after the rotation trusts them too, and a
+        // deployment that never rotated serves the document it always did.
+        let rotated = PublicConfig {
+            public_key: "cachet.example.com-2:BBBB".to_string(),
+            previous_public_keys: vec!["cachet.example.com-1:AAAA".to_string()],
+            ..config.clone()
+        };
+        let body = serde_json::to_string(&rotated).expect("serializes");
+        assert!(
+            body.contains(
+                r#""publicKey":"cachet.example.com-2:BBBB","previousPublicKeys":["cachet.example.com-1:AAAA"]"#
+            ),
+            "{body}"
         );
         // The two optional fields are absent rather than null, so a
         // deployment that stamps no commit and licenses no fonts serves

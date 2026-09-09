@@ -229,6 +229,14 @@ steps:
             <Copy value={deployment.publicKey} />
           </div>
 
+          {(deployment.previousPublicKeys ?? []).map((key) => (
+            <div key={key} {...stylex.props(styles.row)}>
+              <Label>Previous key</Label>
+              <span {...stylex.props(styles.value)}>{key}</span>
+              <Copy value={key} />
+            </div>
+          ))}
+
           <div {...stylex.props(styles.row)}>
             <Label>OAuth client</Label>
             <span {...stylex.props(styles.value)}>

@@ -205,6 +205,7 @@ async fn setup(
         &cachet_cli::setup::SetupInput {
             cache_url: url,
             public_key: config.public_key,
+            previous_public_keys: config.previous_public_keys,
             token,
             login,
         },
