@@ -1,0 +1,11 @@
+---
+source: crates/cachet-deploy/tests/golden.rs
+expression: "wordings.join(\"\\n\")"
+---
+bad name: the deployment name is a lowercase word of 2 to 32 characters: a letter, then letters, digits, and dashes
+empty environment: missing: CACHET_DEPLOY_HOST, CACHET_DEPLOY_ORGS, CACHET_DEPLOY_ADMINS, CACHET_DEPLOY_OAUTH_CLIENT_ID, CACHET_SIGNING_KEY, CACHET_OAUTH_CLIENT_SECRET. Set them in infra/.env.<name> or in the CI environment's variables and secrets (docs/DEPLOY.md)
+one missing: missing: CACHET_DEPLOY_ADMINS. Set them in infra/.env.<name> or in the CI environment's variables and secrets (docs/DEPLOY.md)
+malformed host: CACHET_DEPLOY_HOST is present and malformed
+malformed domain: CACHET_DEPLOY_DOMAIN is present and malformed
+malformed grace: CACHET_DEPLOY_GC_GRACE_MS is present and malformed
+half a pair: CACHET_DEPLOY_STATS_TOKEN is set and CLOUDFLARE_ACCOUNT_ID is not; the first needs the second

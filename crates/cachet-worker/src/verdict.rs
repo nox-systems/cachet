@@ -18,7 +18,7 @@ use worker::{Env, Fetch, Headers, Method, Request};
 use crate::log;
 
 /// The KV binding for verdicts, sessions, and OAuth state.
-pub(crate) const KV_BINDING: &str = "CACHET_KV";
+pub(crate) const KV_BINDING: &str = cachet_deploy::roster::names::CACHET_KV;
 
 thread_local! {
     static READ_DECISION_MEMO: std::cell::RefCell<std::collections::BTreeMap<String, MemoEntry>> =

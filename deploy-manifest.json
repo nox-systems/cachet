@@ -1,0 +1,275 @@
+{
+  "manifestVersion": 1,
+  "product": "cachet",
+  "version": "0.1.2",
+  "worker": {
+    "mainModule": "index.js",
+    "modules": [
+      {
+        "name": "index.js",
+        "kind": "esModule"
+      },
+      {
+        "name": "index_bg.wasm",
+        "kind": "compiledWasm"
+      },
+      {
+        "name": "worker/shim.mjs",
+        "kind": "esModule"
+      }
+    ],
+    "compatibilityDate": "2026-05-01",
+    "compatibilityFlags": ["nodejs_compat"],
+    "observability": true,
+    "limits": {
+      "cpuMs": 300000
+    }
+  },
+  "resources": [
+    {
+      "kind": "r2_bucket",
+      "key": "bucket",
+      "name": "$RESOURCE_NAME"
+    },
+    {
+      "kind": "kv_namespace",
+      "key": "kv",
+      "title": "$RESOURCE_NAME"
+    },
+    {
+      "kind": "analytics_engine",
+      "key": "events",
+      "dataset": "$RESOURCE_NAME_UNDERSCORED"
+    }
+  ],
+  "bindings": [
+    {
+      "type": "r2_bucket",
+      "name": "CACHE_BUCKET",
+      "resource": "bucket"
+    },
+    {
+      "type": "kv_namespace",
+      "name": "CACHET_KV",
+      "resource": "kv"
+    },
+    {
+      "type": "analytics_engine",
+      "name": "CACHET_EVENTS",
+      "resource": "events"
+    },
+    {
+      "type": "assets",
+      "name": "ASSETS"
+    }
+  ],
+  "vars": [
+    {
+      "name": "CACHET_HOST",
+      "requirement": "required",
+      "value": "$HOST",
+      "env": "CACHET_DEPLOY_HOST",
+      "summary": "the cache's host name, which is also the signing key's name prefix",
+      "wizard": {
+        "label": "Host",
+        "help": "The cache's address, in a zone this account holds. It names the signing key and appears in every signature, so choose it once: moving later is a key rotation."
+      }
+    },
+    {
+      "name": "CACHET_ORGS",
+      "requirement": "required",
+      "value": "$VAR(CACHET_ORGS)",
+      "env": "CACHET_DEPLOY_ORGS",
+      "summary": "comma-joined GitHub org slugs; nobody outside them authenticates",
+      "wizard": {
+        "label": "GitHub organizations",
+        "help": "The org slugs this cache serves. CI in these orgs writes; their members read."
+      }
+    },
+    {
+      "name": "CACHET_ADMINS",
+      "requirement": "required",
+      "value": "$VAR(CACHET_ADMINS)",
+      "env": "CACHET_DEPLOY_ADMINS",
+      "summary": "comma-joined GitHub logins allowed on /api/self/*",
+      "wizard": {
+        "label": "Admins",
+        "help": "GitHub logins that see the console's collection and traffic screens."
+      }
+    },
+    {
+      "name": "CACHET_OAUTH_CLIENT_ID",
+      "requirement": "required",
+      "value": "$VAR(CACHET_OAUTH_CLIENT_ID)",
+      "env": "CACHET_DEPLOY_OAUTH_CLIENT_ID",
+      "summary": "the GitHub OAuth App's client id",
+      "wizard": {
+        "label": "OAuth App client id",
+        "help": "A GitHub OAuth App in the org, with Device Flow enabled. The callback URL is fixed by the host, so the app can exist before anything deploys.",
+        "consoleUrl": "https://github.com/settings/developers",
+        "setupSteps": [
+          "In GitHub, create a new OAuth App (an OAuth App, not a GitHub App).",
+          "Set the homepage URL to https://$HOST and the authorization callback URL to the redirect URI shown here.",
+          "Enable Device Flow.",
+          "Register the app, generate a client secret, and copy both values here."
+        ],
+        "redirectUriTemplate": "https://$HOST/_auth/callback"
+      }
+    },
+    {
+      "name": "CACHET_AUDIENCE",
+      "requirement": "required",
+      "value": "$VAR(CACHET_AUDIENCE)",
+      "env": "CACHET_DEPLOY_AUDIENCE",
+      "default": "cachet",
+      "summary": "the OIDC audience a CI token must carry",
+      "wizard": {
+        "label": "OIDC audience",
+        "help": "The audience CI tokens must carry. The action sends cachet unless told otherwise."
+      }
+    },
+    {
+      "name": "CACHET_DEFAULT_BRANCH_REF",
+      "requirement": "required",
+      "value": "$VAR(CACHET_DEFAULT_BRANCH_REF)",
+      "env": "CACHET_DEPLOY_DEFAULT_BRANCH_REF",
+      "default": "refs/heads/main",
+      "summary": "the ref allowed to renew leases",
+      "wizard": {
+        "label": "Default branch ref",
+        "help": "The ref whose CI runs may renew leases. Pushes from other refs still land; they do not extend retention."
+      }
+    },
+    {
+      "name": "CACHET_DEPLOY_NAME",
+      "requirement": "derived",
+      "value": "$NAME",
+      "summary": "the deployment's name, which the console prints in its header"
+    },
+    {
+      "name": "CACHET_GC_CRON",
+      "requirement": "derived",
+      "value": "0 * * * *",
+      "summary": "the collector's schedule, the same expression its trigger fires on"
+    },
+    {
+      "name": "CACHET_GC_GRACE_MS",
+      "requirement": "optional",
+      "value": "$VAR(CACHET_GC_GRACE_MS)",
+      "env": "CACHET_DEPLOY_GC_GRACE_MS",
+      "summary": "the grace window override; unset takes the worker's fourteen days",
+      "wizard": {
+        "label": "Grace window (milliseconds)",
+        "help": "How long an unreferenced path survives before the collector may delete it. Fourteen days unless set. Zero is for throwaway deployments."
+      }
+    },
+    {
+      "name": "CACHET_FONT_CSS",
+      "requirement": "optional",
+      "value": "$VAR(CACHET_FONT_CSS)",
+      "env": "CACHET_DEPLOY_FONT_CSS",
+      "summary": "a stylesheet the console loads for licensed faces; unset ships the free ones",
+      "wizard": {
+        "label": "Font stylesheet",
+        "help": "A stylesheet serving licensed faces for the console. Unset ships the free ones."
+      }
+    },
+    {
+      "name": "CACHET_STATS_DATASET",
+      "requirement": "derived",
+      "value": "$RESOURCE_NAME_UNDERSCORED",
+      "summary": "the Analytics Engine dataset the deployment writes and reads back"
+    },
+    {
+      "name": "CLOUDFLARE_ACCOUNT_ID",
+      "requirement": "optional",
+      "value": "$VAR(CLOUDFLARE_ACCOUNT_ID)",
+      "env": "CLOUDFLARE_ACCOUNT_ID",
+      "summary": "the account the counter route queries under; the stats token needs it",
+      "wizard": {
+        "label": "Cloudflare account id",
+        "help": "The account the counter route queries. Needed with the stats token."
+      }
+    }
+  ],
+  "secrets": [
+    {
+      "name": "CACHET_SIGNING_KEY",
+      "requirement": "required",
+      "value": "$SECRET(CACHET_SIGNING_KEY)",
+      "env": "CACHET_SIGNING_KEY",
+      "summary": "the signing key, <host>-1:<base64>, written by cachet keygen",
+      "wizard": {
+        "label": "Signing key",
+        "help": "Generated here. Download the secret: it is what lets you move to self-hosting or reinstall against a kept cache."
+      },
+      "generated": {
+        "kind": "ed25519NixKey",
+        "keyName": "$HOST-1"
+      }
+    },
+    {
+      "name": "CACHET_OAUTH_CLIENT_SECRET",
+      "requirement": "required",
+      "value": "$SECRET(CACHET_OAUTH_CLIENT_SECRET)",
+      "env": "CACHET_OAUTH_CLIENT_SECRET",
+      "summary": "the GitHub OAuth App's client secret",
+      "wizard": {
+        "label": "OAuth App client secret",
+        "help": "Generated in the OAuth App's settings. Shown once there; paste it here once."
+      }
+    },
+    {
+      "name": "CACHET_STATS_TOKEN",
+      "requirement": "optional",
+      "value": "$SECRET(CACHET_STATS_TOKEN)",
+      "env": "CACHET_DEPLOY_STATS_TOKEN",
+      "summary": "a Cloudflare token scoped to Account Analytics:Read; without it the deployment counts and cannot report",
+      "wizard": {
+        "label": "Stats token",
+        "help": "A Cloudflare API token with Account Analytics:Read. Without it the deployment counts and cannot report."
+      }
+    }
+  ],
+  "crons": [
+    {
+      "expression": "0 * * * *",
+      "var": "CACHET_GC_CRON"
+    }
+  ],
+  "route": {
+    "customDomain": "optional",
+    "workersDev": true,
+    "hostIsIdentity": true
+  },
+  "assets": {
+    "directory": "web/dist",
+    "base": "/console",
+    "htmlHandling": "none",
+    "notFoundHandling": "none"
+  },
+  "verify": [
+    {
+      "get": "/nix-cache-info",
+      "status": 200
+    },
+    {
+      "get": "/api/public/config",
+      "jsonPath": "$.version",
+      "equals": "$VERSION"
+    },
+    {
+      "get": "/api/public/config",
+      "jsonPath": "$.publicKey",
+      "equals": "$GENERATED_PUBLIC(CACHET_SIGNING_KEY)"
+    },
+    {
+      "get": "/api/public/config",
+      "jsonPath": "$.deployment",
+      "equals": "$NAME"
+    }
+  ],
+  "console": {
+    "path": "/console"
+  }
+}

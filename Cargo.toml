@@ -9,6 +9,7 @@ members = [
     "crates/cachet-core",
     "crates/cachet-crypto",
     "crates/cachet-api",
+    "crates/cachet-deploy",
     "crates/cachet-worker",
     "crates/cachet-push",
     "crates/cachet-cli",
@@ -17,15 +18,17 @@ default-members = [
     "crates/cachet-core",
     "crates/cachet-crypto",
     "crates/cachet-api",
+    "crates/cachet-deploy",
     "crates/cachet-push",
     "crates/cachet-cli",
 ]
 
 [workspace.package]
 edition = "2021"
-# why: this flows into the generated OpenAPI document's info.version, so a
-# bump drifts docs/openapi.yaml and the openapi gate fails. Bump and
-# regenerate in one commit: `just openapi`.
+# why: this flows into the generated OpenAPI document's info.version and
+# into deploy-manifest.json's version, so a bump drifts both and their
+# gates fail. Bump and regenerate in one commit: `just openapi
+# deploy-manifest`.
 version = "0.1.2"
 publish = false
 license = "Apache-2.0"

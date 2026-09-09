@@ -1,0 +1,75 @@
+---
+source: crates/cachet-deploy/tests/golden.rs
+expression: built
+---
+{
+  "name": "cachet-staging",
+  "resourceName": "cachet-staging",
+  "host": "cache.acme.example",
+  "domain": "cache.acme.example",
+  "bucket": "cachet-staging",
+  "kvTitle": "cachet-staging",
+  "dataset": "cachet_staging",
+  "worker": {
+    "name": "cachet-staging",
+    "compatibilityDate": "2026-05-01",
+    "compatibilityFlags": [
+      "nodejs_compat"
+    ],
+    "cron": "0 * * * *",
+    "cpuMs": 300000,
+    "observability": true
+  },
+  "vars": [
+    {
+      "name": "CACHET_HOST",
+      "value": "cache.acme.example",
+      "derived": false
+    },
+    {
+      "name": "CACHET_ORGS",
+      "value": "acme,acme-labs",
+      "derived": false
+    },
+    {
+      "name": "CACHET_ADMINS",
+      "value": "ada,grace",
+      "derived": false
+    },
+    {
+      "name": "CACHET_OAUTH_CLIENT_ID",
+      "value": "value",
+      "derived": false
+    },
+    {
+      "name": "CACHET_AUDIENCE",
+      "value": "cachet",
+      "derived": false
+    },
+    {
+      "name": "CACHET_DEFAULT_BRANCH_REF",
+      "value": "refs/heads/main",
+      "derived": false
+    },
+    {
+      "name": "CACHET_DEPLOY_NAME",
+      "value": "cachet-staging",
+      "derived": true
+    },
+    {
+      "name": "CACHET_GC_CRON",
+      "value": "0 * * * *",
+      "derived": true
+    },
+    {
+      "name": "CACHET_STATS_DATASET",
+      "value": "cachet_staging",
+      "derived": true
+    }
+  ],
+  "secrets": [
+    "CACHET_SIGNING_KEY",
+    "CACHET_OAUTH_CLIENT_SECRET"
+  ],
+  "envFile": "infra/.env.cachet-staging"
+}

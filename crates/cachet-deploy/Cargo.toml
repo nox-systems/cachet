@@ -1,0 +1,42 @@
+[package]
+name = "cachet-deploy"
+description = "The deployment grammar: the binding roster the worker imports, the name grammar, the secret-free plan, and the release manifest. No I/O, no clock, no ambient environment."
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = ["plan"]
+# why default-on with the worker opting out, rather than default-off: the
+# property and golden lanes reach this crate with a plain
+# `--workspace --test <name>`, and a default-off feature would leave them
+# silently not compiling the tests at all, which is the failure CLAUDE.md
+# §9 exists to prevent. The worker sets default-features = false, so the
+# roster it imports brings no dependency into the wasm bundle.
+# why serde/alloc by name: the manifest's tagged enums derive through
+# serde's alloc-gated deserializer helpers, and serde_json's alloc feature
+# reaches serde_core rather than serde itself. The unit build got the
+# feature through unification with the dev-dependencies; the emitter
+# binary, built alone, did not.
+plan = ["dep:serde", "dep:serde_json", "serde/alloc"]
+
+[dependencies]
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+
+[dev-dependencies]
+hegeltest.workspace = true
+# why json: the plan and the manifest are JSON documents, and pinning them
+# as JSON snapshots keeps a diff readable as a diff of the document.
+insta = { workspace = true, features = ["json"] }
+
+# why: regenerating the committed deploy-manifest.json is a maintenance
+# action with its own binary, the way cachet-api's openapi binary is.
+[[bin]]
+name = "deploy-manifest"
+path = "src/bin/deploy_manifest.rs"
+required-features = ["plan"]

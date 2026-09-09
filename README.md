@@ -79,7 +79,9 @@ and cannot substitute from the cache.
 
 - `crates/`: the workspace. `cachet-core` (pure domain), `cachet-crypto`,
   `cachet-api` (the HTTP surface and the generated OpenAPI document),
-  `cachet-worker` (the wasm32 deployable), `cachet-push`, `cachet-cli`.
+  `cachet-deploy` (the deployment grammar and the generated
+  `deploy-manifest.json`), `cachet-worker` (the wasm32 deployable),
+  `cachet-push`, `cachet-cli`.
 - `action/`: the composite GitHub Action consumers wire into CI.
 - `web/`: the browser console the deployment serves at `/console`.
 - `infra/`: the alchemy stack that provisions a deployment.

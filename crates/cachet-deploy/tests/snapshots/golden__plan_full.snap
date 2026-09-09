@@ -1,0 +1,91 @@
+---
+source: crates/cachet-deploy/tests/golden.rs
+expression: built
+---
+{
+  "name": "production",
+  "resourceName": "cachet-production",
+  "host": "cache.acme.example",
+  "domain": "cache2.acme.example",
+  "bucket": "cachet-production",
+  "kvTitle": "cachet-production",
+  "dataset": "cachet_production",
+  "worker": {
+    "name": "cachet-production",
+    "compatibilityDate": "2026-05-01",
+    "compatibilityFlags": [
+      "nodejs_compat"
+    ],
+    "cron": "0 * * * *",
+    "cpuMs": 300000,
+    "observability": true
+  },
+  "vars": [
+    {
+      "name": "CACHET_HOST",
+      "value": "cache.acme.example",
+      "derived": false
+    },
+    {
+      "name": "CACHET_ORGS",
+      "value": "acme,acme-labs",
+      "derived": false
+    },
+    {
+      "name": "CACHET_ADMINS",
+      "value": "ada,grace",
+      "derived": false
+    },
+    {
+      "name": "CACHET_OAUTH_CLIENT_ID",
+      "value": "value",
+      "derived": false
+    },
+    {
+      "name": "CACHET_AUDIENCE",
+      "value": "value",
+      "derived": false
+    },
+    {
+      "name": "CACHET_DEFAULT_BRANCH_REF",
+      "value": "value",
+      "derived": false
+    },
+    {
+      "name": "CACHET_DEPLOY_NAME",
+      "value": "production",
+      "derived": true
+    },
+    {
+      "name": "CACHET_GC_CRON",
+      "value": "0 * * * *",
+      "derived": true
+    },
+    {
+      "name": "CACHET_GC_GRACE_MS",
+      "value": "0",
+      "derived": false
+    },
+    {
+      "name": "CACHET_FONT_CSS",
+      "value": "value",
+      "derived": false
+    },
+    {
+      "name": "CACHET_STATS_DATASET",
+      "value": "cachet_production",
+      "derived": true
+    },
+    {
+      "name": "CLOUDFLARE_ACCOUNT_ID",
+      "value": "0123456789abcdef0123456789abcdef",
+      "derived": false
+    }
+  ],
+  "secrets": [
+    "CACHET_SIGNING_KEY",
+    "CACHET_OAUTH_CLIENT_SECRET",
+    "CACHET_STATS_TOKEN"
+  ],
+  "envFile": "infra/.env.production"
+}

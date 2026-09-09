@@ -107,6 +107,17 @@ account id is bound into the worker as well, because reading the
 deployment's own counters is Cloudflare's SQL API and that API is
 addressed per account.
 
+The source of this table is `crates/cachet-deploy`, the deployment
+grammar (ADR 0020). Its roster names every binding the worker reads,
+with the environment variable that supplies each, and a test holds the
+worker's source to it in both directions. The same crate derives a
+deployment's plan from its name and env file, refusing the way the deploy
+program refuses, and generates `deploy-manifest.json` at the repository
+root: the release's bindings, resources, vars, and secrets as a template
+with placeholders, which is what a deploy tool renders into an account.
+`just deploy-manifest` regenerates it and `just deploy-manifest-check`
+fails the build when it drifts.
+
 ## Rehearsing with a second deployment
 
 One account can hold any number of deployments, one per name. To

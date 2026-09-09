@@ -44,10 +44,12 @@ thread::spawn, HashMap, HashSet.
 
 The dependency direction is one-way: cachet-core is pure; cachet-crypto
 computes; cachet-api describes the HTTP surface and generates the OpenAPI
-document; cachet-worker is the wasm32 deployable that owns every binding;
-cachet-push and cachet-cli are native writer tools; `web/` is the
-console, which depends on the HTTP surface and on nothing in the
-workspace. cachet-worker fails
+document; cachet-deploy is the deployment grammar, the binding roster the
+worker imports plus the secret-free plan and the release manifest, with
+no I/O and no ambient environment; cachet-worker is the wasm32 deployable
+that owns every binding; cachet-push and cachet-cli are native writer
+tools; `web/` is the console, which depends on the HTTP surface and on
+nothing in the workspace. cachet-worker fails
 host builds and is excluded from workspace default-members; its build and
 its truth lane are the wasm verbs. A path dependency against this
 direction fails review.
@@ -81,11 +83,13 @@ skipping.
 
 ## §8 The manifest gates
 
-Three bijections keep docs and runs honest, all enforced by scripts in
+Four bijections keep docs and runs honest, all enforced by scripts in
 `scripts/`: the §11 manifest against the repo's non-ADR Markdown
 (check-doc-manifest.sh), docs/testing/lanes.toml against the lane docs
-and CI jobs (check-lane-manifest.sh), and cachet-api's route descriptors
-against the committed docs/openapi.yaml (check-openapi-drift.sh).
+and CI jobs (check-lane-manifest.sh), cachet-api's route descriptors
+against the committed docs/openapi.yaml (check-openapi-drift.sh), and
+cachet-deploy's grammar against the committed deploy-manifest.json
+(check-deploy-manifest.sh).
 
 ## §9 The lanes
 

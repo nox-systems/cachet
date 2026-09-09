@@ -18,6 +18,10 @@ crate-type = ["cdylib", "rlib"]
 cachet-core = { path = "../cachet-core" }
 cachet-crypto = { path = "../cachet-crypto" }
 cachet-api = { path = "../cachet-api" }
+# why default-features = false: the roster is a dependency-free const
+# table, and everything past it (the plan, the manifest) would bring
+# serde_json into the bundle for nothing the worker reads at runtime.
+cachet-deploy = { path = "../cachet-deploy", default-features = false }
 worker = "0.8.5"
 # why: panics land in worker logs with their real message instead of an
 # opaque unreachable trap.

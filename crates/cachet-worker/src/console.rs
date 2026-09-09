@@ -26,7 +26,7 @@ use cachet_core::error::ClientError;
 pub(crate) const CONSOLE_PREFIX: &str = "/console";
 
 /// The binding the asset layer answers on.
-const ASSETS_BINDING: &str = "ASSETS";
+const ASSETS_BINDING: &str = cachet_deploy::roster::names::ASSETS;
 
 /// The document every console route renders from.
 const CONSOLE_SHELL: &str = "/console/index.html";

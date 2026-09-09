@@ -179,6 +179,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "cachet-deploy"
+version = "0.1.2"
+dependencies = [
+ "hegeltest",
+ "insta",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "cachet-push"
 version = "0.1.2"
 dependencies = [
@@ -203,6 +213,7 @@ dependencies = [
  "cachet-api",
  "cachet-core",
  "cachet-crypto",
+ "cachet-deploy",
  "console_error_panic_hook",
  "futures-util",
  "getrandom 0.2.17",
@@ -911,6 +922,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "86f0f8fee8c926415c58d6ae43a08523a26faccb2323f5e6b644fe7dd4ef6b82"
 dependencies = [
  "once_cell",
+ "serde",
  "similar",
  "tempfile",
 ]

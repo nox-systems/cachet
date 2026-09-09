@@ -18,7 +18,7 @@ use worker::{Cache, Context, Env, Headers, Response, Result};
 use crate::{error, log};
 
 /// The R2 binding the whole cache lives in.
-const BUCKET_BINDING: &str = "CACHE_BUCKET";
+const BUCKET_BINDING: &str = cachet_deploy::roster::names::CACHE_BUCKET;
 
 /// Apply a pure header list to a response.
 fn apply(response: Response, headers: &[(&'static str, String)]) -> Result<Response> {

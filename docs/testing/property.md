@@ -36,6 +36,13 @@ classes in force now:
   actually reported. Analytics Engine returns nothing for a bucket
   nothing happened in, so without the fill a chart draws a straight line
   through an hour that had no traffic.
+- The deploy grammar laws. Name validation is total, and any accepted
+  name derives resource names the platform takes, with the `cachet-`
+  prefix present exactly once. The plan is a function of its arguments.
+  Over arbitrary environment maps holding marked values, no rendered
+  error and no plan ever carries a value from the map, only a name,
+  because the map holds the signing key and an error that could carry a
+  value would eventually print one into a CI log.
 
 New classes join this list in the same commit as the code that obeys them.
 

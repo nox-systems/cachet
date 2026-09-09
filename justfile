@@ -19,6 +19,7 @@ check:
     just clippy-wasm
     just wasm-hygiene
     just openapi-check
+    just deploy-manifest-check
 
 # format the tree
 fmt:
@@ -86,6 +87,15 @@ openapi:
 # the OpenAPI bijection: descriptors against the committed document
 openapi-check:
     bash scripts/check-openapi-drift.sh
+
+# regenerate deploy-manifest.json from the deployment grammar: the binding
+# roster and the release constants in crates/cachet-deploy
+deploy-manifest:
+    cargo run -p cachet-deploy --bin deploy-manifest > deploy-manifest.json
+
+# the deploy-manifest bijection: the grammar against the committed document
+deploy-manifest-check:
+    bash scripts/check-deploy-manifest.sh
 
 # build the deployable worker bundle with worker-build, then stamp the JS
 # loader with the wasm's hash: deploy-time drift detection hashes the
