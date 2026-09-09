@@ -1,0 +1,7 @@
+<task-notification>
+<task-id>b6ofiu0qm</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-shivanshvij-Development-nox-cachet/4227b1a5-1031-4e79-bdb9-58e803c486c1/tasks/b6ofiu0qm.output</output-file>
+<status>completed</status>
+<summary>Background command "Run the workerd lane in the background after the cargo chain has the lock" completed (exit code 0)</summary>
+</task-notification>
