@@ -237,6 +237,16 @@ steps:
             </div>
           ))}
 
+          {deployment.managedBy !== undefined && (
+            <div {...stylex.props(styles.row)}>
+              <Label>Managed at</Label>
+              <a href={deployment.managedBy} {...stylex.props(styles.value)}>
+                {deployment.managedBy}
+              </a>
+              <span />
+            </div>
+          )}
+
           <div {...stylex.props(styles.row)}>
             <Label>OAuth client</Label>
             <span {...stylex.props(styles.value)}>

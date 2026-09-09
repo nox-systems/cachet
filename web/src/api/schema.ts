@@ -55,6 +55,9 @@ export const PublicConfig = Schema.Struct({
   version: Schema.String,
   buildSha: Schema.optional(Schema.String),
   fontCss: Schema.optional(Schema.String),
+  // Absent on a self-hosted deployment: the page on the deployer that
+  // manages this one, so an admin knows where its configuration lives.
+  managedBy: Schema.optional(Schema.String),
 });
 export type PublicConfig = typeof PublicConfig.Type;
 

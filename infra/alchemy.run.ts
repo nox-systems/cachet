@@ -116,6 +116,9 @@ export default Alchemy.Stack(
         ...(cfg.previousPublicKeys === undefined
           ? {}
           : { CACHET_PREVIOUS_PUBLIC_KEYS: cfg.previousPublicKeys }),
+        ...(cfg.managedBy === undefined
+          ? {}
+          : { CACHET_MANAGED_BY: cfg.managedBy }),
         CACHET_ORGS: cfg.orgs,
         CACHET_AUDIENCE: cfg.audience,
         CACHET_DEFAULT_BRANCH_REF: cfg.defaultBranchRef,

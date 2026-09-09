@@ -108,6 +108,8 @@ pub mod names {
     pub const CACHET_FONT_CSS: &str = "CACHET_FONT_CSS";
     /// Public keys from earlier rotations.
     pub const CACHET_PREVIOUS_PUBLIC_KEYS: &str = "CACHET_PREVIOUS_PUBLIC_KEYS";
+    /// Where the deployment is managed, when a deployer manages it.
+    pub const CACHET_MANAGED_BY: &str = "CACHET_MANAGED_BY";
     /// The Analytics Engine dataset's name.
     pub const CACHET_STATS_DATASET: &str = "CACHET_STATS_DATASET";
     /// The account the counter route queries under.
@@ -156,6 +158,9 @@ pub mod env {
     pub const FONT_CSS: &str = "CACHET_DEPLOY_FONT_CSS";
     /// Supplies `CACHET_PREVIOUS_PUBLIC_KEYS`.
     pub const PREVIOUS_PUBLIC_KEYS: &str = "CACHET_DEPLOY_PREVIOUS_PUBLIC_KEYS";
+    /// Supplies `CACHET_MANAGED_BY`. A deployer sets it for the instances
+    /// it manages; an operator deploying by hand leaves it unset.
+    pub const MANAGED_BY: &str = "CACHET_DEPLOY_MANAGED_BY";
     /// Supplies `CACHET_STATS_TOKEN`. The name changes across the
     /// boundary, and it once did not: the deploy then re-read a variable
     /// nothing had set (`infra/alchemy.run.ts`).
@@ -273,6 +278,14 @@ pub const BINDINGS: &[Binding] = &[
         env: Some(env::PREVIOUS_PUBLIC_KEYS),
         default: None,
         summary: "public keys from earlier rotations, comma-joined, so a laptop set up after one trusts older narinfos",
+    },
+    Binding {
+        name: names::CACHET_MANAGED_BY,
+        kind: BindingKind::Var,
+        requirement: Requirement::Optional,
+        env: Some(env::MANAGED_BY),
+        default: None,
+        summary: "the URL of this deployment's page on the deployer that manages it; unset when self-hosted",
     },
     Binding {
         name: names::CACHET_STATS_DATASET,

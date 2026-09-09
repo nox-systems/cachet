@@ -1373,6 +1373,13 @@ components:
           description: |-
             The deployment's host name, which is also its signing-key name
             prefix.
+        managedBy:
+          type:
+          - string
+          - 'null'
+          description: |-
+            Where this deployment is managed, when a deployer manages it: the
+            URL of its page there. Absent on a self-hosted deployment.
         oauthClientId:
           type: string
           description: 'The GitHub OAuth App''s client id: a public value.'

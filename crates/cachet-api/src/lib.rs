@@ -51,6 +51,10 @@ pub struct PublicConfig {
     /// their own copy.
     #[serde(rename = "fontCss", default, skip_serializing_if = "Option::is_none")]
     pub font_css: Option<String>,
+    /// Where this deployment is managed, when a deployer manages it: the
+    /// URL of its page there. Absent on a self-hosted deployment.
+    #[serde(rename = "managedBy", default, skip_serializing_if = "Option::is_none")]
+    pub managed_by: Option<String>,
 }
 
 /// The `GET /roots` body: the projects currently holding leases.
@@ -471,6 +475,7 @@ mod tests {
             previous_public_keys: Vec::new(),
             build_sha: None,
             font_css: None,
+            managed_by: None,
         };
         let body = serde_json::to_string(&config).expect("serializes");
         assert_eq!(
@@ -498,10 +503,15 @@ mod tests {
         let stamped = PublicConfig {
             build_sha: Some("a4f31c".to_string()),
             font_css: Some("https://fonts.example.com/cachet.css".to_string()),
+            managed_by: Some("https://deployer.example/instances/prod".to_string()),
             ..config
         };
         let body = serde_json::to_string(&stamped).expect("serializes");
         assert!(body.contains(r#""buildSha":"a4f31c""#), "{body}");
+        assert!(
+            body.contains(r#""managedBy":"https://deployer.example/instances/prod""#),
+            "{body}"
+        );
         assert!(
             body.contains(r#""fontCss":"https://fonts.example.com/cachet.css""#),
             "{body}"

@@ -124,6 +124,12 @@ pub const FONT_CSS_VAR: &str = "CACHET_FONT_CSS";
 /// it (ADR 0021).
 pub const PREVIOUS_PUBLIC_KEYS_VAR: &str = "CACHET_PREVIOUS_PUBLIC_KEYS";
 
+/// Where this deployment is managed, when a deployer manages it: the URL
+/// of its page there. A self-hosted deployment leaves it unset, and the
+/// console's access screen shows the link so an admin looking at a cache
+/// knows where its configuration lives.
+pub const MANAGED_BY_VAR: &str = "CACHET_MANAGED_BY";
+
 /// The prefix every read credential this deployment issues carries. It
 /// is what lets the read path tell an issued token from an OIDC token
 /// and from a GitHub token without trying each verifier in turn.

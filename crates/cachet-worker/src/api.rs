@@ -5,8 +5,8 @@
 
 use cachet_core::constants::{
     ACCOUNT_ID_VAR, DEPLOY_NAME_VAR, FONT_CSS_VAR, GC_CRON_VAR, GC_LATEST_REPORT_KEY,
-    GC_REPORTS_KEY_PREFIX, GC_RUNS_PAGE_LIMIT, PREVIOUS_PUBLIC_KEYS_VAR, STATS_API_DEFAULT,
-    STATS_API_URL_VAR, STATS_DATASET_VAR, STATS_TOKEN_SECRET,
+    GC_REPORTS_KEY_PREFIX, GC_RUNS_PAGE_LIMIT, MANAGED_BY_VAR, PREVIOUS_PUBLIC_KEYS_VAR,
+    STATS_API_DEFAULT, STATS_API_URL_VAR, STATS_DATASET_VAR, STATS_TOKEN_SECRET,
 };
 use cachet_core::error::ClientError;
 use cachet_core::gc::{GcReport, parse_run_id};
@@ -104,6 +104,11 @@ pub fn public_config(env: &Env) -> worker::Result<Response> {
             .map(ToString::to_string),
         font_css: env
             .var(FONT_CSS_VAR)
+            .ok()
+            .map(|value| value.to_string())
+            .filter(|value| !value.is_empty()),
+        managed_by: env
+            .var(MANAGED_BY_VAR)
             .ok()
             .map(|value| value.to_string())
             .filter(|value| !value.is_empty()),

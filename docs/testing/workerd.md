@@ -74,11 +74,12 @@ forbidden_ref and forbidden_project refusals; the project listing; the
 public config document, whose identity fields (the deployment's name, the
 worker's version, and the absence of a build stamp and a font stylesheet
 on a build that has neither) are what a console header reads before it
-knows whether its caller is an admin, and whose `previousPublicKeys` a
+knows whether its caller is an admin, whose `previousPublicKeys` a
 rotated deployment lists and an unrotated one omits, with a malformed
 entry refusing the whole document as `auth_unavailable` because `cachet
 setup` would otherwise write it into the daemon's trusted keys (ADR
-0021); the bulk probe (`POST /api/probe`): the sorted,
+0021), and whose `managedBy` a deployer-managed deployment carries and a
+self-hosted one omits; the bulk probe (`POST /api/probe`): the sorted,
 deduplicated held-subset answer derived from the bucket enumeration
 itself, with NAR and lease objects proven never to leak in, the answer
 answering equally for laptop and OIDC credentials, and its rejection

@@ -902,6 +902,8 @@ try {
             false,
             JSON.stringify(body),
           );
+          // A self-hosted deployment names no deployer either.
+          assert.equal("managedBy" in body, false, JSON.stringify(body));
         },
       );
 
@@ -1848,10 +1850,19 @@ try {
           // deploy grammar normalizes it.
           assert.deepEqual(body.previousPublicKeys, [retiredKey]);
           assert.notEqual(body.publicKey, retiredKey);
+          // A managed deployment names the page that manages it, so the
+          // console's access screen can link there.
+          assert.equal(
+            body.managedBy,
+            "https://deployer.lane.invalid/instances/lane",
+          );
         },
       );
     },
-    { CACHET_PREVIOUS_PUBLIC_KEYS: ` ${retiredKey} , ` },
+    {
+      CACHET_PREVIOUS_PUBLIC_KEYS: ` ${retiredKey} , `,
+      CACHET_MANAGED_BY: "https://deployer.lane.invalid/instances/lane",
+    },
   );
 
   await scenario(

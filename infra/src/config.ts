@@ -43,6 +43,9 @@ export interface StageConfig {
    *  deployment advertises so a laptop set up after a rotation trusts what
    *  older narinfos carry (ADR 0021). */
   previousPublicKeys: string | undefined;
+  /** Where the deployment is managed, when a deployer manages it. A
+   *  deploy by hand leaves it unset. */
+  managedBy: string | undefined;
 }
 
 const REQUIRED = ["HOST", "ORGS", "OAUTH_CLIENT_ID", "ADMINS"] as const;
@@ -132,5 +135,6 @@ export function loadStageConfig(stage: string): StageConfig {
     accountId,
     fontCss: value("FONT_CSS"),
     previousPublicKeys: value("PREVIOUS_PUBLIC_KEYS"),
+    managedBy: value("MANAGED_BY"),
   };
 }

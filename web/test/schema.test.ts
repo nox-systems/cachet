@@ -40,8 +40,10 @@ describe("PublicConfig", () => {
       previousPublicKeys: ["cachet.example.com-1:AAAA"],
       deployment: "production",
       version: "0.1.0",
+      managedBy: "https://deployer.example/instances/prod",
     });
     expect(config.previousPublicKeys).toEqual(["cachet.example.com-1:AAAA"]);
+    expect(config.managedBy).toBe("https://deployer.example/instances/prod");
   });
 
   it("refuses a body missing a field the console reads", () => {

@@ -95,6 +95,7 @@ equivalents). These variables define the deployment:
 | `CACHET_DEPLOY_DOMAIN` | no | Custom domain override; defaults to the host. |
 | `CACHET_DEPLOY_FONT_CSS` | no | A stylesheet the console loads for licensed faces. Unset ships the free ones. |
 | `CACHET_DEPLOY_PREVIOUS_PUBLIC_KEYS` | no | Public keys from earlier rotations, comma-joined in nix's `name:base64` form. The config document lists them so a laptop set up after a rotation trusts what older narinfos carry. |
+| `CACHET_DEPLOY_MANAGED_BY` | no | The URL of this deployment's page on the deployer that manages it, shown on the console's access screen. A deployer sets it; a deploy by hand leaves it unset. |
 | `CACHET_DEPLOY_GC_GRACE_MS` | no | Grace override; default 14 days. Set 0 for throwaway test deployments. |
 | `CACHET_SIGNING_KEY` | yes | The `<host>-1:<base64>` secret from bootstrap. |
 | `CACHET_OAUTH_CLIENT_SECRET` | yes | The OAuth App's client secret. |

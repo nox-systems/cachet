@@ -192,6 +192,13 @@ expression: "Manifest::template(\"0.0.0\")"
       }
     },
     {
+      "name": "CACHET_MANAGED_BY",
+      "requirement": "optional",
+      "value": "$VAR(CACHET_MANAGED_BY)",
+      "env": "CACHET_DEPLOY_MANAGED_BY",
+      "summary": "the URL of this deployment's page on the deployer that manages it; unset when self-hosted"
+    },
+    {
       "name": "CACHET_STATS_DATASET",
       "requirement": "derived",
       "value": "$RESOURCE_NAME_UNDERSCORED",
