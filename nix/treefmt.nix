@@ -38,6 +38,7 @@
           # why: the generators own these bytes; a formatter fighting a
           # generator would make the drift gates unwinnable.
           "docs/openapi.yaml"
+          "deploy-manifest.json"
           ".github/workflows/release.yml"
         ];
       };
