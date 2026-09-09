@@ -1,0 +1,77 @@
+<task-notification>
+<task-id>bwb30cfg1</task-id>
+<summary>Monitor event: "ci and staging deploy after the lockfile fix"</summary>
+<event>ci 0cb6f6a: success</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bwb30cfg1</task-id>
+<summary>Monitor event: "ci and staging deploy after the lockfile fix"</summary>
+<event>deploy: success</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+well fix the yanked crate bro
+
+---
+
+s
+
+---
+
+Look at @../../cloudflare-os - specifically look at how people can go to a website and deploy it into their own CF accounts
+
+---
+
+Continue
+
+---
+
+Bro. Please stop asking me
+
+---
+
+just run the grps
+
+---
+
+jesus
+
+---
+
+check @../../cloudflare-os-starter
+
+---
+
+but none of these is deploy to your Cloudflare account
+
+---
+
+but none of these is https://os.cloudflare.app/deploy
+
+---
+
+Okay great. So I wonder if there's a version where we build a cachet service of some kind, people sign in with their cloudflare accounts, setup any env variables, etc. for their instance (they can create multiple with different configs) and then we deploy them, allow them to update, uninstall, etc. 
+
+Does that make sense?
+
+---
+
+Well in my brain we'd get rid of the alchemy path you know? And we could even charge for deploying different like tiers I guess? Idk maybe not charging makes sense for a product like this but for a future product it could make sense to charge!
+
+---
+
+Well if we generate it in the customer's cloudflare account I think it would be fine right? But I agree that 2 is probably the best.
+
+---
+
+We should probably let them update env variables, rotate secrets, etc. from our saas right?
+
+---
+
+Plan this whole thing properly. Including and especially the UI/UX. Think very deeply. We want to ship this as a hosted product, users can just connect their cloudflare accounts and go. Updates are also key, uninstalling needs to be key, and the ability to deploy more than one instance is key.

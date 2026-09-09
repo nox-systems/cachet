@@ -1,0 +1,112 @@
+{
+  "cli_version": "0.10.2",
+  "checkpoint_id": "01M22JGXFS6E41PJ8PQYEPKGDN",
+  "session_id": "4406a8f5-e3b8-42e4-a5a2-eef2da85c0c4",
+  "strategy": "manual-commit",
+  "created_at": "2026-09-09T07:53:43.426173Z",
+  "branch": "main",
+  "checkpoints_count": 7,
+  "files_touched": [
+    ".github/workflows/ci.yml",
+    "CLAUDE.md",
+    "Cargo.toml",
+    "README.md",
+    "crates/cachet-deploy/Cargo.toml",
+    "crates/cachet-deploy/src/bin/deploy_manifest.rs",
+    "crates/cachet-deploy/src/env.rs",
+    "crates/cachet-deploy/src/error.rs",
+    "crates/cachet-deploy/src/lib.rs",
+    "crates/cachet-deploy/src/manifest.rs",
+    "crates/cachet-deploy/src/name.rs",
+    "crates/cachet-deploy/src/plan.rs",
+    "crates/cachet-deploy/src/roster.rs",
+    "crates/cachet-deploy/src/spec.rs",
+    "crates/cachet-deploy/tests/golden.rs",
+    "crates/cachet-deploy/tests/property.rs",
+    "crates/cachet-deploy/tests/roster.rs",
+    "crates/cachet-worker/Cargo.toml",
+    "crates/cachet-worker/src/console.rs",
+    "crates/cachet-worker/src/read.rs",
+    "crates/cachet-worker/src/verdict.rs",
+    "docs/DEPLOY.md",
+    "docs/adr/0020-the-deployment-grammar-is-rust.md",
+    "docs/adr/README.md",
+    "docs/testing/golden.md",
+    "docs/testing/property.md",
+    "docs/testing/unit.md",
+    "justfile",
+    "scripts/check-deploy-manifest.sh"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-fable-5-1",
+  "turn_id": "ba101f856fb4",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 24929,
+    "cache_creation_tokens": 2921509,
+    "cache_read_tokens": 441819813,
+    "output_tokens": 844399,
+    "api_call_count": 940
+  },
+  "skill_events_version": 1,
+  "skill_events": [
+    {
+      "id": "claude-skill-toolu_01UDm3bjNFgMGGALBxwXNssp",
+      "event_type": "tool_invocation",
+      "skill": {
+        "name": "dataviz"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "skill_tool_use",
+        "confidence": "explicit"
+      },
+      "turn_id": "ba101f856fb4",
+      "transcript_anchor": {
+        "unit": "line",
+        "start": 2444,
+        "end": 2445,
+        "entry_ids": [
+          "b6de5149-98d6-4dfa-ae51-4fbf7c1adc81"
+        ],
+        "tool_use_id": "toolu_01UDm3bjNFgMGGALBxwXNssp"
+      },
+      "native": {
+        "tool_name": "Skill",
+        "tool_use_id": "toolu_01UDm3bjNFgMGGALBxwXNssp"
+      },
+      "collapse": {
+        "target": "tool_pair",
+        "label": "Skill: dataviz",
+        "default_collapsed": true
+      }
+    }
+  ],
+  "session_metrics": {
+    "turn_count": 7
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-09-09T07:53:42.510729Z",
+    "agent_lines": 0,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 0,
+    "total_lines_changed": 0,
+    "agent_percentage": 0,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 1,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_removed_per_file": {
+        ".claude/settings.json": 1
+      }
+    }
+  ]
+}

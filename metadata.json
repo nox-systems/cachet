@@ -1,0 +1,54 @@
+{
+  "cli_version": "0.10.2",
+  "checkpoint_id": "01M22JGXFS6E41PJ8PQYEPKGDN",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 7,
+  "files_touched": [
+    ".github/workflows/ci.yml",
+    "CLAUDE.md",
+    "Cargo.toml",
+    "README.md",
+    "crates/cachet-deploy/Cargo.toml",
+    "crates/cachet-deploy/src/bin/deploy_manifest.rs",
+    "crates/cachet-deploy/src/env.rs",
+    "crates/cachet-deploy/src/error.rs",
+    "crates/cachet-deploy/src/lib.rs",
+    "crates/cachet-deploy/src/manifest.rs",
+    "crates/cachet-deploy/src/name.rs",
+    "crates/cachet-deploy/src/plan.rs",
+    "crates/cachet-deploy/src/roster.rs",
+    "crates/cachet-deploy/src/spec.rs",
+    "crates/cachet-deploy/tests/golden.rs",
+    "crates/cachet-deploy/tests/property.rs",
+    "crates/cachet-deploy/tests/roster.rs",
+    "crates/cachet-worker/Cargo.toml",
+    "crates/cachet-worker/src/console.rs",
+    "crates/cachet-worker/src/read.rs",
+    "crates/cachet-worker/src/verdict.rs",
+    "docs/DEPLOY.md",
+    "docs/adr/0020-the-deployment-grammar-is-rust.md",
+    "docs/adr/README.md",
+    "docs/testing/golden.md",
+    "docs/testing/property.md",
+    "docs/testing/unit.md",
+    "justfile",
+    "scripts/check-deploy-manifest.sh"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 24929,
+    "cache_creation_tokens": 2921509,
+    "cache_read_tokens": 441819813,
+    "output_tokens": 844399,
+    "api_call_count": 940
+  }
+}
