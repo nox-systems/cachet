@@ -30,8 +30,9 @@ junit.xml
 # insta write-behind on gated (INSTA_UPDATE=no) runs
 *.pending-snap
 
-# The console scenario boots against a generated copy of the lane config.
-workerd/.wrangler-console.toml
+# The console scenario boots against a generated copy of the lane config,
+# named per run so two lanes on one checkout never share it.
+workerd/.wrangler-console*.toml
 
 # The console bundle, built by `just web`.
 web/dist

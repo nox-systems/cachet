@@ -30,10 +30,14 @@ const configPath = path.join(repoRoot, "workerd", "wrangler.toml");
 // Production invokes the cron against the worker itself, so this is a
 // local-runner limitation and not a deployment shape.
 const consoleAssetsDir = path.join(repoRoot, "workerd", "fixtures", "assets");
+// why the pid: the file is written here and removed when the lane exits,
+// and two lanes running at once on one checkout shared a single name, so
+// the first to finish deleted the second one's config right before its
+// console scenario booted.
 const consoleConfigPath = path.join(
   repoRoot,
   "workerd",
-  ".wrangler-console.toml",
+  `.wrangler-console-${process.pid}.toml`,
 );
 await writeFile(
   consoleConfigPath,

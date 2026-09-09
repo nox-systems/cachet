@@ -143,8 +143,10 @@ against an asset directory. Binding one under miniflare puts Cloudflare's
 asset router in front of the worker, and that router has no scheduled
 handler, so the collector's dev endpoint answers "exception" with it
 bound; the driver therefore generates a copy of the lane config with the
-asset block appended and boots that scenario alone against it, rather
-than committing a second config that would drift from the first. The
+asset block appended, under a name carrying its own process id so two
+lanes on one checkout never delete each other's, and boots that scenario
+alone against it, rather than committing a second config that would
+drift from the first. The
 assets themselves are a two-file stand-in rather than a real build
 (workerd/fixtures/assets/README.md), because the law under test is which
 paths the layer may answer at all. The rows: the root redirects to
