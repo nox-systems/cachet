@@ -17,7 +17,20 @@ import { loadStageConfig } from "./src/config.ts";
 // The collector's schedule, named once: the platform gets it as the
 // worker's trigger and the worker gets it as configuration, so the
 // console's countdown and the cron that fires can never disagree.
-const GC_CRON = "0 5 * * *";
+//
+// why hourly, where this was daily: one invocation's work is bounded by
+// GC_OP_BUDGET, and the collect stage spends one bucket read per candidate
+// to learn which NAR its narinfo names. A run must collect every candidate
+// before it plans anything, so the reads a deployment can afford per day
+// have to exceed the paths that cross the grace window per day. At one
+// firing a day production could afford about 860 and was accruing more
+// than a thousand, so the candidate set outran the collector and no run
+// ever reached its sweep. Hourly firings multiply the daily allowance by
+// twenty-four without changing any single invocation's ceiling. Runs park
+// a cursor and resume, so firing more often costs nothing when there is
+// nothing to do: a tick with an empty candidate set spends its listing
+// and exits.
+const GC_CRON = "0 * * * *";
 
 export default Alchemy.Stack(
   "cachet",

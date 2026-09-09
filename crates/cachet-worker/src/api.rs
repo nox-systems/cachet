@@ -10,7 +10,7 @@ use cachet_core::constants::{
 };
 use cachet_core::error::ClientError;
 use cachet_core::gc::{GcReport, parse_run_id};
-use cachet_core::schedule::DailySchedule;
+use cachet_core::schedule::Schedule;
 use cachet_core::types::UnixMillis;
 use cachet_crypto::ed25519::NixSecretKey;
 use worker::{Env, Request, Response};
@@ -189,6 +189,26 @@ pub async fn stats_events(env: &Env, now: UnixMillis, req: &Request) -> worker::
     Ok(Response::ok(text)?.with_headers(self_headers()?))
 }
 
+/// Whether a collection is parked mid-run.
+///
+/// The collector writes its cursor at every stage boundary and deletes it
+/// when the run concludes, so the object's presence is exactly "a run is
+/// underway". A read failure answers false: health is a colour, and a
+/// bucket that cannot answer this question is already reported by the
+/// route that needed the report itself.
+async fn run_in_progress(env: &Env) -> bool {
+    let Ok(bucket) = env.bucket("CACHE_BUCKET") else {
+        return false;
+    };
+    matches!(
+        bucket
+            .get(cachet_core::constants::GC_CURSOR_OBJECT_KEY)
+            .execute()
+            .await,
+        Ok(Some(_))
+    )
+}
+
 /// The collector's own record of its most recent run, if it has one.
 ///
 /// Both `/api/self/stats` and `/api/self/health` are projections of this
@@ -250,11 +270,11 @@ pub async fn health(env: &Env, now: UnixMillis, req: &Request) -> worker::Result
     if let Err(code) = verdict::require_admin(env, now, req).await {
         return crate::error::problem_response(code);
     }
-    let next_collection_at_ms = env
+    let schedule = env
         .var(GC_CRON_VAR)
         .ok()
-        .and_then(|value| DailySchedule::parse(&value.to_string()))
-        .map(|schedule| schedule.next_after_ms(now.as_u64()));
+        .and_then(|value| Schedule::parse(&value.to_string()));
+    let next_collection_at_ms = schedule.map(|schedule| schedule.next_after_ms(now.as_u64()));
 
     let latest = match read_latest_report(env).await {
         Ok(report) => report,
@@ -269,11 +289,27 @@ pub async fn health(env: &Env, now: UnixMillis, req: &Request) -> worker::Result
             gate: None,
         },
         Some(report) => {
-            // why: two cron periods. One missed run is a deploy window or
-            // a platform hiccup; two means the schedule is not firing,
-            // which is the thing an operator wants a colour for.
-            let stale = now.saturating_ms_since(UnixMillis::new(report.finished_at_ms))
-                > 2 * cachet_core::constants::MILLIS_PER_DAY;
+            // why: two of this deployment's own cron periods. One missed
+            // run is a deploy window or a platform hiccup; two means the
+            // schedule is not firing, which is the thing an operator
+            // wants a colour for. The bound has to come from the
+            // schedule rather than from a constant: two days across an
+            // hourly cron is forty-eight firings, and a colour that
+            // needs two days of silence to change reports nothing.
+            // A cron this parser does not recognize falls back to two
+            // days, because a bound guessed from an expression nobody
+            // read is worse than the loose one.
+            let period_ms = schedule.map_or(cachet_core::constants::MILLIS_PER_DAY, |schedule| {
+                schedule.period_ms()
+            });
+            let age_ms = now.saturating_ms_since(UnixMillis::new(report.finished_at_ms));
+            // why: a run in progress is proof the schedule fired. Reports
+            // land only when a run finishes, so a collection spanning
+            // many ticks leaves the newest report aging while the
+            // collector works, and reading that as a dead schedule
+            // reports a failure during ordinary operation.
+            let collecting = run_in_progress(env).await;
+            let stale = !collecting && age_ms > 2 * period_ms;
             let healthy = report.gate.is_none() && !stale;
             cachet_api::HealthBody {
                 status: if healthy { "healthy" } else { "degraded" }.to_string(),

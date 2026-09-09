@@ -22,9 +22,11 @@ mark phase's inputs are suspect.
 
 ## Decision
 
-1. The collector runs on the worker's cron trigger (`0 5 * * *`),
-   armed by default: `CACHET_GC_ARMED=0` disarms, everything else
-   sweeps. Arming is not an operator decision point.
+1. The collector runs on the worker's cron trigger, armed by default:
+   `CACHET_GC_ARMED=0` disarms, everything else sweeps. Arming is not an
+   operator decision point. (This point said `0 5 * * *`; ADR 0019
+   changed it to `0 * * * *`, because one firing a day could not afford
+   the reads a day's worth of expiring paths costs.)
 2. One invocation advances the run as far as a budget of 900 binding
    operations and a 13-minute headroom allow, then persists a cursor
    document into the bucket and exits cleanly. The next tick resumes

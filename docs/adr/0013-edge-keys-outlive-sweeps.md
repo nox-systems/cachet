@@ -12,7 +12,8 @@ changed every object's key at once, which invalidated the whole cache in
 every point of presence without a purge API or a per-key walk.
 
 The collector bumps the generation whenever a sweep deletes anything, and
-it runs daily. Objects are given a thirty-day `immutable` lifetime, so
+it runs on a schedule. Objects are given a thirty-day `immutable`
+lifetime, so
 that lifetime could never be reached: one deleted path each morning threw
 away every warm entry everywhere. The first substitution of the day after
 a sweep was a cold bucket read for the entire working set.

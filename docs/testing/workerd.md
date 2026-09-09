@@ -115,11 +115,17 @@ lands then serve through the admin API: the run list, the report read,
 and the stats derivation answer the admin token, 401 the anonymous
 request, and 403 forbidden_admin the org member outside CACHET_ADMINS.
 The health route answers beside them, reading the run that just landed as
-`healthy` with no gate and a countdown to the lane's own cron at 05:00
-UTC that is always ahead of now; a scenario that seeds nothing proves the
-other half, where `/api/self/stats` answers 404 because a projection with
-nothing to project has no honest body and health answers 200 `unknown`
-because it renders in a header on every screen.
+`healthy` with no gate and a countdown to the lane's own hourly cron that
+is always ahead of now and never more than an hour out; a scenario that
+seeds nothing proves the other half, where `/api/self/stats` answers 404
+because a projection with nothing to project has no honest body and
+health answers 200 `unknown` because it renders in a header on every
+screen. A third scenario covers the staleness bound in both directions
+from one seed, a report three hours old against the lane's hourly cron:
+with a cursor in the bucket the answer is `healthy`, because a run in
+progress is proof the schedule fired and reports land only when a run
+concludes, and with that cursor deleted the same report reads `degraded`
+(ADR 0019).
 The counter route is gated in the same scenario, which runs with no
 `.dev.vars` and therefore no analytics token: its rows prove the gate and
 the parser refuse before any query runs, that an inadmissible choice

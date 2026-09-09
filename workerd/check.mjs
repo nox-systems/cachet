@@ -1853,6 +1853,25 @@ const r2Get = async (persist, key) => {
   return { ok: got.status === 0, body: got.stdout, stderr: got.stderr };
 };
 
+const r2Delete = async (persist, key) => {
+  const gone = spawnSync(
+    "wrangler",
+    [
+      "r2",
+      "object",
+      "delete",
+      `cachet-lane/${key}`,
+      "--local",
+      "--persist-to",
+      persist,
+      "--config",
+      configPath,
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(gone.status, 0, `deleting ${key}: ${gone.stderr}`);
+};
+
 const deadNarinfoFor = async (hash, narBase52) => {
   const doc = await readFile(path.join(fixturesDir, NARINFO_KEY), "utf8");
   return doc
@@ -2004,13 +2023,16 @@ await scenario(
       assert.equal(body.gate, undefined, text);
       assert.match(body.latestRunId, /^\d+-[0-9a-f]{16}$/);
       assert.ok(body.latestFinishedAtMs > 0, text);
-      // The countdown is the lane's own cron, 05:00 UTC, and it is
-      // always ahead: a console counting down to a moment already past
-      // would render a negative duration.
+      // The countdown is the lane's own cron, the top of every hour, and
+      // it is always ahead: a console counting down to a moment already
+      // past would render a negative duration.
       assert.ok(body.nextCollectionAtMs > Date.now(), text);
       const next = new Date(body.nextCollectionAtMs);
-      assert.equal(next.getUTCHours(), 5, next.toISOString());
       assert.equal(next.getUTCMinutes(), 0, next.toISOString());
+      assert.ok(
+        body.nextCollectionAtMs - Date.now() <= 3_600_000,
+        `an hourly cron is at most an hour away: ${next.toISOString()}`,
+      );
     });
 
     await check("the counter route gates before it queries", async () => {
@@ -2267,6 +2289,82 @@ await scenario(
       const body = JSON.parse(report.body);
       assert.equal(body.gate, "unreadable_root_narinfo", report.body);
       assert.equal(body.narinfosDeleted, 0, report.body);
+    });
+  },
+);
+
+// Health's staleness bound is two of the deployment's own cron periods,
+// and a run in progress is not staleness. Reports land only when a run
+// concludes, so a collection spanning many ticks leaves the newest report
+// aging while the collector is working; reading that as a dead schedule
+// would paint a colour for failure during ordinary operation. The lane's
+// cron is hourly, so the bound here is two hours.
+await scenario(
+  "a collection in progress is not a stale schedule",
+  async () => [
+    [
+      "gc-reports/latest.json",
+      `${JSON.stringify(
+        {
+          runId: "1700000000000-aaaaaaaaaaaaaaaa",
+          startedAtMs: Date.now() - 3 * 60 * 60 * 1000,
+          finishedAtMs: Date.now() - 3 * 60 * 60 * 1000,
+          inventoryPaths: 12,
+          activeLeases: 1,
+          markedPaths: 3,
+          unreadableDeep: 0,
+          narinfosDeleted: 0,
+          narsDeleted: 0,
+          bytesFreed: 0,
+          uploadsAborted: 0,
+          gate: null,
+        },
+        null,
+        2,
+      )}\n`,
+    ],
+    // Only its presence is read: the collector parses this, health asks
+    // whether it is there.
+    [
+      "meta/gc-cursor",
+      `${JSON.stringify(
+        {
+          runId: "1700000000001-bbbbbbbbbbbbbbbb",
+          startedAtMs: Date.now() - 60 * 60 * 1000,
+          stage: "candidates",
+          inventoryPaths: 12,
+          activeLeases: 1,
+          markedPaths: 3,
+          unreadableDeep: 0,
+          uploadsAborted: 0,
+        },
+        null,
+        2,
+      )}\n`,
+    ],
+  ],
+  async ({ base, persist }) => {
+    const admin = { authorization: `Bearer ${GOOD_LAPTOP_TOKEN}` };
+    const health = async () => {
+      const res = await fetch(`${base}/api/self/health`, { headers: admin });
+      const text = await res.text();
+      assert.equal(res.status, 200, text);
+      return { body: JSON.parse(text), text };
+    };
+
+    await check("a parked cursor keeps an aging report healthy", async () => {
+      const { body, text } = await health();
+      assert.equal(body.status, "healthy", text);
+      assert.equal(body.gate, undefined, text);
+    });
+
+    await check("without one, the same report reads degraded", async () => {
+      // The report has not moved. What changed is that no run is
+      // underway, so three hours of silence against an hourly cron is
+      // the schedule failing to fire.
+      await r2Delete(persist, "meta/gc-cursor");
+      const { body, text } = await health();
+      assert.equal(body.status, "degraded", text);
     });
   },
 );

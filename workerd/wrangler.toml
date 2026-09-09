@@ -48,7 +48,7 @@ CACHET_STATS_DATASET = "cachet_lane"
 # counts down to. The lane's cron below is the same expression, so the
 # countdown the health route answers is the schedule that fires.
 CACHET_DEPLOY_NAME = "cachet-lane"
-CACHET_GC_CRON = "0 5 * * *"
+CACHET_GC_CRON = "0 * * * *"
 
 # The console's asset directory is deliberately absent here. Binding it
 # makes miniflare put Cloudflare's asset router in front of this worker,
@@ -69,4 +69,4 @@ dataset = "cachet_lane"
 # The deployment's collector binding; the lane invokes the scheduled
 # handler directly over its dev endpoint.
 [triggers]
-crons = ["0 5 * * *"]
+crons = ["0 * * * *"]

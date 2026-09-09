@@ -58,7 +58,7 @@ CLOUDFLARE_API_TOKEN=... CLOUDFLARE_ACCOUNT_ID=... just deploy production
 The recipe builds the wasm bundle, installs the infra dependencies from
 the lockfile, sources `infra/.env.production`, and runs the alchemy
 stack: R2 bucket, KV namespace, the worker with its bindings, the
-garbage collector's cron (`0 5 * * *`), and the custom domain. It is
+garbage collector's cron (`0 * * * *`), and the custom domain. It is
 idempotent: rerunning converges, it never duplicates.
 
 Alchemy prints the plan and asks before it changes anything. In a
