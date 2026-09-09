@@ -1,0 +1,36 @@
+{
+  "cli_version": "0.10.2",
+  "checkpoint_id": "01M21SPKJBF78JZS9706GAHKNC",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 4,
+  "files_touched": [
+    "crates/cachet-core/src/schedule.rs",
+    "crates/cachet-worker/src/api.rs",
+    "docs/DEPLOY.md",
+    "docs/adr/0005-gc-on-the-cron.md",
+    "docs/adr/0013-edge-keys-outlive-sweeps.md",
+    "docs/adr/0019-the-collector-fires-hourly.md",
+    "docs/adr/README.md",
+    "docs/testing/workerd.md",
+    "infra/alchemy.run.ts",
+    "workerd/check.mjs",
+    "workerd/wrangler.toml"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 1652,
+    "cache_creation_tokens": 1725550,
+    "cache_read_tokens": 412070429,
+    "output_tokens": 616359,
+    "api_call_count": 826
+  }
+}

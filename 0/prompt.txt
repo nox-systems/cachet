@@ -1,0 +1,121 @@
+<task-notification>
+<task-id>byy9w5ex1</task-id>
+<summary>Monitor event: "ci for the v0.1.2 bump commit"</summary>
+<event>ci 0ed7294: completed success</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bv60p4g88</task-id>
+<summary>Monitor event: "v0.1.2 release, production deploy, staging deploy"</summary>
+<event>deploy (v0.1.2): success</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bv60p4g88</task-id>
+<summary>Monitor event: "v0.1.2 release, production deploy, staging deploy"</summary>
+<event>deploy (main): success</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bv60p4g88</task-id>
+<summary>Monitor event: "v0.1.2 release, production deploy, staging deploy"</summary>
+<event>Release (v0.1.2): success</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+Want to walk me through this:
+```
+Recent runs
+3 of 3 kept reports
+Finished
+Duration
+Paths
+Deleted
+Freed
+Result
+
+27 Aug 05:02
+2 min 19 s
+7,132
+0
+0 B
+Completed
+
+26 Aug 05:00
+19 s
+6,105
+0
+0 B
+Stopped
+
+25 Aug 05:01
+13 s
+4,966
+0
+0 B
+Stopped
+```
+
+Why didn't it delete anything? This is the cachet-production deployment...
+
+---
+
+```
+Run on 27 Aug 05:02 UTC
+gc-reports/1787806809309-c3cd7bd53d259b40.json
+Inventory
+7,132 paths
+Active leases
+2
+Marked live
+299
+Candidates
+6,833
+Narinfos deleted
+0
+NARs deleted
+0
+Uploads aborted
+0
+Freed
+0 B
+```
+
+---
+
+Okay look at the prod worker and see if it's been retarded.
+
+---
+
+which account is this? like which URL
+
+---
+
+local wrangler is auth-d to the .env.cachet-production account
+
+---
+
+oh it's cachet-agx there we go use that
+
+---
+
+try now
+
+---
+
+Wati what? Explain the issue in englsh bro
+
+---
+
+bruh. Okay. Do it.
