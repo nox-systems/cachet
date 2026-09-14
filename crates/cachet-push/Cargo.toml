@@ -30,7 +30,7 @@ reqwest = { version = "0.12", default-features = false, features = ["http2", "js
 # encode, which is all the worker ever needs; the C library is banned from
 # the worker for that reason and allowed here, in a crate that compiles
 # only for hosts, through a named wrapper in deny.toml.
-zstd = "0.13"
+zstd = "0.14"
 # why: probes fan out with `buffered` and uploads wave with `join_all`;
 # the alternative is a handwritten worker pool around JoinSet for no gain.
 futures-util = "0.3"
