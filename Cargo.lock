@@ -3,12 +3,6 @@
 version = 4
 
 [[package]]
-name = "adler2"
-version = "2.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
-
-[[package]]
 name = "anstream"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -349,15 +343,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "crc32fast"
-version = "1.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9481c1c90cbf2ac953f07c8d4a58aa3945c425b7185c9154d67a65e4230da511"
-dependencies = [
- "cfg-if",
-]
-
-[[package]]
 name = "crypto-common"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -392,25 +377,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
-]
-
-[[package]]
-name = "dashu-base"
-version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "993b95dc1b248e3f5747dcb017a41d6e75853a2e5ee4504f7d537c5b8dffdae4"
-
-[[package]]
-name = "dashu-int"
-version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "49c05a0d5cb0b39fcc87c46432fdac24b90dce239857c7f6b798be4ffc3c42c6"
-dependencies = [
- "cfg-if",
- "dashu-base",
- "num-modular",
- "rustversion",
- "static_assertions",
 ]
 
 [[package]]
@@ -650,44 +616,20 @@ checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
 name = "hegeltest"
-version = "0.31.0"
+version = "0.46.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "afbd26d7e72f9cbaa4aa91c66238b719648304eccfb575ecaa6249c06c871744"
+checksum = "9f67041ef61905b0671d0120c9f02a8bee140ccf56ca256720a366ca77c942c4"
 dependencies = [
- "crc32fast",
- "dashu-int",
- "hegeltest-c",
  "hegeltest-macros",
- "miniz_oxide",
  "parking_lot",
- "paste",
  "rand 0.10.2",
- "rustc-hash",
- "tempfile",
-]
-
-[[package]]
-name = "hegeltest-c"
-version = "0.33.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "101cc1c60825495e3e04148884bcc9ddf3abae148fcbd45a31663a28916d2b3a"
-dependencies = [
- "dashu-int",
- "hashbrown",
- "libm",
- "miniz_oxide",
- "once_cell",
- "rand 0.10.2",
- "rustc-hash",
- "rustix",
- "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "hegeltest-macros"
-version = "0.31.0"
+version = "0.46.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a2cdbd830ec7a11d770fdf1ceacf7c42b2ee697f05583f6e5480c0b58fb963d8"
+checksum = "dd8ae855a2016aa70ae90ebf8f24bc077ac2c12dac177eba6d1091a997d0e81d"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1033,15 +975,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
-name = "miniz_oxide"
-version = "0.8.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1fa76a2c86f704bdb222d66965fb3d63269ce38518b83cb0575fca855ebb6316"
-dependencies = [
- "adler2",
-]
-
-[[package]]
 name = "mio"
 version = "1.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1088,12 +1021,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "num-modular"
-version = "0.6.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bd8e500409e6cd603b03e477c26a6caecdc27ac58979a53e881c75eafc079f44"
-
-[[package]]
 name = "num-traits"
 version = "0.2.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1137,12 +1064,6 @@ dependencies = [
  "smallvec",
  "windows-link",
 ]
-
-[[package]]
-name = "paste"
-version = "1.0.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
 name = "pem-rfc7468"
