@@ -13,13 +13,6 @@ yanked = "deny"
 # the dependency tree changes. An entry names the advisory and proves the
 # vulnerable path is unreachable here.
 ignore = [
-    # `paste` is unmaintained, not vulnerable: a compile-time proc-macro
-    # helper pulled in by hegeltest, the property lane's engine. It is a
-    # dev-graph dependency: its generated code appears only in test binaries
-    # and never enters the shipped worker. No replacement exists on the
-    # pinned hegeltest version; the entry dies with the crate when the tree
-    # moves.
-    "RUSTSEC-2024-0436",
     # The Marvin advisory covers RSA private-key operations (decrypt and
     # sign) leaking through timing. cachet has no private RSA key anywhere:
     # the only RSA use is PUBLIC-key verification of GitHub OIDC tokens
