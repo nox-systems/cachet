@@ -89,6 +89,9 @@ pub struct OidcIdentity {
     pub ref_: String,
     /// The workflow run id, when present.
     pub run_id: String,
+    /// Which attempt of that run, when present. A re-run keeps its run
+    /// id and counts up here, so the pair names one execution.
+    pub run_attempt: String,
     /// The commit sha, when present.
     pub sha: String,
 }
@@ -174,20 +177,19 @@ pub fn verify_claims(
         return Err(ClientError::ForbiddenOrg);
     }
 
+    let optional = |name: &str| {
+        raw.get(name)
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or(crate::constants::UNKNOWN_CLAIM)
+            .to_string()
+    };
     Ok(OidcIdentity {
         repository,
         repository_owner,
         ref_,
-        run_id: raw
-            .get("run_id")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or(crate::constants::UNKNOWN_CLAIM)
-            .to_string(),
-        sha: raw
-            .get("sha")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or(crate::constants::UNKNOWN_CLAIM)
-            .to_string(),
+        run_id: optional("run_id"),
+        run_attempt: optional("run_attempt"),
+        sha: optional("sha"),
     })
 }
 
@@ -358,6 +360,7 @@ mod tests {
             "repository_owner": "my-org",
             "ref": "refs/heads/main",
             "run_id": "42",
+            "run_attempt": "2",
             "sha": "abc",
         })
     }
@@ -368,6 +371,7 @@ mod tests {
             .expect("the contract passes");
         assert_eq!(identity.repository_owner, "my-org");
         assert_eq!(identity.run_id, "42");
+        assert_eq!(identity.run_attempt, "2");
     }
 
     #[test]
@@ -569,6 +573,7 @@ mod folding_tests {
             repository_owner: "nox-systems".to_string(),
             ref_: "refs/heads/main".to_string(),
             run_id: "1".to_string(),
+            run_attempt: "1".to_string(),
             sha: "abc".to_string(),
         };
         assert!(

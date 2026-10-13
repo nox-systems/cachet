@@ -177,6 +177,30 @@ substitute the path it pushed through a pass-through in the stub that
 cuts the NAR download halfway: the copy must succeed, and the stub must
 have seen nix resume with a range.
 
+The composite action's provisioning step runs here as the script the
+action runs, `action/provision.sh`, against the stub's Actions token
+endpoint and the lane's worker. Two stand-ins make it runnable without
+root: a `sudo` on the PATH that runs its command as the lane's user, and
+a netrc path the lane can write in place of `/etc/nix/netrc`. The stub
+issues that run a token that expires five seconds after it is minted,
+and the scenario waits until the worker itself refuses the token before
+it reads with the password the step wrote to the netrc, which is the
+read the nix daemon makes for the rest of a job. That read must answer
+200 for a stored narinfo and 404 for an absent one. It is the regression
+row for the failure ADR 0022 records, where a job's OIDC token sat in the
+netrc and every read after it expired answered 401. Around it, the
+scenario asserts that the issued credential resolves as the run
+(`/api/whoami` answers `ci` for the repository owner), cannot renew a
+lease or reach the admin surface, and is stored under its digest as a
+record holding the run's claims and a six-hour lifetime and neither the
+credential nor the OIDC token. It then runs the revoke action's post
+step, `action/revoke/post.cjs`, and the netrc's read answers 401. Two
+more runs of the script cover the other outcomes: a deployment that
+refuses the exchange leaves the job on its OIDC token with the log line
+saying the cache stops when that token expires, and gives the revoke
+step nothing to do, and a job with no OIDC grant writes no credential
+and configures no cache.
+
 Every code in the error table (cachet-core/src/error.rs) has at least one
 wire-level assertion here. storage_unavailable is asserted through the
 counter route, whose upstream the driver controls: the stub answers 500

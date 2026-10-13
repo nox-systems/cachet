@@ -136,6 +136,11 @@
               (cd proj-gen && actionlint -shellcheck "" .github/workflows/release.yml)
               node --check ${../action/post/main.cjs}
               node --check ${../action/post/post.cjs}
+              node --check ${../action/revoke/main.cjs}
+              node --check ${../action/revoke/post.cjs}
+              # why: actionlint cannot see which post phase runs last; the
+              # step order decides it, and the revoke must follow the push.
+              bash ${../scripts/check-action-post-order.sh} proj
               touch $out
             '';
 
@@ -145,7 +150,7 @@
               nativeBuildInputs = [ pkgs.shellcheck ];
             }
             ''
-              shellcheck ${../scripts}/*.sh
+              shellcheck ${../scripts}/*.sh ${../action}/*.sh
               touch $out
             '';
       };

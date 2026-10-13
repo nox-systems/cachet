@@ -98,21 +98,8 @@ async fn fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
         return probe::answer_probe(&env, now, req).await;
     }
 
-    // The credential exchange: a GitHub token in, this deployment's own
-    // read token out. The GitHub token is checked once, here, and never
-    // reaches the bucket, the netrc, or any later request (ADR 0002).
     if path == "/api/login/exchange" && method == Method::Post {
-        let Some(github_token) = verdict::presented_token(&req) else {
-            return error::problem_response(ClientError::Unauthorized);
-        };
-        // An absent or unreadable body is a login with nothing to renew
-        // from, which is exactly what a non-expiring OAuth App produces.
-        let mut req = req;
-        let grant: cachet_api::LoginExchangeBody = req.json().await.unwrap_or_default();
-        return match verdict::issue_read_token(&env, now, &github_token, &grant).await {
-            Ok(issued) => api::json_no_store(&issued),
-            Err(code) => error::problem_response(code),
-        };
+        return login_exchange(&env, now, req).await;
     }
 
     // Logging out: the holder presents the token, and the deployment
@@ -154,6 +141,33 @@ async fn fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
     }
 
     error::problem_response(ClientError::NotFound)
+}
+
+/// `POST /api/login/exchange`: a GitHub identity in, this deployment's
+/// own read token out. A laptop presents a GitHub token, checked once
+/// here and never again on the wire (ADR 0002). A workflow run presents
+/// its OIDC token, which expires within minutes, and leaves with a
+/// credential that lasts the job (ADR 0022).
+async fn login_exchange(env: &Env, now: UnixMillis, mut req: Request) -> Result<Response> {
+    let Some(presented) = verdict::presented_token(&req) else {
+        return error::problem_response(ClientError::Unauthorized);
+    };
+    // why: the grammar picks the verifier, the same way every read tells
+    // credential shapes apart, so an OIDC token never reaches the GitHub
+    // API and a GitHub token never reaches the JWKS.
+    if cachet_core::auth::looks_like_oidc_token(&presented) {
+        return match verdict::issue_run_read_token(env, now, &presented).await {
+            Ok(issued) => api::json_no_store(&issued),
+            Err(code) => error::problem_response(code),
+        };
+    }
+    // An absent or unreadable body is a login with nothing to renew from,
+    // which is exactly what a non-expiring OAuth App produces.
+    let grant: cachet_api::LoginExchangeBody = req.json().await.unwrap_or_default();
+    match verdict::issue_read_token(env, now, &presented, &grant).await {
+        Ok(issued) => api::json_no_store(&issued),
+        Err(code) => error::problem_response(code),
+    }
 }
 
 /// The GETs that match whole fixed paths, matched before any key grammar

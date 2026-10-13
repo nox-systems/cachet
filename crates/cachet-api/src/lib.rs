@@ -366,7 +366,8 @@ pub struct LoginExchangeBody {
 pub struct ReadTokenIssued {
     /// The credential. Shown once; the deployment stores only its hash.
     pub token: String,
-    /// The GitHub login it speaks for.
+    /// The GitHub login it speaks for: a person's, or for a workflow run
+    /// the repository owner.
     pub login: String,
     /// When it stops being accepted, epoch milliseconds.
     #[serde(rename = "expiresAtMs")]

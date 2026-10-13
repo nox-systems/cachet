@@ -236,11 +236,14 @@ pub fn whoami() {}
 pub fn health() {}
 
 /// `POST /api/login/exchange`: trade a GitHub identity for this
-/// deployment's own read credential. The GitHub token is checked for org
-/// membership once, here, and neither side keeps it: what the caller
-/// keeps is the answer's token, which is what the nix daemon carries
-/// afterwards (ADR 0002). The deployment stores only the token's
-/// SHA-256.
+/// deployment's own read credential, which is what the nix daemon
+/// carries afterwards. The deployment stores only the issued token's
+/// SHA-256. A laptop presents its GitHub token, which is checked for org
+/// membership here and never crosses the wire again, and its credential
+/// lasts thirty days (ADR 0002). A workflow run presents its GitHub OIDC
+/// token, which is checked as a CI read checks it and is not kept, and
+/// its credential lasts six hours, the longest GitHub lets a job run, so
+/// it outlives the OIDC token by the rest of the job (ADR 0022).
 #[utoipa::path(
     post,
     path = "/api/login/exchange",

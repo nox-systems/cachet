@@ -1,0 +1,17 @@
+name: cachet revoke
+description: >-
+  Revokes the read credential the cachet setup composite action obtained
+  for this job, at the end of the job, whether it succeeded or failed. The
+  composite wraps this; it is not meant to be used directly.
+
+# why: no inputs, for the reason action/post gives. The composite's
+# provisioning step exports CACHET_ISSUED_NETRC and CACHET_REVOKE_URL
+# when the deployment issued a credential, and only then.
+runs:
+  using: node24
+  main: main.cjs
+  post: post.cjs
+  # why: always. A failed job is as likely as a green one to have had its
+  # credential copied by something it ran, and the credential would
+  # otherwise keep reading for the rest of its six hours.
+  post-if: always()

@@ -19,7 +19,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import crypto from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -113,6 +113,12 @@ const laneMembership = { active: true };
 // the way a dropped HTTP/2 stream does, so nix has to resume it.
 const laneBreak = { target: "", cutNext: false, cuts: 0, ranges: [] };
 
+// How long the tokens the stub's Actions mint issues stay valid, and the
+// last one it issued. A scenario shortens the lifetime to watch a token
+// expire, the way GitHub's own do within minutes; everything else keeps
+// the default.
+const laneOidc = { lifetimeSeconds: 600, last: null };
+
 // The lane's plain read credential for object GET/HEADs: every object
 // read answers 401 without one.
 const READ_AUTH = () => ({ authorization: `Bearer ${GOOD_LAPTOP_TOKEN}` });
@@ -147,10 +153,11 @@ const stubServer = http.createServer((req, res) => {
       "audience",
     );
     stubHits.oidcMint += 1;
-    return json(200, {
-      count: 1,
-      value: mint({ aud: audience ?? "cachet-lane" }),
+    laneOidc.last = mint({
+      aud: audience ?? "cachet-lane",
+      exp: Math.floor(Date.now() / 1000) + laneOidc.lifetimeSeconds,
     });
+    return json(200, { count: 1, value: laneOidc.last });
   }
   if (req.url.startsWith("/breaking/")) {
     const forwarded = req.url.slice("/breaking".length);
@@ -296,6 +303,7 @@ function mint(overrides = {}) {
     repository_owner: "lane-org",
     ref: "refs/heads/main",
     run_id: "41",
+    run_attempt: "1",
     sha: "abc",
     ...claimOverrides,
   };
@@ -1049,6 +1057,327 @@ await scenario(
     });
   },
 );
+
+// The composite's provisioning step, run as the action runs it: the
+// script itself, against the stub's Actions mint and this lane's worker.
+// Two stand-ins make it runnable unprivileged and nothing else: a `sudo`
+// that runs its command as the lane's own user, and a netrc path the
+// lane can write in place of /etc/nix/netrc. It runs asynchronously
+// because it calls the stub, which lives in this process's event loop.
+function runProcess(command, args, env) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { env });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => (stdout += chunk));
+    child.stderr.on("data", (chunk) => (stderr += chunk));
+    child.on("error", reject);
+    child.on("close", (status) => resolve({ status, stdout, stderr }));
+  });
+}
+
+async function actionRunner(base) {
+  const work = await mkdtemp(path.join(os.tmpdir(), "cachet-action-"));
+  const shims = path.join(work, "bin");
+  await mkdir(shims);
+  await writeFile(
+    path.join(shims, "sudo"),
+    '#!/usr/bin/env bash\nif [ "${1:-}" = "-n" ]; then shift; fi\nexec "$@"\n',
+    { mode: 0o755 },
+  );
+  const netrc = path.join(work, "etc-nix", "netrc");
+  const githubEnv = path.join(work, "github-env");
+  await writeFile(githubEnv, "");
+  const env = {
+    ...process.env,
+    PATH: `${shims}:${process.env.PATH}`,
+    CACHET_CACHE_URL: base,
+    CACHET_AUDIENCE: "cachet-lane",
+    CACHET_NETRC_FILE: netrc,
+    GITHUB_ENV: githubEnv,
+    ACTIONS_ID_TOKEN_REQUEST_URL: `http://127.0.0.1:${stubServer.address().port}/oidc-token?api-version=2.0`,
+    ACTIONS_ID_TOKEN_REQUEST_TOKEN: "lane-request-token",
+  };
+  return {
+    netrc,
+    githubEnv,
+    env,
+    provision: (overrides = {}) =>
+      runProcess("bash", [path.join(repoRoot, "action", "provision.sh")], {
+        ...env,
+        ...overrides,
+      }),
+    revoke: (overrides = {}) =>
+      runProcess(
+        "node",
+        [path.join(repoRoot, "action", "revoke", "post.cjs")],
+        { ...env, ...overrides },
+      ),
+    // A read the way the daemon makes it: the password the netrc holds
+    // for the cache's host, sent as an HTTP Basic password.
+    readWithNetrc: async (key) => {
+      const text = await readFile(netrc, "utf8");
+      const host = new URL(base).hostname;
+      const line = text
+        .split("\n")
+        .map((entry) => entry.split(/\s+/))
+        .find((words) => words[0] === "machine" && words[1] === host);
+      assert.ok(line, `no netrc line for ${host}:\n${text}`);
+      const basic = Buffer.from(`${line[3]}:${line[5]}`).toString("base64");
+      const res = await fetch(`${base}/${key}`, {
+        headers: { authorization: `Basic ${basic}` },
+      });
+      await res.arrayBuffer();
+      return String(res.status);
+    },
+    cleanup: () => rm(work, { recursive: true, force: true }),
+    // The values the step exported to later steps, as GitHub would parse
+    // the file.
+    exported: async () => {
+      const text = await readFile(githubEnv, "utf8");
+      const values = new Map();
+      const lines = text.split("\n");
+      for (let at = 0; at < lines.length; at += 1) {
+        const heredoc = lines[at].match(/^([A-Z_]+)<<(.+)$/);
+        if (heredoc) {
+          const body = [];
+          for (at += 1; lines[at] !== heredoc[2]; at += 1) body.push(lines[at]);
+          values.set(heredoc[1], body.join("\n"));
+        } else if (lines[at].includes("=")) {
+          const split = lines[at].indexOf("=");
+          values.set(lines[at].slice(0, split), lines[at].slice(split + 1));
+        }
+      }
+      return values;
+    },
+  };
+}
+
+// The provisioning step reads the deployment's public key from its config
+// document, which the worker derives from its signing secret, so this
+// scenario runs with .dev.vars written like the write scenarios below.
+await writeFile(
+  devVarsPath,
+  `CACHET_SIGNING_KEY=${laneSigningSecret}\nCACHET_OAUTH_CLIENT_SECRET=${LANE_OAUTH_SECRET}\n`,
+);
+try {
+  await scenario(
+    "the action's credential outlives the OIDC token it was traded for",
+    async () => {
+      const narinfo = await readFile(path.join(fixturesDir, NARINFO_KEY));
+      return [[NARINFO_KEY, narinfo]];
+    },
+    async ({ base, persist }) => {
+      const runners = [];
+      const newRunner = async () => {
+        const made = await actionRunner(base);
+        runners.push(made);
+        return made;
+      };
+      try {
+        await actionAssertions(base, persist, newRunner);
+      } finally {
+        // The work directories hold the lane's synthetic credentials.
+        await Promise.all(runners.map((made) => made.cleanup()));
+      }
+    },
+  );
+} finally {
+  await rm(devVarsPath, { force: true });
+}
+
+async function actionAssertions(base, persist, newRunner) {
+  const runner = await newRunner();
+  let oidcToken = "";
+  let credential = "";
+
+  await check(
+    "the provisioning step trades the job's OIDC token at once",
+    async () => {
+      // A token that lives a few seconds, so the scenario can watch it
+      // die. GitHub's live about five minutes, which is what made a job
+      // lose the cache partway through (ADR 0022).
+      laneOidc.lifetimeSeconds = 5;
+      let ran;
+      try {
+        ran = await runner.provision();
+      } finally {
+        laneOidc.lifetimeSeconds = 600;
+      }
+      // Recorded before anything is asserted, so the next check judges
+      // whatever the step wrote even when this one fails.
+      oidcToken = laneOidc.last;
+      assert.equal(ran.status, 0, `${ran.stdout}${ran.stderr}`);
+      assert.ok(oidcToken, "the step minted through the stub");
+      const netrc = await readFile(runner.netrc, "utf8");
+      const line = netrc.match(/^machine (\S+) login cachet password (\S+)$/m);
+      assert.ok(line, netrc);
+      credential = line[2];
+      assert.match(
+        ran.stdout,
+        /cachet: exchanged the job's OIDC token for a read credential/,
+        ran.stdout,
+      );
+      assert.match(credential, /^cachet_[A-Za-z0-9_-]{43}$/);
+      assert.ok(!netrc.includes(oidcToken), "the OIDC token is not written");
+      assert.ok(
+        ran.stdout.includes(`::add-mask::${credential}`),
+        "the credential is masked in the job's log",
+      );
+      const exported = await runner.exported();
+      assert.equal(exported.get("CACHET_ISSUED_NETRC"), runner.netrc);
+      assert.equal(
+        exported.get("CACHET_REVOKE_URL"),
+        `${base}/api/login/revoke`,
+      );
+      const conf = exported.get("CACHET_EXTRA_CONF").split("\n");
+      assert.ok(conf.includes(`netrc-file = ${runner.netrc}`), conf);
+      assert.ok(
+        conf.includes(
+          `extra-trusted-public-keys = ${laneSigningName}:${laneSigningPublicB64}`,
+        ),
+        conf,
+      );
+    },
+  );
+
+  await check(
+    "the credential the action wrote still reads after its OIDC token is refused",
+    async () => {
+      assert.ok(oidcToken, "the provisioning step minted a token");
+      // Wait for the worker itself to refuse the token the credential
+      // came from: the token's own expiry plus the claim policy's clock
+      // tolerance, decided on the worker's clock rather than guessed here.
+      const deadline = Date.now() + 30_000;
+      let refused = false;
+      while (!refused && Date.now() < deadline) {
+        const res = await fetch(`${base}/${NARINFO_KEY}`, {
+          headers: { authorization: `Bearer ${oidcToken}` },
+        });
+        await res.arrayBuffer();
+        refused = res.status === 401;
+        if (!refused) await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      assert.ok(refused, "the OIDC token was still accepted 30s later");
+      // This is the read the daemon makes for the rest of the job.
+      assert.equal(await runner.readWithNetrc(NARINFO_KEY), "200");
+      assert.equal(await runner.readWithNetrc(OTHER_NARINFO), "404");
+    },
+  );
+
+  await check("it reads as the run, and only reads", async () => {
+    const who = await fetch(`${base}/api/whoami`, {
+      headers: { authorization: `Bearer ${credential}` },
+    });
+    const text = await who.text();
+    assert.equal(who.status, 200, text);
+    const body = JSON.parse(text);
+    assert.equal(body.credential, "ci");
+    assert.equal(body.login, "lane-org");
+    // Writes take an OIDC token and nothing else.
+    const renew = await fetch(`${base}/roots/lane-org-lane-repo`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${credential}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ installables: [], storePaths: [] }),
+    });
+    assert.equal(renew.status, 401, await renew.text());
+    const admin = await fetch(`${base}/api/self/health`, {
+      headers: { authorization: `Bearer ${credential}` },
+    });
+    assert.equal(admin.status, 403, await admin.text());
+  });
+
+  await check(
+    "the record keeps the run's claims and no credential",
+    async () => {
+      const digest = crypto
+        .createHash("sha256")
+        .update(credential)
+        .digest("hex");
+      const got = spawnSync(
+        "wrangler",
+        [
+          "kv",
+          "key",
+          "get",
+          `readtoken/${digest}`,
+          "--binding",
+          "CACHET_KV",
+          "--local",
+          "--persist-to",
+          persist,
+          "--config",
+          configPath,
+        ],
+        { encoding: "utf8" },
+      );
+      assert.equal(got.status, 0, got.stderr);
+      const record = JSON.parse(got.stdout);
+      assert.deepEqual(record.run, {
+        repository: "lane-org/lane-repo",
+        ref: "refs/heads/main",
+        runId: "41",
+        runAttempt: "1",
+        sha: "abc",
+      });
+      assert.equal(record.login, "lane-org");
+      assert.equal(record.githubToken, undefined);
+      assert.equal(
+        record.expiresAtMs - record.issuedAtMs,
+        6 * 3_600_000,
+        "the longest GitHub lets a job run",
+      );
+      assert.ok(!got.stdout.includes(credential));
+      assert.ok(!got.stdout.includes(oidcToken));
+    },
+  );
+
+  await check("the revoke post step forgets it", async () => {
+    const ran = await runner.revoke({
+      CACHET_ISSUED_NETRC: runner.netrc,
+      CACHET_REVOKE_URL: `${base}/api/login/revoke`,
+    });
+    assert.equal(ran.status, 0, ran.stderr);
+    assert.match(ran.stdout, /cachet: revoked this job's read credential/);
+    assert.equal(await runner.readWithNetrc(NARINFO_KEY), "401");
+  });
+
+  await check(
+    "a deployment that will not exchange leaves the job on its OIDC token, and says so",
+    async () => {
+      // An audience the lane deployment does not serve stands in for a
+      // deployment from before the exchange: either way the answer is
+      // 401, and the step falls back to what it always wrote.
+      const fallback = await newRunner();
+      const ran = await fallback.provision({ CACHET_AUDIENCE: "elsewhere" });
+      assert.equal(ran.status, 0, `${ran.stdout}${ran.stderr}`);
+      assert.match(
+        ran.stdout,
+        /did not issue a read credential \(HTTP 401\), so the netrc carries the job's OIDC token, and the cache stops answering this job when that token expires/,
+      );
+      const netrc = await readFile(fallback.netrc, "utf8");
+      assert.ok(netrc.includes(laneOidc.last), "the OIDC token, as before");
+      const exported = await fallback.exported();
+      assert.equal(exported.get("CACHET_ISSUED_NETRC"), undefined);
+      const revoked = await fallback.revoke();
+      assert.equal(revoked.status, 0, revoked.stderr);
+      assert.match(revoked.stdout, /no issued read credential to revoke/);
+    },
+  );
+
+  await check("a job with no OIDC grant builds uncached", async () => {
+    const fork = await newRunner();
+    const ran = await fork.provision({ ACTIONS_ID_TOKEN_REQUEST_URL: "" });
+    assert.equal(ran.status, 0, `${ran.stdout}${ran.stderr}`);
+    assert.match(ran.stdout, /no OIDC token grant in this job/);
+    assert.equal(existsSync(fork.netrc), false, "no credential is written");
+    const exported = await fork.exported();
+    assert.equal(exported.get("CACHET_EXTRA_CONF"), "");
+  });
+}
 
 await scenario(
   "a fresh bucket runs generation zero",

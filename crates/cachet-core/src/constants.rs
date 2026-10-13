@@ -162,6 +162,26 @@ pub const GITHUB_RENEW_SKEW_MS: u64 = 300_000;
 /// is deleting the record.
 pub const READ_TOKEN_TTL_MS: u64 = 30 * MILLIS_PER_DAY;
 
+/// How long a read credential issued to a workflow run is accepted.
+///
+/// The nix daemon reads the run's credential out of a netrc on every
+/// substitution, so the credential has to outlive the job that holds it.
+/// GitHub stops a job on a GitHub-hosted runner after six hours of
+/// execution ("Each job in a workflow can run for up to 6 hours of
+/// execution time", <https://docs.github.com/en/actions/reference/limits>),
+/// and a job's `timeout-minutes` defaults to 360 on any runner
+/// (<https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax>).
+/// The exchange happens inside the job, so six hours from the exchange
+/// covers what is left of it. A self-hosted job that raises its timeout
+/// past six hours outlives its credential and builds the rest uncached.
+///
+/// Nothing re-checks a run after the exchange. The OIDC token it traded
+/// proved the run belongs to a served org, and no later request could
+/// ask that question again, because the token expires within minutes
+/// and the deployment does not keep it. This bound is the credential's
+/// whole life unless the action's post step revokes it first.
+pub const RUN_READ_TOKEN_TTL_MS: u64 = 6 * MILLIS_PER_HOUR;
+
 /// An Authorization header longer than this is refused as malformed_auth:
 /// JWTs run a few kilobytes, so 8 KiB is generous room while still a hard
 /// guard in front of the parsers.
@@ -360,6 +380,9 @@ pub const SESSION_COOKIE_NAME: &str = "cachet_session";
 /// Milliseconds in a day, the unit conversion used by the retention
 /// constants.
 pub const MILLIS_PER_DAY: u64 = 86_400_000;
+
+/// Milliseconds in an hour.
+pub const MILLIS_PER_HOUR: u64 = 3_600_000;
 
 /// Negative answers to the edge cache last this long: a missing narinfo is
 /// usually being written this second.
