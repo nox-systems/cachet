@@ -36,7 +36,10 @@ license = "Apache-2.0"
 [workspace.dependencies]
 # why: the property lane's engine, pinned exactly. Hegel releases can change
 # generation behavior, so each bump is a deliberate, gated change.
-hegeltest = { version = "=0.46.1", default-features = false, features = ["rand"] }
+# static-engine links the engine as a locked Rust dependency: without it,
+# hegeltest's build script runs a nested cargo build that fetches the engine
+# from crates.io, which the sandboxed lane builds cannot reach.
+hegeltest = { version = "=0.46.1", default-features = false, features = ["rand", "static-engine"] }
 # why: the golden lane's snapshot engine. Snapshots commit with the code
 # that produces them; the check fails on drift.
 insta = { version = "1", default-features = false }
