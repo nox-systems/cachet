@@ -1125,8 +1125,8 @@ function runProcess(command, args, env) {
 }
 
 // One value from the lane worker's local KV, as text.
-function kvGet(persist, key) {
-  const got = spawnSync(
+async function kvGet(persist, key) {
+  const got = await run(
     "wrangler",
     [
       "kv",
@@ -1141,7 +1141,6 @@ function kvGet(persist, key) {
       "--config",
       configPath,
     ],
-    { encoding: "utf8" },
   );
   assert.equal(got.status, 0, got.stderr);
   return got.stdout;
@@ -1159,8 +1158,8 @@ function jobKey(prefix, checkRunId, runAttempt = "1") {
 
 // Write one value into the lane worker's local KV, as a stale exchange
 // would have.
-function kvPut(persist, key, value) {
-  const put = spawnSync(
+async function kvPut(persist, key, value) {
+  const put = await run(
     "wrangler",
     [
       "kv",
@@ -1176,7 +1175,6 @@ function kvPut(persist, key, value) {
       "--config",
       configPath,
     ],
-    { encoding: "utf8" },
   );
   assert.equal(put.status, 0, put.stderr);
 }
@@ -1417,7 +1415,7 @@ async function actionAssertions(base, persist, newRunner) {
         .createHash("sha256")
         .update(credential)
         .digest("hex");
-      const got = spawnSync(
+      const got = await run(
         "wrangler",
         [
           "kv",
@@ -1432,7 +1430,6 @@ async function actionAssertions(base, persist, newRunner) {
           "--config",
           configPath,
         ],
-        { encoding: "utf8" },
       );
       assert.equal(got.status, 0, got.stderr);
       const record = JSON.parse(got.stdout);
@@ -1454,7 +1451,7 @@ async function actionAssertions(base, persist, newRunner) {
       assert.ok(!got.stdout.includes(credential));
       assert.ok(!got.stdout.includes(oidcToken));
       // And its job counts it, by digest.
-      const listed = JSON.parse(kvGet(persist, jobKey("runtokens", "4100")));
+      const listed = JSON.parse(await kvGet(persist, jobKey("runtokens", "4100")));
       assert.deepEqual(listed, { digests: [digest] });
     },
   );
@@ -1526,7 +1523,7 @@ async function actionAssertions(base, persist, newRunner) {
       const after = await exchange({});
       assert.equal(after.status, 403, JSON.stringify(after.body));
       assert.equal(after.body.code, "credential_limit");
-      assert.equal(kvGet(persist, jobKey("runrevoked", "4100")), "revoked\n");
+      assert.equal(await kvGet(persist, jobKey("runrevoked", "4100")), "revoked\n");
     },
   );
 
@@ -1537,8 +1534,8 @@ async function actionAssertions(base, persist, newRunner) {
       // read before the revocation, or from a colo whose copy is stale,
       // rewrites it after; the revocation must not depend on the list.
       const listKey = jobKey("runtokens", "4100");
-      const listed = kvGet(persist, listKey);
-      kvPut(persist, listKey, listed);
+      const listed = await kvGet(persist, listKey);
+      await kvPut(persist, listKey, listed);
       const read = await fetch(`${base}/${NARINFO_KEY}`, {
         headers: { authorization: `Bearer ${sibling}` },
       });
