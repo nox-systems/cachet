@@ -1126,22 +1126,19 @@ function runProcess(command, args, env) {
 
 // One value from the lane worker's local KV, as text.
 async function kvGet(persist, key) {
-  const got = await run(
-    "wrangler",
-    [
-      "kv",
-      "key",
-      "get",
-      key,
-      "--binding",
-      "CACHET_KV",
-      "--local",
-      "--persist-to",
-      persist,
-      "--config",
-      configPath,
-    ],
-  );
+  const got = await run("wrangler", [
+    "kv",
+    "key",
+    "get",
+    key,
+    "--binding",
+    "CACHET_KV",
+    "--local",
+    "--persist-to",
+    persist,
+    "--config",
+    configPath,
+  ]);
   assert.equal(got.status, 0, got.stderr);
   return got.stdout;
 }
@@ -1159,23 +1156,20 @@ function jobKey(prefix, checkRunId, runAttempt = "1") {
 // Write one value into the lane worker's local KV, as a stale exchange
 // would have.
 async function kvPut(persist, key, value) {
-  const put = await run(
-    "wrangler",
-    [
-      "kv",
-      "key",
-      "put",
-      key,
-      value,
-      "--binding",
-      "CACHET_KV",
-      "--local",
-      "--persist-to",
-      persist,
-      "--config",
-      configPath,
-    ],
-  );
+  const put = await run("wrangler", [
+    "kv",
+    "key",
+    "put",
+    key,
+    value,
+    "--binding",
+    "CACHET_KV",
+    "--local",
+    "--persist-to",
+    persist,
+    "--config",
+    configPath,
+  ]);
   assert.equal(put.status, 0, put.stderr);
 }
 
@@ -1415,22 +1409,19 @@ async function actionAssertions(base, persist, newRunner) {
         .createHash("sha256")
         .update(credential)
         .digest("hex");
-      const got = await run(
-        "wrangler",
-        [
-          "kv",
-          "key",
-          "get",
-          `readtoken/${digest}`,
-          "--binding",
-          "CACHET_KV",
-          "--local",
-          "--persist-to",
-          persist,
-          "--config",
-          configPath,
-        ],
-      );
+      const got = await run("wrangler", [
+        "kv",
+        "key",
+        "get",
+        `readtoken/${digest}`,
+        "--binding",
+        "CACHET_KV",
+        "--local",
+        "--persist-to",
+        persist,
+        "--config",
+        configPath,
+      ]);
       assert.equal(got.status, 0, got.stderr);
       const record = JSON.parse(got.stdout);
       assert.deepEqual(record.run, {
@@ -1451,7 +1442,9 @@ async function actionAssertions(base, persist, newRunner) {
       assert.ok(!got.stdout.includes(credential));
       assert.ok(!got.stdout.includes(oidcToken));
       // And its job counts it, by digest.
-      const listed = JSON.parse(await kvGet(persist, jobKey("runtokens", "4100")));
+      const listed = JSON.parse(
+        await kvGet(persist, jobKey("runtokens", "4100")),
+      );
       assert.deepEqual(listed, { digests: [digest] });
     },
   );
@@ -1523,7 +1516,10 @@ async function actionAssertions(base, persist, newRunner) {
       const after = await exchange({});
       assert.equal(after.status, 403, JSON.stringify(after.body));
       assert.equal(after.body.code, "credential_limit");
-      assert.equal(await kvGet(persist, jobKey("runrevoked", "4100")), "revoked\n");
+      assert.equal(
+        await kvGet(persist, jobKey("runrevoked", "4100")),
+        "revoked\n",
+      );
     },
   );
 
