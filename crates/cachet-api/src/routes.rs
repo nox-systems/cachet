@@ -35,6 +35,7 @@ pub fn cache_info_head() {}
 /// `GET /{hash}.narinfo`: one narinfo document, edge-cached for 30 days
 /// and byte-immutable. Reads authenticate like every cache read; the
 /// narinfo's signatures are the content-integrity check, not the gate.
+/// A `Range` header is served as the NAR route serves it.
 #[utoipa::path(
     get,
     path = "/{hash}.narinfo",
@@ -43,6 +44,8 @@ pub fn cache_info_head() {}
     ),
     responses(
         (status = 200, description = "The signed narinfo", content_type = "text/x-nix-narinfo"),
+        (status = 206, description = "The bytes of a single range, with Content-Range", content_type = "text/x-nix-narinfo"),
+        (status = 416, description = "problem+json; code=range_not_satisfiable, with Content-Range naming the size", body = ProblemBody, content_type = "application/problem+json"),
         (status = 400, description = "problem+json; code=malformed_key", body = ProblemBody, content_type = "application/problem+json"),
         (status = 404, description = "problem+json; code=not_found", body = ProblemBody, content_type = "application/problem+json"),
     )
@@ -95,6 +98,12 @@ pub fn narinfo_put() {}
 /// Requires a read credential: a GitHub token as Bearer (or Basic
 /// password, which is what nix's netrc support sends), an OIDC token
 /// (which is what CI runners carry), or the browser session cookie.
+///
+/// A single `Range` (`bytes=N-`, `bytes=N-M`, or `bytes=-S`) answers 206
+/// with those bytes from the bucket, which is how a download that broke
+/// partway resumes. A range covering none of the object answers 416. A
+/// Range this does not serve (several ranges, another unit, a malformed
+/// one) or one sent with `If-Range` answers 200 with the whole object.
 #[utoipa::path(
     get,
     path = "/nar/{key}",
@@ -103,6 +112,8 @@ pub fn narinfo_put() {}
     ),
     responses(
         (status = 200, description = "The NAR bytes", content_type = "application/x-nix-nar"),
+        (status = 206, description = "The bytes of a single range, with Content-Range", content_type = "application/x-nix-nar"),
+        (status = 416, description = "problem+json; code=range_not_satisfiable, with Content-Range naming the size", body = ProblemBody, content_type = "application/problem+json"),
         (status = 400, description = "problem+json; code=malformed_key", body = ProblemBody, content_type = "application/problem+json"),
         (status = 401, description = "problem+json; code=unauthorized", body = ProblemBody, content_type = "application/problem+json"),
         (status = 404, description = "problem+json; code=not_found", body = ProblemBody, content_type = "application/problem+json"),

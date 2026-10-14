@@ -72,6 +72,7 @@ fn the_error_code_table_is_locked() {
         ClientError::ForbiddenAdmin,
         ClientError::MalformedProbe,
         ClientError::MalformedQuery,
+        ClientError::RangeNotSatisfiable,
     ];
     let body = table
         .iter()
@@ -106,6 +107,7 @@ fn the_error_code_table_is_locked() {
     forbidden_admin 403
     malformed_probe 400
     malformed_query 400
+    range_not_satisfiable 416
  ");
 }
 
@@ -288,6 +290,16 @@ fn read_response_headers_are_byte_locked() {
             writeln!(dump, "{name}: {value}").expect("writing a string");
         }
     }
+    for (name, value) in cachet_core::read::partial_response_headers(
+        cachet_core::read::ObjectKind::Nar,
+        9_875_543,
+        9_876_542,
+        9_876_543,
+    ) {
+        writeln!(dump, "{name}: {value}").expect("writing a string");
+    }
+    let (name, value) = cachet_core::read::unsatisfiable_range_header(9_876_543);
+    writeln!(dump, "{name}: {value}").expect("writing a string");
     for headers in [
         cachet_core::read::not_found_response_headers(),
         cachet_core::read::cache_info_response_headers(),
@@ -300,10 +312,18 @@ fn read_response_headers_are_byte_locked() {
     insta::assert_snapshot!(dump, @"
     content-type: text/x-nix-narinfo
     content-length: 1234
+    accept-ranges: bytes
     cache-control: public, max-age=2592000, immutable
     content-type: application/x-nix-nar
     content-length: 9876543
+    accept-ranges: bytes
     cache-control: public, max-age=2592000, immutable
+    content-type: application/x-nix-nar
+    content-length: 1000
+    content-range: bytes 9875543-9876542/9876543
+    accept-ranges: bytes
+    cache-control: public, max-age=2592000, immutable
+    content-range: bytes */9876543
     content-type: text/plain; charset=utf-8
     cache-control: public, max-age=30
     content-type: text/x-nix-cache-info

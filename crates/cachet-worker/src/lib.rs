@@ -433,6 +433,19 @@ async fn read_routes(
         Ok(generation) => generation,
         Err(failure) => return Some(Err(failure)),
     };
+    // why only on a GET: a HEAD has no body to take part of.
+    let range = if method == &Method::Head {
+        None
+    } else {
+        let headers = req.headers();
+        cachet_core::read::requested_range(
+            headers.get("range").ok().flatten().as_deref(),
+            headers.get("if-range").ok().flatten().as_deref(),
+        )
+    };
+    if let Some(range) = range {
+        return Some(read::serve_range(env, &bucket_key, kind, range, &caller).await);
+    }
     Some(match method {
         Method::Head => read::head_object(env, &bucket_key, kind).await,
         _ => read::serve_object(env, ctx, path, &bucket_key, kind, generation, &caller).await,

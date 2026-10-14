@@ -9,8 +9,9 @@ use cachet_core::generation::{
     GenerationDocument, generation_cache_key, miss_cache_key, object_cache_key,
 };
 use cachet_core::read::{
-    NOT_FOUND_BODY, ObjectKind, cache_info_response_headers, generation_response_headers,
-    is_edge_cacheable, not_found_response_headers, object_response_headers,
+    ByteRange, NOT_FOUND_BODY, ObjectKind, cache_info_response_headers,
+    generation_response_headers, is_edge_cacheable, not_found_response_headers,
+    object_response_headers, partial_response_headers, resolve_range, unsatisfiable_range_header,
 };
 use cachet_core::stats::{StatCaller, StatEvent, StatKind, StatOutcome, StatPoint};
 use worker::{Cache, Context, Env, Headers, Response, Result};
@@ -234,6 +235,84 @@ pub async fn serve_object(
         &[("kind", kind.name().to_string())],
     );
     count_read(env, kind, StatOutcome::BucketHit, caller, size);
+    Ok(response)
+}
+
+/// Serve part of one object: the answer to a GET carrying a Range header.
+///
+/// A client asks for a range when a download broke partway and it is
+/// resuming, which is the case this exists for: nix fetches through curl,
+/// and curl fails a resumed transfer outright when the answer is the
+/// whole object again, so a dropped connection on a large NAR used to
+/// fail the substitution for good.
+///
+/// The edge cache is not consulted. It stores whole objects, a ranged
+/// read is rare, and the bucket serves a range natively, so this reads
+/// the object's size, decides the range against it in cachet-core, and
+/// asks the bucket for exactly those bytes. A range that covers none of
+/// the object answers 416 with the object's size.
+pub async fn serve_range(
+    env: &Env,
+    bucket_key: &str,
+    kind: ObjectKind,
+    range: ByteRange,
+    caller: &StatCaller,
+) -> Result<Response> {
+    let bucket = env.bucket(BUCKET_BINDING)?;
+    let Some(head) = bucket.head(bucket_key).await? else {
+        log::event("info", "read.miss", &[("kind", kind.name().to_string())]);
+        count_read(env, kind, StatOutcome::Miss, caller, 0);
+        return miss_response(true);
+    };
+    let size = head.size();
+    let Some((first, last)) = resolve_range(range, size) else {
+        log::event(
+            "info",
+            "read.range_unsatisfiable",
+            &[("kind", kind.name().to_string())],
+        );
+        count_read(env, kind, StatOutcome::Status(416), caller, 0);
+        let mut response = error::object_read_problem(ClientError::RangeNotSatisfiable)?;
+        let (name, value) = unsatisfiable_range_header(size);
+        response.headers_mut().set(name, &value)?;
+        return Ok(response);
+    };
+    // why the resolved offsets and never the client's: they lie inside
+    // the object, so the bucket is never asked for bytes that are not
+    // there, and every number handed to it is one the object's own size
+    // bounds.
+    let length = last - first + 1;
+    let Some(object) = bucket
+        .get(bucket_key)
+        .range(worker::Range::OffsetWithLength {
+            offset: first,
+            length,
+        })
+        .execute()
+        .await?
+    else {
+        // Deleted between the two reads: a miss like any other.
+        log::event("info", "read.miss", &[("kind", kind.name().to_string())]);
+        count_read(env, kind, StatOutcome::Miss, caller, 0);
+        return miss_response(true);
+    };
+    let Some(body) = object.body() else {
+        log::alert("read.object_bodiless");
+        return error::problem_response(ClientError::StorageUnavailable);
+    };
+    let response = apply(
+        Response::from_body(body.response_body()?)?.with_status(206),
+        &partial_response_headers(kind, first, last, size),
+    )?;
+    log::event(
+        "info",
+        "read.bucket_hit",
+        &[
+            ("kind", kind.name().to_string()),
+            ("range", format!("{first}-{last}/{size}")),
+        ],
+    );
+    count_read(env, kind, StatOutcome::BucketHit, caller, length);
     Ok(response)
 }
 
