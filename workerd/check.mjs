@@ -107,6 +107,12 @@ const GOOD_LAPTOP_TOKEN = "lane-laptop-token";
 // to stage a departure; everything else leaves it alone.
 const laneMembership = { active: true };
 
+// A pass-through to the lane's worker under /breaking, for nix to
+// substitute through. It forwards every request with its Authorization
+// and Range headers, and it can cut the next whole NAR download partway,
+// the way a dropped HTTP/2 stream does, so nix has to resume it.
+const laneBreak = { target: "", cutNext: false, cuts: 0, ranges: [] };
+
 // The lane's plain read credential for object GET/HEADs: every object
 // read answers 401 without one.
 const READ_AUTH = () => ({ authorization: `Bearer ${GOOD_LAPTOP_TOKEN}` });
@@ -145,6 +151,51 @@ const stubServer = http.createServer((req, res) => {
       count: 1,
       value: mint({ aud: audience ?? "cachet-lane" }),
     });
+  }
+  if (req.url.startsWith("/breaking/")) {
+    const forwarded = req.url.slice("/breaking".length);
+    const range = req.headers.range;
+    if (forwarded.startsWith("/nar/") && range) laneBreak.ranges.push(range);
+    const cut = forwarded.startsWith("/nar/") && !range && laneBreak.cutNext;
+    if (cut) laneBreak.cutNext = false;
+    (async () => {
+      try {
+        const upstream = await fetch(`${laneBreak.target}${forwarded}`, {
+          method: req.method,
+          headers: {
+            ...(req.headers.authorization
+              ? { authorization: req.headers.authorization }
+              : {}),
+            ...(range ? { range } : {}),
+          },
+        });
+        const body = Buffer.from(await upstream.arrayBuffer());
+        const headers = {};
+        for (const name of [
+          "content-type",
+          "content-range",
+          "accept-ranges",
+          "cache-control",
+          "www-authenticate",
+        ]) {
+          const value = upstream.headers.get(name);
+          if (value !== null) headers[name] = value;
+        }
+        headers["content-length"] = String(body.length);
+        res.writeHead(upstream.status, headers);
+        if (!cut) return res.end(body);
+        // Half the body, then the connection goes, with the length
+        // promising the rest: what a client sees when a stream breaks.
+        laneBreak.cuts += 1;
+        res.write(body.subarray(0, Math.floor(body.length / 2)), () =>
+          res.socket.destroy(),
+        );
+      } catch (failure) {
+        res.writeHead(502, { "content-type": "text/plain" });
+        res.end(String(failure));
+      }
+    })();
+    return;
   }
   if (req.url.endsWith("/analytics_engine/sql") && req.method === "POST") {
     let sql = "";
@@ -643,6 +694,161 @@ await scenario(
     await check("POST is not a read", async () => {
       const res = await fetch(`${base}/${NARINFO_KEY}`, { method: "POST" });
       assert.equal(res.status, 404);
+    });
+  },
+);
+
+// A NAR large enough to break partway: three MiB of random bytes under a
+// NAR key. The read path serves what the bucket holds, so the bytes need
+// not be a real NAR to prove the range arithmetic and the resume.
+const RANGE_NAR_KEY = `nar/${"1".repeat(52)}.nar.zst`;
+const rangeNarBytes = crypto.randomBytes(3 * 1024 * 1024);
+const sha256Hex = (bytes) =>
+  crypto.createHash("sha256").update(bytes).digest("hex");
+
+await scenario(
+  "a broken download resumes with a range",
+  async () => [
+    [RANGE_NAR_KEY, rangeNarBytes],
+    [NARINFO_KEY, await readFile(path.join(fixturesDir, NARINFO_KEY))],
+  ],
+  async ({ base }) => {
+    const url = `${base}/${RANGE_NAR_KEY}`;
+    const total = rangeNarBytes.length;
+    const ranged = async (range, headers = READ_AUTH()) => {
+      const res = await fetch(url, { headers: { ...headers, range } });
+      return { res, body: Buffer.from(await res.arrayBuffer()) };
+    };
+
+    await check("a whole read says a download can resume", async () => {
+      const whole = await fetch(url, { headers: READ_AUTH() });
+      assert.equal(whole.status, 200);
+      assert.equal(whole.headers.get("accept-ranges"), "bytes");
+      assert.equal(
+        sha256Hex(Buffer.from(await whole.arrayBuffer())),
+        sha256Hex(rangeNarBytes),
+      );
+      const head = await fetch(url, { method: "HEAD", headers: READ_AUTH() });
+      assert.equal(head.status, 200);
+      assert.equal(head.headers.get("accept-ranges"), "bytes");
+      assert.equal(head.headers.get("content-length"), String(total));
+    });
+
+    await check(
+      "a download broken partway resumes where it stopped",
+      async () => {
+        // Read a MiB, then drop the connection, as a broken stream does.
+        const controller = new AbortController();
+        const res = await fetch(url, {
+          headers: READ_AUTH(),
+          signal: controller.signal,
+        });
+        assert.equal(res.status, 200);
+        const reader = res.body.getReader();
+        const chunks = [];
+        let received = 0;
+        while (received < 1024 * 1024) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(Buffer.from(value));
+          received += value.length;
+        }
+        controller.abort();
+        await reader.cancel().catch(() => {});
+        const head = Buffer.concat(chunks);
+        assert.ok(head.length < total, `the break came before the end`);
+        // The resume, exactly as curl sends it for nix.
+        const { res: rest, body } = await ranged(`bytes=${head.length}-`);
+        assert.equal(rest.status, 206, body.toString().slice(0, 200));
+        assert.equal(
+          rest.headers.get("content-range"),
+          `bytes ${head.length}-${total - 1}/${total}`,
+        );
+        assert.equal(
+          rest.headers.get("content-length"),
+          String(total - head.length),
+        );
+        assert.equal(rest.headers.get("accept-ranges"), "bytes");
+        assert.equal(
+          sha256Hex(Buffer.concat([head, body])),
+          sha256Hex(rangeNarBytes),
+          "the two halves are the object",
+        );
+      },
+    );
+
+    await check(
+      "a bounded range and a suffix answer exactly those bytes",
+      async () => {
+        const bounded = await ranged("bytes=100-199");
+        assert.equal(bounded.res.status, 206);
+        assert.equal(
+          bounded.res.headers.get("content-range"),
+          `bytes 100-199/${total}`,
+        );
+        assert.ok(bounded.body.equals(rangeNarBytes.subarray(100, 200)));
+        const suffix = await ranged("bytes=-1000");
+        assert.equal(suffix.res.status, 206);
+        assert.equal(
+          suffix.res.headers.get("content-range"),
+          `bytes ${total - 1000}-${total - 1}/${total}`,
+        );
+        assert.ok(suffix.body.equals(rangeNarBytes.subarray(total - 1000)));
+        // A last offset past the end stops at the end.
+        const clamped = await ranged(`bytes=${total - 10}-${total + 500}`);
+        assert.equal(clamped.res.status, 206);
+        assert.ok(clamped.body.equals(rangeNarBytes.subarray(total - 10)));
+      },
+    );
+
+    await check(
+      "a range past the end answers 416 with the object's size",
+      async () => {
+        for (const range of [`bytes=${total}-`, "bytes=-0"]) {
+          const { res, body } = await ranged(range);
+          assert.equal(res.status, 416, range);
+          assert.equal(res.headers.get("content-range"), `bytes */${total}`);
+          assert.equal(
+            JSON.parse(body.toString()).code,
+            "range_not_satisfiable",
+          );
+        }
+      },
+    );
+
+    await check(
+      "a range the deployment does not serve answers the whole object",
+      async () => {
+        for (const [range, extra] of [
+          ["bytes=5-2", {}],
+          ["bytes=0-1,4-5", {}],
+          ["items=0-1", {}],
+          ["bytes=10-", { "if-range": '"anything"' }],
+        ]) {
+          const { res, body } = await ranged(range, {
+            ...READ_AUTH(),
+            ...extra,
+          });
+          assert.equal(res.status, 200, range);
+          assert.equal(body.length, total, range);
+        }
+      },
+    );
+
+    await check("a narinfo answers a range too", async () => {
+      const seeded = await readFile(path.join(fixturesDir, NARINFO_KEY));
+      const res = await fetch(`${base}/${NARINFO_KEY}`, {
+        headers: { ...READ_AUTH(), range: "bytes=0-9" },
+      });
+      assert.equal(res.status, 206);
+      assert.ok(
+        Buffer.from(await res.arrayBuffer()).equals(seeded.subarray(0, 10)),
+      );
+    });
+
+    await check("a ranged read still needs a credential", async () => {
+      const res = await fetch(url, { headers: { range: "bytes=0-9" } });
+      assert.equal(res.status, 401, await res.text());
     });
   },
 );
@@ -2897,6 +3103,18 @@ try {
       // process's event loop, and the CLI talks to it mid-push (the OIDC
       // mint, the upstream probes); a spawnSync would freeze the stub the
       // CLI is waiting on, deadlocking both.
+      // nix the same way, for the substitution check: it reaches the stub
+      // too, so it must not block this process's event loop either.
+      const runNix = (args, env) =>
+        new Promise((resolve, reject) => {
+          const child = spawn("nix", args, { env });
+          let stdout = "";
+          let stderr = "";
+          child.stdout.on("data", (chunk) => (stdout += chunk));
+          child.stderr.on("data", (chunk) => (stderr += chunk));
+          child.on("error", reject);
+          child.on("close", (status) => resolve({ status, stdout, stderr }));
+        });
       const runCli = (args, env) =>
         new Promise((resolve, reject) => {
           const child = spawn(cli, args, { env });
@@ -3010,6 +3228,59 @@ try {
             headers: READ_AUTH(),
           });
           assert.equal(nar.status, 200, "the narinfo never dangles");
+        },
+      );
+
+      await check(
+        "nix substitutes through a download that breaks partway",
+        async () => {
+          // nix itself, fetching the pushed path through a pass-through
+          // that drops the NAR's connection halfway. curl resumes with a
+          // Range header, and the substitution only completes if that
+          // answers 206 with the rest: a whole object again is "Requested
+          // range was not delivered by the server", and the job fails.
+          assert.ok(storePath, "the push check left a store path");
+          laneBreak.target = base;
+          laneBreak.cutNext = true;
+          laneBreak.cuts = 0;
+          laneBreak.ranges = [];
+          const netrc = path.join(runnerTemp, "netrc");
+          await writeFile(
+            netrc,
+            `machine 127.0.0.1 login cachet password ${GOOD_LAPTOP_TOKEN}\n`,
+            { mode: 0o600 },
+          );
+          const copied = path.join(runnerTemp, "copied");
+          const copy = await runNix(
+            [
+              "copy",
+              "--from",
+              `http://127.0.0.1:${stubServer.address().port}/breaking`,
+              "--to",
+              `file://${copied}`,
+              "--option",
+              "netrc-file",
+              netrc,
+              "--option",
+              "trusted-public-keys",
+              `${laneSigningName}:${laneSigningPublicB64}`,
+              storePath,
+            ],
+            pushEnv,
+          );
+          assert.equal(laneBreak.cuts, 1, "the NAR download was cut");
+          assert.equal(copy.status, 0, copy.stderr);
+          assert.ok(
+            laneBreak.ranges.some((range) =>
+              /^bytes=[1-9][0-9]*-$/.test(range),
+            ),
+            `nix resumed with a range: ${JSON.stringify(laneBreak.ranges)}`,
+          );
+          const hash = storePath.match(/\/nix\/store\/([a-z0-9]+)-/)[1];
+          assert.ok(
+            existsSync(path.join(copied, `${hash}.narinfo`)),
+            "the path arrived whole",
+          );
         },
       );
 

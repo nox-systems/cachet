@@ -86,6 +86,10 @@ pub enum ClientError {
     /// asking a question this deployment cannot answer should hear so,
     /// not receive the answer to a different one.
     MalformedQuery,
+    /// A byte range that covers none of the object, such as one starting
+    /// at or past its end. The answer names the object's size, so a
+    /// client can ask again.
+    RangeNotSatisfiable,
 }
 
 impl ClientError {
@@ -115,6 +119,7 @@ impl ClientError {
             Self::NarinfoNarMissing => 409,
             Self::LengthRequired => 411,
             Self::BodyTooLarge => 413,
+            Self::RangeNotSatisfiable => 416,
             Self::AuthUnavailable | Self::StorageUnavailable => 503,
         }
     }
@@ -149,6 +154,7 @@ impl ClientError {
             Self::ForbiddenAdmin => "forbidden_admin",
             Self::MalformedProbe => "malformed_probe",
             Self::MalformedQuery => "malformed_query",
+            Self::RangeNotSatisfiable => "range_not_satisfiable",
         }
     }
 
@@ -184,6 +190,7 @@ impl ClientError {
             Self::ForbiddenAdmin => "outside the configured admins",
             Self::MalformedProbe => "probe payload did not parse",
             Self::MalformedQuery => "query names a choice this deployment does not offer",
+            Self::RangeNotSatisfiable => "the range covers no byte of the object",
         }
     }
 }

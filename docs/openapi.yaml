@@ -523,6 +523,12 @@ paths:
         Requires a read credential: a GitHub token as Bearer (or Basic
         password, which is what nix's netrc support sends), an OIDC token
         (which is what CI runners carry), or the browser session cookie.
+      description: |-
+        A single `Range` (`bytes=N-`, `bytes=N-M`, or `bytes=-S`) answers 206
+        with those bytes from the bucket, which is how a download that broke
+        partway resumes. A range covering none of the object answers 416. A
+        Range this does not serve (several ranges, another unit, a malformed
+        one) or one sent with `If-Range` answers 200 with the whole object.
       operationId: nar_get
       parameters:
       - name: key
@@ -534,6 +540,10 @@ paths:
       responses:
         '200':
           description: The NAR bytes
+          content:
+            application/x-nix-nar: {}
+        '206':
+          description: The bytes of a single range, with Content-Range
           content:
             application/x-nix-nar: {}
         '400':
@@ -550,6 +560,12 @@ paths:
                 $ref: '#/components/schemas/ProblemBody'
         '404':
           description: problem+json; code=not_found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '416':
+          description: problem+json; code=range_not_satisfiable, with Content-Range naming the size
           content:
             application/problem+json:
               schema:
@@ -937,6 +953,7 @@ paths:
         `GET /{hash}.narinfo`: one narinfo document, edge-cached for 30 days
         and byte-immutable. Reads authenticate like every cache read; the
         narinfo's signatures are the content-integrity check, not the gate.
+        A `Range` header is served as the NAR route serves it.
       operationId: narinfo_get
       parameters:
       - name: hash
@@ -950,6 +967,10 @@ paths:
           description: The signed narinfo
           content:
             text/x-nix-narinfo: {}
+        '206':
+          description: The bytes of a single range, with Content-Range
+          content:
+            text/x-nix-narinfo: {}
         '400':
           description: problem+json; code=malformed_key
           content:
@@ -958,6 +979,12 @@ paths:
                 $ref: '#/components/schemas/ProblemBody'
         '404':
           description: problem+json; code=not_found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemBody'
+        '416':
+          description: problem+json; code=range_not_satisfiable, with Content-Range naming the size
           content:
             application/problem+json:
               schema:

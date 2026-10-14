@@ -160,6 +160,23 @@ answer the protocol's own miss, 404 `text/plain` with the negative
 caching headers and never the console's shell, while the router's own
 fallback keeps its problem+json shape.
 
+A download that breaks partway has its own scenario, over a three MiB
+object of random bytes seeded under a NAR key. The driver reads a MiB of
+it, drops the connection, and asks for the rest with `Range: bytes=N-`,
+which is what curl sends when nix resumes. The answer must be 206 with
+`Content-Range: bytes N-last/size`, and the two halves together must hash
+to the seeded object. Around that, a bounded range and a suffix answer
+exactly their bytes, a last offset past the end stops at the end, a range
+starting at the end and a zero suffix answer 416 `range_not_satisfiable`
+with `Content-Range: bytes */size`, ranges the deployment does not serve
+(reversed, several, another unit, or sent with `If-Range`) answer the
+whole object, a narinfo answers a range the same way, a ranged read
+without a credential answers 401, and every whole read and HEAD carries
+`Accept-Ranges: bytes`. The CLI push scenario then has nix itself
+substitute the path it pushed through a pass-through in the stub that
+cuts the NAR download halfway: the copy must succeed, and the stub must
+have seen nix resume with a range.
+
 Every code in the error table (cachet-core/src/error.rs) has at least one
 wire-level assertion here. storage_unavailable is asserted through the
 counter route, whose upstream the driver controls: the stub answers 500
