@@ -44,10 +44,12 @@ The assertions, in order:
    answered with the console's shell would be 200 text/html to every nix
    client that asked whether this cache holds a path (ADR 0014).
 8. The credential revokes with 204, sent from the netrc the way the
-   action's revoke step sends it. The lane asserts only the answer: a
-   read straight afterwards can still be admitted for up to two minutes
-   by another isolate's memo of the credential, so a 401 there would be
-   a race.
+   action's revoke step sends it, and a credential the deployment never
+   issued answers 404. The lane asserts only those answers: a read
+   straight after the revocation can still be admitted for up to two
+   minutes by another isolate's memo of the credential, and for longer
+   when that read meets a KV copy that has not yet seen the revocation,
+   so a 401 there would be a race.
 
 The lane's configuration keeps it from damaging the deployment it
 tests. It forces `GITHUB_REF` off the default branch, so its push can

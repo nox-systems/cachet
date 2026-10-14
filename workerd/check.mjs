@@ -113,11 +113,18 @@ const laneMembership = { active: true };
 // the way a dropped HTTP/2 stream does, so nix has to resume it.
 const laneBreak = { target: "", cutNext: false, cuts: 0, ranges: [] };
 
-// How long the tokens the stub's Actions mint issues stay valid, and the
-// last one it issued. A scenario shortens the lifetime to watch a token
-// expire, the way GitHub's own do within minutes; everything else keeps
-// the default.
-const laneOidc = { lifetimeSeconds: 600, last: null };
+// How long the tokens the stub's Actions mint issues stay valid, the
+// claims a scenario sets on them, and the last one it issued. A scenario
+// shortens the lifetime to watch a token expire, the way GitHub's own do
+// within minutes, or names another run attempt; everything else keeps the
+// defaults.
+const laneOidc = { lifetimeSeconds: 600, claims: {}, last: null };
+
+// A pass-through to the lane's worker under /deployment, which can answer
+// the next exchanges itself with the HTML 500 Cloudflare serves when a
+// worker throws. curl retries a 500, and the action has to read only the
+// answer to the attempt that succeeded.
+const laneProxy = { target: "", html500: 0, exchanges: 0 };
 
 // The lane's plain read credential for object GET/HEADs: every object
 // read answers 401 without one.
@@ -143,6 +150,45 @@ const stubServer = http.createServer((req, res) => {
   if (req.url === "/jwks.json") {
     return json(200, { keys: [jwksJwk] });
   }
+  if (req.url.startsWith("/deployment/")) {
+    const forwarded = req.url.slice("/deployment".length);
+    if (forwarded === "/api/login/exchange" && req.method === "POST") {
+      laneProxy.exchanges += 1;
+      if (laneProxy.html500 > 0) {
+        laneProxy.html500 -= 1;
+        res.writeHead(500, { "content-type": "text/html" });
+        return res.end(
+          "<!DOCTYPE html><html><body>Error 1101: Worker threw exception</body></html>",
+        );
+      }
+    }
+    const chunks = [];
+    req.on("data", (chunk) => chunks.push(chunk));
+    req.on("end", async () => {
+      try {
+        const upstream = await fetch(`${laneProxy.target}${forwarded}`, {
+          method: req.method,
+          headers: req.headers.authorization
+            ? { authorization: req.headers.authorization }
+            : {},
+          body:
+            req.method === "GET" || req.method === "HEAD"
+              ? undefined
+              : Buffer.concat(chunks),
+        });
+        const body = Buffer.from(await upstream.arrayBuffer());
+        res.writeHead(upstream.status, {
+          "content-type":
+            upstream.headers.get("content-type") ?? "application/octet-stream",
+        });
+        res.end(body);
+      } catch (failure) {
+        res.writeHead(502, { "content-type": "text/plain" });
+        res.end(String(failure));
+      }
+    });
+    return;
+  }
   // The CLI's push mints tokens the Actions way: one GET per audience,
   // refused without the request token's header, as GitHub's endpoint does.
   if (req.url.startsWith("/oidc-token")) {
@@ -156,6 +202,7 @@ const stubServer = http.createServer((req, res) => {
     laneOidc.last = mint({
       aud: audience ?? "cachet-lane",
       exp: Math.floor(Date.now() / 1000) + laneOidc.lifetimeSeconds,
+      ...laneOidc.claims,
     });
     return json(200, { count: 1, value: laneOidc.last });
   }
@@ -1076,6 +1123,36 @@ function runProcess(command, args, env) {
   });
 }
 
+// One value from the lane worker's local KV, as text.
+function kvGet(persist, key) {
+  const got = spawnSync(
+    "wrangler",
+    [
+      "kv",
+      "key",
+      "get",
+      key,
+      "--binding",
+      "CACHET_KV",
+      "--local",
+      "--persist-to",
+      persist,
+      "--config",
+      configPath,
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(got.status, 0, got.stderr);
+  return got.stdout;
+}
+
+// Where a run attempt of the lane's repository lists its credentials:
+// the digest of the repository, run id, and attempt, one per line.
+function runTokensKey(runId, runAttempt) {
+  const name = `lane-org/lane-repo\n${runId}\n${runAttempt}`;
+  return `runtokens/${crypto.createHash("sha256").update(name).digest("hex")}`;
+}
+
 async function actionRunner(base) {
   const work = await mkdtemp(path.join(os.tmpdir(), "cachet-action-"));
   const shims = path.join(work, "bin");
@@ -1083,6 +1160,15 @@ async function actionRunner(base) {
   await writeFile(
     path.join(shims, "sudo"),
     '#!/usr/bin/env bash\nif [ "${1:-}" = "-n" ]; then shift; fi\nexec "$@"\n',
+    { mode: 0o755 },
+  );
+  // A sudo that refuses, as `sudo -n` does on a runner without
+  // passwordless sudo.
+  const refusing = path.join(work, "bin-refusing");
+  await mkdir(refusing);
+  await writeFile(
+    path.join(refusing, "sudo"),
+    '#!/usr/bin/env bash\necho "sudo: a password is required" >&2\nexit 1\n',
     { mode: 0o755 },
   );
   const netrc = path.join(work, "etc-nix", "netrc");
@@ -1102,6 +1188,7 @@ async function actionRunner(base) {
     netrc,
     githubEnv,
     env,
+    refusingSudoPath: `${refusing}:${process.env.PATH}`,
     provision: (overrides = {}) =>
       runProcess("bash", [path.join(repoRoot, "action", "provision.sh")], {
         ...env,
@@ -1169,8 +1256,9 @@ try {
     },
     async ({ base, persist }) => {
       const runners = [];
-      const newRunner = async () => {
-        const made = await actionRunner(base);
+      laneProxy.target = base;
+      const newRunner = async (url = base) => {
+        const made = await actionRunner(url);
         runners.push(made);
         return made;
       };
@@ -1248,6 +1336,10 @@ async function actionAssertions(base, persist, newRunner) {
       // Wait for the worker itself to refuse the token the credential
       // came from: the token's own expiry plus the claim policy's clock
       // tolerance, decided on the worker's clock rather than guessed here.
+      // why a real wait: the worker samples its clock from the runtime,
+      // and workerd offers no seam to move it, so the only way to see a
+      // token expire is to let it. The token lives five seconds, which
+      // keeps the wait under ten.
       const deadline = Date.now() + 30_000;
       let refused = false;
       while (!refused && Date.now() < deadline) {
@@ -1332,18 +1424,141 @@ async function actionAssertions(base, persist, newRunner) {
       );
       assert.ok(!got.stdout.includes(credential));
       assert.ok(!got.stdout.includes(oidcToken));
+      // And its run attempt lists it, by digest.
+      const listed = JSON.parse(kvGet(persist, runTokensKey("41", "1")));
+      assert.deepEqual(listed, { digests: [digest], revoked: false });
     },
   );
 
-  await check("the revoke post step forgets it", async () => {
-    const ran = await runner.revoke({
-      CACHET_ISSUED_NETRC: runner.netrc,
-      CACHET_REVOKE_URL: `${base}/api/login/revoke`,
+  const exchange = async (claims) => {
+    const res = await fetch(`${base}/api/login/exchange`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${mint(claims)}` },
     });
-    assert.equal(ran.status, 0, ran.stderr);
-    assert.match(ran.stdout, /cachet: revoked this job's read credential/);
-    assert.equal(await runner.readWithNetrc(NARINFO_KEY), "401");
+    const text = await res.text();
+    return { status: res.status, body: text ? JSON.parse(text) : null };
+  };
+  let sibling = "";
+
+  await check("a run attempt holds at most four credentials", async () => {
+    // The provisioning step holds one. Three more, as a step with the
+    // job's id-token grant could mint for itself, fill the attempt.
+    for (let more = 0; more < 3; more += 1) {
+      const answer = await exchange({});
+      assert.equal(answer.status, 200, JSON.stringify(answer.body));
+      sibling = answer.body.token;
+    }
+    const fifth = await exchange({});
+    assert.equal(fifth.status, 403, JSON.stringify(fifth.body));
+    assert.equal(fifth.body.code, "credential_limit");
+    // Another attempt of the same run counts afresh.
+    const rerun = await exchange({ run_attempt: "9" });
+    assert.equal(rerun.status, 200, JSON.stringify(rerun.body));
+    // A token that names no run is not issued one at all.
+    const unnamed = await exchange({ run_id: undefined });
+    assert.equal(unnamed.status, 401, JSON.stringify(unnamed.body));
+    // The sibling reads now, so this isolate remembers it, which the
+    // revocation below has to overcome.
+    const read = await fetch(`${base}/${NARINFO_KEY}`, {
+      headers: { authorization: `Bearer ${sibling}` },
+    });
+    assert.equal(read.status, 200, await read.text());
   });
+
+  const revokeEnv = {
+    CACHET_ISSUED_NETRC: runner.netrc,
+    CACHET_REVOKE_URL: `${base}/api/login/revoke`,
+  };
+
+  await check(
+    "the revoke post step ends every credential of the run attempt",
+    async () => {
+      const ran = await runner.revoke(revokeEnv);
+      assert.equal(ran.status, 0, ran.stderr);
+      assert.match(
+        ran.stdout,
+        /cachet: revoked this job's read credential and every other credential of its run attempt/,
+      );
+      assert.equal(await runner.readWithNetrc(NARINFO_KEY), "401");
+      const read = await fetch(`${base}/${NARINFO_KEY}`, {
+        headers: { authorization: `Bearer ${sibling}` },
+      });
+      assert.equal(read.status, 401, "the sibling a step minted ends too");
+      // The attempt is issued no more, even with a token still in date.
+      const after = await exchange({});
+      assert.equal(after.status, 403, JSON.stringify(after.body));
+      assert.equal(after.body.code, "credential_limit");
+      const listed = JSON.parse(kvGet(persist, runTokensKey("41", "1")));
+      assert.equal(listed.revoked, true);
+      assert.equal(listed.digests.length, 4);
+    },
+  );
+
+  await check(
+    "revoking what is already gone answers 404, and the step says so",
+    async () => {
+      const again = await runner.revoke(revokeEnv);
+      assert.equal(again.status, 0, again.stderr);
+      assert.match(
+        again.stdout,
+        /cachet: the deployment held no such credential, because it was already revoked or has expired/,
+      );
+      const res = await fetch(`${base}/api/login/revoke`, {
+        method: "POST",
+        headers: { authorization: `Bearer cachet_${"A".repeat(43)}` },
+      });
+      const text = await res.text();
+      assert.equal(res.status, 404, text);
+      assert.equal(JSON.parse(text).code, "not_found");
+    },
+  );
+
+  await check(
+    "a runner without passwordless sudo is named as the reason",
+    async () => {
+      const ran = await runner.revoke({
+        ...revokeEnv,
+        PATH: runner.refusingSudoPath,
+      });
+      assert.equal(ran.status, 0, ran.stderr);
+      assert.match(
+        ran.stdout,
+        /not revoked, because sudo -n could not run without a password/,
+      );
+    },
+  );
+
+  await check(
+    "an exchange retried past an HTML 500 still yields the credential",
+    async () => {
+      // A fresh run attempt, so the bound above does not apply, behind
+      // the stub's pass-through, whose first exchange answers 500 with a
+      // page. curl retries, and the step must read the second answer
+      // alone.
+      const proxied = `http://127.0.0.1:${stubServer.address().port}/deployment`;
+      const flaky = await newRunner(proxied);
+      laneOidc.claims = { run_attempt: "2" };
+      laneProxy.html500 = 1;
+      laneProxy.exchanges = 0;
+      let ran;
+      try {
+        ran = await flaky.provision();
+      } finally {
+        laneOidc.claims = {};
+        laneProxy.html500 = 0;
+      }
+      assert.equal(ran.status, 0, `${ran.stdout}${ran.stderr}`);
+      assert.equal(laneProxy.exchanges, 2, "the 500, then the retry");
+      assert.match(
+        ran.stdout,
+        /cachet: exchanged the job's OIDC token for a read credential/,
+        ran.stdout,
+      );
+      const netrc = await readFile(flaky.netrc, "utf8");
+      assert.match(netrc, / password cachet_[A-Za-z0-9_-]{43}\n$/);
+      assert.equal(await flaky.readWithNetrc(NARINFO_KEY), "200");
+    },
+  );
 
   await check(
     "a deployment that will not exchange leaves the job on its OIDC token, and says so",

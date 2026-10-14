@@ -401,7 +401,9 @@ pub async fn exchange_for_read_token(
     })
 }
 
-/// Ask the deployment to forget one credential.
+/// Ask the deployment to forget one credential. Answers `true` when it
+/// did, and `false` when it held no such credential, because it was
+/// already revoked or had expired.
 ///
 /// # Errors
 ///
@@ -410,7 +412,7 @@ pub async fn revoke_read_token(
     client: &reqwest::Client,
     cache_url: &str,
     token: &str,
-) -> Result<(), CliError> {
+) -> Result<bool, CliError> {
     let url = format!("{}/api/login/revoke", cache_url.trim_end_matches('/'));
     let response = client
         .post(&url)
@@ -420,7 +422,9 @@ pub async fn revoke_read_token(
         .await
         .map_err(|failure| CliError(format!("could not reach {url}: {failure}")))?;
     if response.status().is_success() {
-        Ok(())
+        Ok(true)
+    } else if response.status() == reqwest::StatusCode::NOT_FOUND {
+        Ok(false)
     } else {
         Err(CliError(format!(
             "{cache_url} answered {}",

@@ -1,6 +1,9 @@
 // The post step: revoke the read credential the deployment issued for
 // this job, so a copy taken during the job stops reading when the job
-// ends rather than six hours after it was issued. It runs after the
+// ends rather than six hours after it was issued. The deployment revokes
+// every other credential of the job's run attempt with it, which covers
+// credentials a step of the job minted for itself, and a second use of
+// the composite in the same job. It runs after the
 // push's post step (the composite lists this action first, and post steps
 // run in reverse), and it never fails the job: every outcome is one log
 // line and a zero exit.
@@ -41,13 +44,23 @@ function revoke() {
     encoding: "utf8",
     timeout: 30_000,
   });
+  const expires = "It expires on its own six hours after it was issued.";
   if (answer.error !== undefined) {
-    return `cachet: the read credential was not revoked (${answer.error.message}); it expires on its own six hours after it was issued`;
+    return `cachet: the read credential was not revoked (${answer.error.message}). ${expires}`;
+  }
+  // why name sudo: a runner without passwordless sudo cannot read the
+  // root-owned netrc, and "the deployment answered nothing" would send
+  // whoever reads the log looking at the deployment.
+  if (!root && answer.status === 1 && /^sudo: /m.test(answer.stderr ?? "")) {
+    return `cachet: the read credential was not revoked, because sudo -n could not run without a password and only root can read the netrc that holds it. ${expires}`;
   }
   if (answer.stdout === "204") {
-    return "cachet: revoked this job's read credential";
+    return "cachet: revoked this job's read credential and every other credential of its run attempt";
   }
-  return `cachet: the read credential was not revoked (the deployment answered ${answer.stdout || `nothing, exit ${answer.status}`}); it expires on its own six hours after it was issued`;
+  if (answer.stdout === "404") {
+    return "cachet: the deployment held no such credential, because it was already revoked or has expired";
+  }
+  return `cachet: the read credential was not revoked (the deployment answered ${answer.stdout || `nothing, exit ${answer.status}`}). ${expires}`;
 }
 
 try {

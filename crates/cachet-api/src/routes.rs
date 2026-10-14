@@ -243,14 +243,16 @@ pub fn health() {}
 /// lasts thirty days (ADR 0002). A workflow run presents its GitHub OIDC
 /// token, which is checked as a CI read checks it and is not kept, and
 /// its credential lasts six hours, the longest GitHub lets a job run, so
-/// it outlives the OIDC token by the rest of the job (ADR 0022).
+/// it outlives the OIDC token by the rest of the job (ADR 0022). One run
+/// attempt holds at most four credentials, and none once they are
+/// revoked.
 #[utoipa::path(
     post,
     path = "/api/login/exchange",
     responses(
         (status = 200, description = "The issued credential, its holder, and its expiry", body = ReadTokenIssued, content_type = "application/json"),
         (status = 401, description = "problem+json; code=unauthorized", body = ProblemBody, content_type = "application/problem+json"),
-        (status = 403, description = "problem+json; code=forbidden_org", body = ProblemBody, content_type = "application/problem+json"),
+        (status = 403, description = "problem+json; code=forbidden_org, or code=credential_limit for a run attempt at its bound or revoked", body = ProblemBody, content_type = "application/problem+json"),
         (status = 503, description = "problem+json; code=auth_unavailable", body = ProblemBody, content_type = "application/problem+json"),
     )
 )]
@@ -258,13 +260,16 @@ pub fn login_exchange() {}
 
 /// `POST /api/login/revoke`: forget the presented credential. The holder
 /// proves they hold it by presenting it, and nobody else can name the
-/// record, because it is keyed by the token's own hash.
+/// record, because it is keyed by the token's own hash. A workflow run's
+/// credential takes every credential of its run attempt with it, and the
+/// attempt is issued no more (ADR 0022).
 #[utoipa::path(
     post,
     path = "/api/login/revoke",
     responses(
         (status = 204, description = "Forgotten; the credential no longer authenticates"),
         (status = 401, description = "problem+json; code=unauthorized", body = ProblemBody, content_type = "application/problem+json"),
+        (status = 404, description = "problem+json; code=not_found: no such credential, because it was already revoked or has expired", body = ProblemBody, content_type = "application/problem+json"),
         (status = 503, description = "problem+json; code=auth_unavailable", body = ProblemBody, content_type = "application/problem+json"),
     )
 )]

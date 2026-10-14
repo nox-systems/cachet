@@ -102,17 +102,8 @@ async fn fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
         return login_exchange(&env, now, req).await;
     }
 
-    // Logging out: the holder presents the token, and the deployment
-    // forgets it. Nobody else can name the record, because it is keyed
-    // by the token's own hash.
     if path == "/api/login/revoke" && method == Method::Post {
-        let Some(token) = verdict::presented_token(&req) else {
-            return error::problem_response(ClientError::Unauthorized);
-        };
-        return match verdict::revoke_read_token(&env, &token).await {
-            Ok(()) => Response::empty().map(|response| response.with_status(204)),
-            Err(code) => error::problem_response(code),
-        };
+        return login_revoke(&env, &req).await;
     }
 
     if path.ends_with(NARINFO_KEY_SUFFIX) && method == Method::Put {
@@ -166,6 +157,24 @@ async fn login_exchange(env: &Env, now: UnixMillis, mut req: Request) -> Result<
     let grant: cachet_api::LoginExchangeBody = req.json().await.unwrap_or_default();
     match verdict::issue_read_token(env, now, &presented, &grant).await {
         Ok(issued) => api::json_no_store(&issued),
+        Err(code) => error::problem_response(code),
+    }
+}
+
+/// `POST /api/login/revoke`: the holder presents the token, and the
+/// deployment forgets it, along with every other credential of its run
+/// attempt when it is a run's. Nobody else can name the record, because
+/// it is keyed by the token's own hash.
+async fn login_revoke(env: &Env, req: &Request) -> Result<Response> {
+    let Some(token) = verdict::presented_token(req) else {
+        return error::problem_response(ClientError::Unauthorized);
+    };
+    // why 404 for a token with no record: only its holder can name a
+    // record, so the answer tells nobody else anything, and it tells the
+    // holder that the credential was already gone.
+    match verdict::revoke_read_token(env, &token).await {
+        Ok(true) => Response::empty().map(|response| response.with_status(204)),
+        Ok(false) => error::problem_response(ClientError::NotFound),
         Err(code) => error::problem_response(code),
     }
 }

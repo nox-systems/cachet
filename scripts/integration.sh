@@ -173,11 +173,18 @@ say "the miss answered 404 and no shell: ok"
 
 # The action's revoke post step, as it runs it: the credential read out of
 # the netrc. Only the answer is asserted. A read right after it could
-# still be admitted by another isolate's two-minute memo, so a 401 here
-# would be a race, not a property.
+# still be admitted by another isolate's two-minute memo, or by a KV read
+# that has not yet seen the revocation, so a 401 here would be a race.
 say "revoking the run's read credential"
 code="$(curl -s -o /dev/null -w '%{http_code}' --netrc-file "${work}/netrc" \
   -X POST "${URL}/api/login/revoke")"
 [ "${code}" = "204" ] || fail "the revoke answered ${code}, expected 204"
+# A credential the deployment never issued has no record to revoke. The
+# lane does not revoke its own credential twice for this, because the
+# second request could read KV before the first one's delete reached it.
+never="cachet_$(printf 'A%.0s' $(seq 1 43))"
+code="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer ${never}" \
+  -X POST "${URL}/api/login/revoke")"
+[ "${code}" = "404" ] || fail "revoking a credential never issued answered ${code}, expected 404"
 
 say "the round trip holds"

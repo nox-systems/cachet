@@ -347,8 +347,24 @@ answers 404, which then holds for the rest of the job. A deployment from
 before the exchange accepted OIDC tokens answers the exchange with 401
 instead, and the step prints that the netrc carries the OIDC token and
 that the cache stops answering the job when that token expires, a few
-minutes in (ADR 0022). Deploy the worker before you move the action's
-`v0` tag, so no job meets that fallback.
+minutes in (ADR 0022).
+
+Release a change to the action in this order, because the composite
+refers to `nox-systems/cachet/action/revoke@v0` and that action exists
+only once `v0` points at a commit that has it:
+
+1. Deploy the worker, staging and then production.
+2. Move the `v0` tag to the release commit.
+3. Open the log of a real job that uses the action. Check that the
+   push's post step finishes before the line `cachet: revoked this job's
+   read credential`. GitHub does not document the order of post steps
+   for actions in a composite. This log is the proof.
+
+A deployment that serves CI expects the Workers Paid plan. Each job
+costs three KV writes and one delete: the exchange writes the
+credential's record and its run attempt's list, and the revoke step
+marks the list and deletes the record. Workers Free allows 1,000 KV
+writes a day, about 330 jobs.
 
 ## Losing the env file
 

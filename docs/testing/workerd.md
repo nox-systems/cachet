@@ -188,18 +188,30 @@ it reads with the password the step wrote to the netrc, which is the
 read the nix daemon makes for the rest of a job. That read must answer
 200 for a stored narinfo and 404 for an absent one. It is the regression
 row for the failure ADR 0022 records, where a job's OIDC token sat in the
-netrc and every read after it expired answered 401. Around it, the
-scenario asserts that the issued credential resolves as the run
-(`/api/whoami` answers `ci` for the repository owner), cannot renew a
-lease or reach the admin surface, and is stored under its digest as a
-record holding the run's claims and a six-hour lifetime and neither the
-credential nor the OIDC token. It then runs the revoke action's post
-step, `action/revoke/post.cjs`, and the netrc's read answers 401. Two
-more runs of the script cover the other outcomes: a deployment that
-refuses the exchange leaves the job on its OIDC token with the log line
-saying the cache stops when that token expires, and gives the revoke
-step nothing to do, and a job with no OIDC grant writes no credential
-and configures no cache.
+netrc and every read after it expired answered 401. The wait is real
+time, because workerd gives the worker's clock no seam to move.
+
+Around that row, the scenario asserts the rest of ADR 0022. The issued
+credential resolves as the run (`/api/whoami` answers `ci` for the
+repository owner), cannot renew a lease or reach the admin surface, and
+is stored under its digest as a record holding the run's claims and a
+six-hour lifetime and neither the credential nor the OIDC token, with its
+run attempt's list naming it. Three more exchanges for the same attempt
+succeed and the fifth answers 403 `credential_limit`, while another
+attempt of the run starts a fresh count and a token naming no run is
+refused. The revoke action's post step, `action/revoke/post.cjs`, then
+ends the step's credential and a sibling the scenario minted and had
+already read with, so the isolate's memo is cleared too, and the attempt
+is refused any further exchange. Revoking again answers 404 and the step
+says the credential was already gone, a credential never issued answers
+404 as well, and a `sudo` that refuses is named as the reason in the
+step's log. The stub's pass-through to the worker then answers an
+exchange with the HTML 500 Cloudflare serves when a worker throws, and
+the step must read only the retried answer and still write the issued
+credential. The last two runs of the script cover a deployment that
+refuses the exchange, which leaves the job on its OIDC token with the log
+line saying the cache stops when that token expires, and a job with no
+OIDC grant, which writes no credential and configures no cache.
 
 Every code in the error table (cachet-core/src/error.rs) has at least one
 wire-level assertion here. storage_unavailable is asserted through the

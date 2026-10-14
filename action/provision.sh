@@ -54,19 +54,29 @@ fi
 # why not --retry-all-errors here: a deployment from before the exchange
 # accepted OIDC tokens answers 401, and retrying a refusal only delays the
 # fallback below. Plain --retry still repeats timeouts, 429, and 5xx.
-answer="$(curl -sS --retry 4 --retry-connrefused --retry-delay 2 --max-time 30 \
-  -X POST -H "Authorization: Bearer ${token}" -w '\n%{http_code}' \
-  "${base}/api/login/exchange")" || answer=$'\n000'
-code="${answer##*$'\n'}"
-issued="${answer%$'\n'*}"
+#
+# why a file for the body: curl writes every attempt's body to stdout, so
+# a 500 followed by a 200 left the 500's page in front of the credential,
+# jq refused the mix, and the job fell back to its OIDC token with an
+# issued credential stranded. curl empties an output file before each
+# retry. mktemp creates it 0600, and it is removed once read; a runner
+# that cannot create it falls back like any other failed exchange.
+code="000"
 credential=""
-if [ "${code}" = "200" ]; then
-  credential="$(jq -r '.token // empty' <<<"${issued}" 2>/dev/null || true)"
+until="an unreadable time"
+if answer_file="$(mktemp "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/cachet-exchange.XXXXXX")"; then
+  code="$(curl -sS --retry 4 --retry-connrefused --retry-delay 2 --max-time 30 \
+    -X POST -H "Authorization: Bearer ${token}" -o "${answer_file}" -w '%{http_code}' \
+    "${base}/api/login/exchange")" || code="000"
+  if [ "${code}" = "200" ]; then
+    credential="$(jq -r '.token // empty' "${answer_file}" 2>/dev/null || true)"
+    until="$(jq -r '.expiresAtMs / 1000 | floor | todate' "${answer_file}" 2>/dev/null || echo "${until}")"
+  fi
+  rm -f "${answer_file}"
 fi
 if [[ ${credential} =~ ^cachet_[A-Za-z0-9_-]{43}$ ]]; then
   echo "::add-mask::${credential}"
   password="${credential}"
-  until="$(jq -r '.expiresAtMs / 1000 | floor | todate' <<<"${issued}")"
   echo "cachet: exchanged the job's OIDC token for a read credential the deployment issued, accepted until ${until}"
   # The post step revokes it, so a copy taken during the job stops
   # reading when the job ends (action/revoke).

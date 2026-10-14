@@ -182,6 +182,22 @@ pub const READ_TOKEN_TTL_MS: u64 = 30 * MILLIS_PER_DAY;
 /// whole life unless the action's post step revokes it first.
 pub const RUN_READ_TOKEN_TTL_MS: u64 = 6 * MILLIS_PER_HOUR;
 
+/// How many read credentials one workflow run attempt may hold.
+///
+/// The action exchanges once per use of the composite, and a job can use
+/// it more than once, and an exchange whose answer was lost on the
+/// network is retried. Four covers those. Without a bound, any step
+/// holding the job's `id-token: write` grant could mint credentials
+/// without limit, each outliving the job by up to six hours and each
+/// costing the deployment a KV write.
+pub const RUN_READ_TOKENS_MAX: usize = 4;
+
+/// Each workflow run attempt's credentials are listed under this KV
+/// prefix, keyed by a digest of the repository, run id, and run attempt.
+/// A run's credential reads only while its run attempt's entry lists it,
+/// so revoking one entry ends all of them at once.
+pub const RUN_TOKENS_KEY_PREFIX: &str = "runtokens/";
+
 /// An Authorization header longer than this is refused as malformed_auth:
 /// JWTs run a few kilobytes, so 8 KiB is generous room while still a hard
 /// guard in front of the parsers.

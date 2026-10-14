@@ -73,6 +73,7 @@ fn the_error_code_table_is_locked() {
         ClientError::MalformedProbe,
         ClientError::MalformedQuery,
         ClientError::RangeNotSatisfiable,
+        ClientError::CredentialLimit,
     ];
     let body = table
         .iter()
@@ -108,6 +109,7 @@ fn the_error_code_table_is_locked() {
     malformed_probe 400
     malformed_query 400
     range_not_satisfiable 416
+    credential_limit 403
  ");
 }
 

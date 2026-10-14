@@ -174,9 +174,23 @@ impl ReadTokenRecord {
     /// token's own expiry, which is the point: that token lapses within
     /// minutes, and the daemon goes on presenting this credential for
     /// the rest of the job.
-    #[must_use]
-    pub fn for_run(identity: &crate::auth::OidcIdentity, now: crate::types::UnixMillis) -> Self {
-        Self {
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError::Unauthorized`](crate::error::ClientError::Unauthorized)
+    /// for a token without a run id or run attempt. Every token GitHub
+    /// issues to a run carries both, and the credentials one run attempt
+    /// may hold are counted and revoked by that pair, so a token missing
+    /// either would share its count with every other such token.
+    pub fn for_run(
+        identity: &crate::auth::OidcIdentity,
+        now: crate::types::UnixMillis,
+    ) -> crate::error::Result<Self> {
+        let unknown = crate::constants::UNKNOWN_CLAIM;
+        if identity.run_id == unknown || identity.run_attempt == unknown {
+            return Err(crate::error::ClientError::Unauthorized);
+        }
+        Ok(Self {
             login: crate::auth::fold_identifier(&identity.repository_owner),
             issued_at_ms: now.as_u64(),
             expires_at_ms: now
@@ -189,7 +203,7 @@ impl ReadTokenRecord {
                 run_attempt: identity.run_attempt.clone(),
                 sha: identity.sha.clone(),
             }),
-        }
+        })
     }
 
     /// Serialize with a trailing newline.
@@ -219,6 +233,15 @@ impl ReadTokenRecord {
     #[must_use]
     pub fn is_live(&self, now: crate::types::UnixMillis) -> bool {
         now.as_u64() < self.expires_at_ms
+    }
+
+    /// The run a run's record is bound to; `None` for a laptop's.
+    #[must_use]
+    pub const fn run(&self) -> Option<&RunBinding> {
+        match &self.holder {
+            ReadTokenHolder::Run(run) => Some(run),
+            ReadTokenHolder::Laptop(_) => None,
+        }
     }
 
     /// What the record says when it is issued or used, for the event log.
@@ -318,6 +341,90 @@ impl From<ReadTokenRecord> for RecordWire {
             run,
         }
     }
+}
+
+impl RunBinding {
+    /// The bytes that name this run attempt, which the worker hashes into
+    /// the key of [`RunCredentials`]. Newlines separate the parts because
+    /// none of them can contain one.
+    #[must_use]
+    pub fn attempt_name(&self) -> String {
+        format!("{}\n{}\n{}", self.repository, self.run_id, self.run_attempt)
+    }
+}
+
+/// The credentials one workflow run attempt holds, stored beside them.
+///
+/// A run's credential reads only while this list names it. That puts two
+/// things in one place: the bound on how many credentials an attempt may
+/// hold, and revocation of all of them at once. Revoking marks the list
+/// rather than deleting it, so the same run attempt cannot exchange again
+/// afterwards with an OIDC token it minted before the job ended.
+///
+/// why one list rather than one key per credential: listing KV keys lags
+/// writes by up to a minute, so a count or a revocation that enumerated
+/// keys could miss a credential minted moments earlier. Two exchanges
+/// that race on this list can lose one entry, and that credential then
+/// fails closed: it never reads.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RunCredentials {
+    /// The digests of the attempt's credentials, in issue order.
+    pub digests: Vec<String>,
+    /// Set when the attempt's credentials were revoked. None of them reads
+    /// again, and the attempt is issued no more.
+    #[serde(default)]
+    pub revoked: bool,
+}
+
+impl RunCredentials {
+    /// Add a newly issued credential.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError::CredentialLimit`](crate::error::ClientError::CredentialLimit)
+    /// when the attempt's credentials were revoked, or when it already
+    /// holds [`RUN_READ_TOKENS_MAX`](crate::constants::RUN_READ_TOKENS_MAX).
+    pub fn admit(&mut self, digest_hex: &str) -> crate::error::Result<()> {
+        if self.revoked || self.digests.len() >= crate::constants::RUN_READ_TOKENS_MAX {
+            return Err(crate::error::ClientError::CredentialLimit);
+        }
+        self.digests.push(digest_hex.to_string());
+        Ok(())
+    }
+
+    /// Whether the credential with this digest may read.
+    #[must_use]
+    pub fn holds(&self, digest_hex: &str) -> bool {
+        !self.revoked && self.digests.iter().any(|held| held == digest_hex)
+    }
+
+    /// Serialize with a trailing newline.
+    #[must_use]
+    pub fn serialize(&self) -> String {
+        let mut body = serde_json::to_string(self).expect("string and boolean fields");
+        body.push('\n');
+        body
+    }
+
+    /// Parse a stored list. The worker wrote it, so a parse failure is a
+    /// storage fault.
+    ///
+    /// # Errors
+    ///
+    /// [`serde_json::Error`] on invalid JSON or a schema mismatch.
+    pub fn parse(text: &str) -> std::result::Result<Self, serde_json::Error> {
+        serde_json::from_str(text)
+    }
+}
+
+/// Where one run attempt's [`RunCredentials`] live in KV, from the digest
+/// of its [`RunBinding::attempt_name`].
+#[must_use]
+pub fn run_tokens_key(attempt_digest_hex: &str) -> String {
+    format!(
+        "{}{attempt_digest_hex}",
+        crate::constants::RUN_TOKENS_KEY_PREFIX
+    )
 }
 
 /// Where one issued token's record lives in KV.
@@ -433,7 +540,7 @@ mod tests {
         let now = UnixMillis::new(1_780_000_000_000);
         let identity = crate::auth::verify_claims(&run_claims(1_780_000_000), &run_config(), now)
             .expect("a valid run token");
-        let record = ReadTokenRecord::for_run(&identity, now);
+        let record = ReadTokenRecord::for_run(&identity, now).expect("a run's token");
         assert_eq!(record.login, "my-org", "the repository owner, folded");
         assert_eq!(record.kind(), "run");
         assert_eq!(
@@ -464,7 +571,7 @@ mod tests {
         let claims = run_claims(1_780_000_000);
         let identity = crate::auth::verify_claims(&claims, &run_config(), issued)
             .expect("the token verifies at the exchange");
-        let record = ReadTokenRecord::for_run(&identity, issued);
+        let record = ReadTokenRecord::for_run(&identity, issued).expect("a run's token");
 
         let an_hour_in = UnixMillis::new(issued.as_u64() + 3_600_000);
         assert_eq!(
@@ -523,6 +630,78 @@ mod tests {
         assert!(!grant.stale(UnixMillis::new(1_000_000 - skew - 1)));
         assert!(grant.stale(UnixMillis::new(1_000_000 - skew)));
         assert!(grant.can_renew());
+    }
+
+    #[test]
+    fn a_token_without_its_run_is_not_issued_a_credential() {
+        let now = UnixMillis::new(1_780_000_000_000);
+        for missing in ["run_id", "run_attempt"] {
+            let mut claims = run_claims(1_780_000_000);
+            claims.as_object_mut().expect("an object").remove(missing);
+            let identity = crate::auth::verify_claims(&claims, &run_config(), now)
+                .expect("reads accept it, as they always have");
+            assert_eq!(
+                ReadTokenRecord::for_run(&identity, now),
+                Err(crate::error::ClientError::Unauthorized),
+                "{missing} absent"
+            );
+        }
+    }
+
+    #[test]
+    fn a_run_attempt_holds_four_credentials_and_revocation_ends_them_all() {
+        let mut held = RunCredentials::default();
+        for digest in ["a1", "b2", "c3", "d4"] {
+            held.admit(digest).expect("under the bound");
+        }
+        assert_eq!(
+            held.admit("e5"),
+            Err(crate::error::ClientError::CredentialLimit),
+            "the fifth is refused"
+        );
+        assert!(held.holds("a1") && held.holds("d4"));
+        assert!(!held.holds("e5"), "a refused credential never reads");
+        held.revoked = true;
+        for digest in ["a1", "b2", "c3", "d4"] {
+            assert!(!held.holds(digest), "{digest} ends with the others");
+        }
+        let mut emptied = RunCredentials {
+            digests: Vec::new(),
+            revoked: true,
+        };
+        assert_eq!(
+            emptied.admit("f6"),
+            Err(crate::error::ClientError::CredentialLimit),
+            "a revoked attempt is issued no more"
+        );
+        assert_eq!(
+            RunCredentials::parse(&held.serialize()).expect("its own form"),
+            held
+        );
+        assert_eq!(
+            held.serialize(),
+            "{\"digests\":[\"a1\",\"b2\",\"c3\",\"d4\"],\"revoked\":true}\n"
+        );
+    }
+
+    #[test]
+    fn a_run_attempt_is_named_by_repository_run_and_attempt() {
+        let binding = RunBinding {
+            repository: "my-org/my-repo".to_string(),
+            reference: "refs/heads/main".to_string(),
+            run_id: "38468685026".to_string(),
+            run_attempt: "2".to_string(),
+            sha: "abc".to_string(),
+        };
+        assert_eq!(binding.attempt_name(), "my-org/my-repo\n38468685026\n2");
+        // The ref and commit do not split an attempt: they are fixed for
+        // it anyway.
+        let other_ref = RunBinding {
+            reference: "refs/heads/other".to_string(),
+            ..binding.clone()
+        };
+        assert_eq!(other_ref.attempt_name(), binding.attempt_name());
+        assert_eq!(run_tokens_key("abc"), "runtokens/abc");
     }
 
     #[test]

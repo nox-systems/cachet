@@ -40,7 +40,8 @@ something the deployment already knows how to verify: its OIDC token.
    deployment stores only its SHA-256, under `readtoken/<digest>`, against
    a record naming the repository owner and the claims the token proved:
    repository, ref, run id, run attempt, and commit. The OIDC token is not
-   stored.
+   stored. A token without a run id or run attempt is refused, because
+   point 6 counts and revokes credentials by that pair.
 3. The record lives six hours from the exchange. GitHub ends a job on a
    GitHub-hosted runner after six hours ("Each job in a workflow can run
    for up to 6 hours of execution time",
@@ -58,14 +59,33 @@ something the deployment already knows how to verify: its OIDC token.
    OIDC token as every earlier version did and logs one line saying the
    cache stops answering the job when that token expires. A job without
    the `id-token` grant builds uncached, as before.
-6. A nested action, `action/revoke`, revokes the credential in its post
-   phase, whether the job succeeded or failed, and never fails the job.
-   It is the composite's first step. GitHub runs post phases in the
-   reverse order of their main phases and runs one only for a step whose
-   main phase ran, so the first step's post phase runs after the push's
-   and still runs when a later step fails. The actionlint gate holds that
-   order.
-7. Pushes are unchanged. The push mints a fresh OIDC token when the post
+6. One run attempt holds at most four credentials. The deployment lists
+   an attempt's credentials under `runtokens/<digest>`, the digest of its
+   repository, run id, and run attempt, and a run's credential reads only
+   while that list names it. A fifth exchange answers 403
+   `credential_limit`. Four covers a job that uses the composite twice
+   and an exchange retried after its answer was lost. Without a bound,
+   any step holding the job's `id-token` grant could mint credentials
+   without limit, each outliving the job by up to six hours and each
+   costing a KV write.
+7. Revoking a run's credential revokes every credential of its run
+   attempt: the list is marked revoked, so none of them reads again and
+   the attempt is issued no more, even with an OIDC token minted before
+   the job ended. `POST /api/login/revoke` answers 204 when there was a
+   record to revoke and 404 when there was not. The 404 tells nobody
+   anything, because only the holder of a credential can name its record.
+8. A nested action, `action/revoke`, revokes the job's credential in its
+   post phase, whether the job succeeded or failed, and never fails the
+   job. Point 7 takes credentials a step of the job minted for itself
+   with it, along with the credential of a second use of the composite
+   in the same job. The revoke action is the composite's first step.
+   GitHub runs post phases in the reverse order of their main phases and
+   runs one only for a step whose main phase ran, so the first step's
+   post phase should run after the push's and still run when a later
+   step fails. GitHub documents that order for a job's steps and not for
+   actions nested in a composite, so the release confirms it in a real
+   job's log (below). The actionlint gate holds the step order.
+9. Pushes are unchanged. The push mints a fresh OIDC token when the post
    step starts and mints again after any 401, so it never presents an
    expired one.
 
@@ -82,10 +102,28 @@ one only reads, so a stolen copy now lasts longer and can do less.
 A self-hosted job that raises `timeout-minutes` past six hours outlives
 its credential and builds the rest of the job uncached.
 
-Every exchange mints a new record, so a job that runs the action twice
-holds two credentials, each bounded the same way. A stolen OIDC token can
-be exchanged during its five minutes, which turns five minutes of reads
-and writes into six hours of reads.
+A step holding the job's `id-token` grant, or anyone who steals an OIDC
+token during its five minutes, can mint at most four credentials for the
+run attempt, counting the action's own. All of them end when the revoke
+step runs. A stolen token therefore buys reads until the job ends, or up
+to six hours when the revoke step cannot run, in place of the five
+minutes of reads and writes the token itself allowed.
+
+The list is one KV entry per run attempt, so two exchanges that race on
+it can lose one of their entries, and that credential then never reads.
+KV takes one write a second to one key, so an exchange that follows the
+attempt's previous one within a second can answer 503 and is retried.
+The action exchanges once per use of the composite, so neither happens to
+a job that is not racing itself. Listing KV keys instead of keeping one
+list was rejected because a listing lags writes by up to a minute, and a
+count or a revocation built on it could miss a credential minted moments
+earlier.
+
+Each CI job costs the deployment three KV writes and one delete: the
+exchange writes the credential's record and its run attempt's list, and
+the revoke marks the list and deletes the record. Workers Free allows
+1,000 KV writes a day (https://developers.cloudflare.com/kv/platform/limits/),
+about 330 jobs, so a deployment serving CI expects Workers Paid.
 
 The worker before this change refuses a run's record as corrupt, because
 it requires the GitHub token a laptop's record carries. Rolling the
@@ -93,6 +131,17 @@ worker back therefore ends every run credential at once, and jobs that
 start afterwards fall back to their OIDC tokens. For the same reason the
 worker deploys before the action's tag moves: an action released first
 finds an old deployment, falls back, and says so in the job log.
+
+The composite refers to `nox-systems/cachet/action/revoke@v0`, which
+exists only once the `v0` tag points at a commit that has it. Releasing
+therefore takes these steps, in order:
+
+1. Deploy the worker, staging and then production.
+2. Move the `v0` tag to the release commit.
+3. In a real job that uses the action, confirm that the log shows the
+   push's post step finishing before the line `cachet: revoked this
+   job's read credential`. That line is the runtime proof of point 8's
+   order, which GitHub does not document for nested actions.
 
 ## Alternatives considered
 
