@@ -131,19 +131,39 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # why: ci does not run on tags, it runs on main and on pull requests,
-      # so a tag carries no gate result of its own. A tag is normally cut on
-      # a commit that already went green, and "normally" is not a gate: this
-      # asks GitHub what ci concluded for exactly this commit and refuses a
-      # production deploy when the answer is anything but success.
-      - name: the tagged commit must have passed ci
+      # so a tag carries no gate result of its own. This asks GitHub what ci
+      # concluded for exactly this commit and refuses a production deploy
+      # when the answer is anything but success. A release pushes its commit
+      # and its tag together, so ci is usually still running here: the step
+      # waits for that run to finish rather than reading it half done, and
+      # its timeout bounds the wait.
+      - name: the tagged commit must pass ci
+        timeout-minutes: 90
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          conclusion="$(gh run list --repo "${GITHUB_REPOSITORY}"             --workflow ci --commit "${GITHUB_SHA}" --limit 1             --json conclusion --jq '.[0].conclusion // "none"')"
-          if [ "${conclusion}" != "success" ]; then
+          run_id=""
+          # why the loop: GitHub can take a few seconds to list the run a
+          # push to main started.
+          for _ in $(seq 1 30); do
+            run_id="$(gh run list --repo "${GITHUB_REPOSITORY}" \
+              --workflow ci --commit "${GITHUB_SHA}" --limit 1 \
+              --json databaseId --jq '.[0].databaseId // empty')"
+            [ -n "${run_id}" ] && break
+            sleep 10
+          done
+          if [ -z "${run_id}" ]; then
+            echo "::error::ci never ran on ${GITHUB_SHA}."
+            echo "::error::Tag a commit on main, or deploy by hand."
+            exit 1
+          fi
+          if ! gh run watch "${run_id}" --repo "${GITHUB_REPOSITORY}" \
+            --interval 30 --exit-status >/dev/null; then
+            conclusion="$(gh run view "${run_id}" --repo "${GITHUB_REPOSITORY}" \
+              --json conclusion --jq '.conclusion')"
             echo "::error::ci concluded '${conclusion}' for ${GITHUB_SHA}."
-            echo "::error::Tag a commit whose ci run is green, or deploy by hand."
+            echo "::error::Fix main and tag the fix, or deploy by hand."
             exit 1
           fi
           echo "ci passed on ${GITHUB_SHA}: deploying production"

@@ -322,6 +322,20 @@ const stubServer = http.createServer((req, res) => {
   json(404, { message: "Not Found" });
 });
 await new Promise((resolve) => stubServer.listen(0, "127.0.0.1", resolve));
+// The environment the lane gives the action's scripts: this process's,
+// without what a real job of the action sets. why: CI runs this lane in a
+// job that itself uses the cachet action, which exports its own issued
+// credential and revoke URL, and a scenario that expects none of them
+// would read the host job's instead.
+const hostEnv = () =>
+  Object.fromEntries(
+    Object.entries(process.env).filter(
+      ([name]) =>
+        !name.startsWith("CACHET_") &&
+        !name.startsWith("ACTIONS_ID_TOKEN_") &&
+        name !== "GITHUB_ENV",
+    ),
+  );
 const jwksUrl = `http://127.0.0.1:${stubServer.address().port}/jwks.json`;
 const githubApiUrl = `http://127.0.0.1:${stubServer.address().port}`;
 const statsApiUrl = `http://127.0.0.1:${stubServer.address().port}`;
@@ -1195,7 +1209,7 @@ async function actionRunner(base) {
   const githubEnv = path.join(work, "github-env");
   await writeFile(githubEnv, "");
   const env = {
-    ...process.env,
+    ...hostEnv(),
     PATH: `${shims}:${process.env.PATH}`,
     CACHET_CACHE_URL: base,
     CACHET_AUDIENCE: "cachet-lane",
@@ -3763,7 +3777,7 @@ try {
           child.on("close", (status) => resolve({ status, stdout, stderr }));
         });
       const pushEnv = {
-        ...process.env,
+        ...hostEnv(),
         RUNNER_TEMP: runnerTemp,
         CACHET_CACHE_URL: base,
         CACHET_AUDIENCE: "cachet-lane",
