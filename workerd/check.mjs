@@ -9,7 +9,14 @@
 // everything. Usage: node workerd/check.mjs <fixtures dir>
 
 import assert from "node:assert/strict";
-import { spawn, spawnSync } from "node:child_process";
+// why: no spawnSync anywhere in this driver. A synchronous child process
+// holds node's event loop, so while it runs neither undici's keep-alive
+// timer nor the dev server's FIN on an idle connection gets handled.
+// wrangler dev closes an idle connection after 5 seconds and a wrangler
+// CLI call takes seconds, so a fetch after a few of them went out on a
+// socket the server had already closed and failed with ECONNRESET, which
+// fetch reports as "fetch failed". `run` keeps the loop turning.
+import { spawn } from "node:child_process";
 import crypto from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -19,6 +26,26 @@ import path from "node:path";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const configPath = path.join(repoRoot, "workerd", "wrangler.toml");
+
+// Run one child process to completion with the event loop free, answering
+// in spawnSync's shape: the exit status and the decoded stdout and stderr.
+function run(command, args) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const stdout = [];
+    const stderr = [];
+    child.stdout.on("data", (chunk) => stdout.push(chunk));
+    child.stderr.on("data", (chunk) => stderr.push(chunk));
+    child.on("error", reject);
+    child.on("close", (status) =>
+      resolve({
+        status,
+        stdout: Buffer.concat(stdout).toString("utf8"),
+        stderr: Buffer.concat(stderr).toString("utf8"),
+      }),
+    );
+  });
+}
 
 // The console's config is this one plus an asset directory. It is
 // generated rather than committed because a second checked-in config
@@ -413,23 +440,19 @@ async function scenario(
   for (const [key, content] of await seed()) {
     const seedFile = path.join(persist, "seed-input");
     await writeFile(seedFile, content);
-    const put = spawnSync(
-      "wrangler",
-      [
-        "r2",
-        "object",
-        "put",
-        `cachet-lane/${key}`,
-        "--file",
-        seedFile,
-        "--local",
-        "--persist-to",
-        persist,
-        "--config",
-        configPath,
-      ],
-      { encoding: "utf8" },
-    );
+    const put = await run("wrangler", [
+      "r2",
+      "object",
+      "put",
+      `cachet-lane/${key}`,
+      "--file",
+      seedFile,
+      "--local",
+      "--persist-to",
+      persist,
+      "--config",
+      configPath,
+    ]);
     if (put.status !== 0) {
       throw new Error(`seeding ${key} failed: ${put.stderr}${put.stdout}`);
     }
@@ -739,22 +762,18 @@ await scenario(
     await check("the deployment stores a digest, never the token", async () => {
       // A reader of the deployment's own state finds nothing they can
       // present. This is the property the threat model rests on.
-      const dump = spawnSync(
-        "wrangler",
-        [
-          "kv",
-          "key",
-          "list",
-          "--binding",
-          "CACHET_KV",
-          "--local",
-          "--persist-to",
-          persist,
-          "--config",
-          configPath,
-        ],
-        { encoding: "utf8" },
-      );
+      const dump = await run("wrangler", [
+        "kv",
+        "key",
+        "list",
+        "--binding",
+        "CACHET_KV",
+        "--local",
+        "--persist-to",
+        persist,
+        "--config",
+        configPath,
+      ]);
       assert.equal(dump.status, 0, dump.stderr);
       assert.ok(
         !dump.stdout.includes(issued.token),
@@ -1525,25 +1544,21 @@ try {
   // The memo's proof deletes the KV verdict between reads: a repeat the
   // API never sees can only come from the isolate's own entry, which is
   // the memo's whole claim.
-  const forgetVerdict = (token, persist) => {
+  const forgetVerdict = async (token, persist) => {
     const digest = crypto.createHash("sha256").update(token).digest("hex");
-    const forget = spawnSync(
-      "wrangler",
-      [
-        "kv",
-        "key",
-        "delete",
-        `ghverdict/${digest}`,
-        "--binding",
-        "CACHET_KV",
-        "--local",
-        "--persist-to",
-        persist,
-        "--config",
-        configPath,
-      ],
-      { encoding: "utf8" },
-    );
+    const forget = await run("wrangler", [
+      "kv",
+      "key",
+      "delete",
+      `ghverdict/${digest}`,
+      "--binding",
+      "CACHET_KV",
+      "--local",
+      "--persist-to",
+      persist,
+      "--config",
+      configPath,
+    ]);
     if (forget.status !== 0) {
       throw new Error(
         `verdict delete failed: ${forget.stderr}${forget.stdout}`,
@@ -1561,7 +1576,7 @@ try {
         const first = await fetch(`${base}/${NAR_KEY}`, { headers: laptop });
         assert.equal(first.status, 200);
         const apiHits = stubHits.user;
-        forgetVerdict(GOOD_LAPTOP_TOKEN, persist);
+        await forgetVerdict(GOOD_LAPTOP_TOKEN, persist);
         const second = await fetch(`${base}/${NAR_KEY}`, { headers: laptop });
         assert.equal(second.status, 200);
         assert.equal(stubHits.user, apiHits, "the memo served the repeat");
@@ -1573,7 +1588,7 @@ try {
         const first = await fetch(`${base}/${NAR_KEY}`, { headers: denied });
         assert.equal(first.status, 401);
         const apiHits = stubHits.user;
-        forgetVerdict("memo-denied-token", persist);
+        await forgetVerdict("memo-denied-token", persist);
         const second = await fetch(`${base}/${NAR_KEY}`, { headers: denied });
         assert.equal(second.status, 401);
         assert.equal(stubHits.user, apiHits, "the memo denied the repeat");
@@ -1907,41 +1922,33 @@ const triggerScheduled = async (base) => {
 };
 
 const r2Get = async (persist, key) => {
-  const got = spawnSync(
-    "wrangler",
-    [
-      "r2",
-      "object",
-      "get",
-      `cachet-lane/${key}`,
-      "--local",
-      "--persist-to",
-      persist,
-      "--config",
-      configPath,
-      "--pipe",
-    ],
-    { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 },
-  );
+  const got = await run("wrangler", [
+    "r2",
+    "object",
+    "get",
+    `cachet-lane/${key}`,
+    "--local",
+    "--persist-to",
+    persist,
+    "--config",
+    configPath,
+    "--pipe",
+  ]);
   return { ok: got.status === 0, body: got.stdout, stderr: got.stderr };
 };
 
 const r2Delete = async (persist, key) => {
-  const gone = spawnSync(
-    "wrangler",
-    [
-      "r2",
-      "object",
-      "delete",
-      `cachet-lane/${key}`,
-      "--local",
-      "--persist-to",
-      persist,
-      "--config",
-      configPath,
-    ],
-    { encoding: "utf8" },
-  );
+  const gone = await run("wrangler", [
+    "r2",
+    "object",
+    "delete",
+    `cachet-lane/${key}`,
+    "--local",
+    "--persist-to",
+    persist,
+    "--config",
+    configPath,
+  ]);
   assert.equal(gone.status, 0, `deleting ${key}: ${gone.stderr}`);
 };
 
@@ -2943,13 +2950,11 @@ try {
           payload,
           `cachet workerd lane payload ${crypto.randomUUID()}\n`,
         );
-        const added = spawnSync(
-          "nix-store",
-          ["--add-fixed", "sha256", payload],
-          {
-            encoding: "utf8",
-          },
-        );
+        const added = await run("nix-store", [
+          "--add-fixed",
+          "sha256",
+          payload,
+        ]);
         assert.equal(added.status, 0, added.stderr);
         storePath = added.stdout.trim().split("\n").pop();
         const mintsBefore = stubHits.oidcMint;
@@ -3016,17 +3021,18 @@ try {
           // what verify-then-sign then judges — small payloads never find
           // a slicing bug. 100 MiB of incompressible bytes forces parts.
           const payload = path.join(runnerTemp, "lane-payload-big");
-          const fill = spawnSync(
-            "dd",
-            ["if=/dev/urandom", `of=${payload}`, "bs=1048576", "count=100"],
-            { encoding: "utf8" },
-          );
+          const fill = await run("dd", [
+            "if=/dev/urandom",
+            `of=${payload}`,
+            "bs=1048576",
+            "count=100",
+          ]);
           assert.equal(fill.status, 0, fill.stderr);
-          const added = spawnSync(
-            "nix-store",
-            ["--add-fixed", "sha256", payload],
-            { encoding: "utf8" },
-          );
+          const added = await run("nix-store", [
+            "--add-fixed",
+            "sha256",
+            payload,
+          ]);
           assert.equal(added.status, 0, added.stderr);
           const bigPath = added.stdout.trim().split("\n").pop();
           const mintsBefore = stubHits.oidcMint;
