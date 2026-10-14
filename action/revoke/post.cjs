@@ -1,9 +1,9 @@
 // The post step: revoke the read credential the deployment issued for
 // this job, so a copy taken during the job stops reading when the job
 // ends rather than six hours after it was issued. The deployment revokes
-// every other credential of the job's run attempt with it, which covers
-// credentials a step of the job minted for itself, and a second use of
-// the composite in the same job. It runs after the
+// every other credential of the job with it, which covers credentials a
+// step of the job minted for itself, and a second use of the composite
+// in the same job. It runs after the
 // push's post step (the composite lists this action first, and post steps
 // run in reverse), and it never fails the job: every outcome is one log
 // line and a zero exit.
@@ -55,7 +55,7 @@ function revoke() {
     return `cachet: the read credential was not revoked, because sudo -n could not run without a password and only root can read the netrc that holds it. ${expires}`;
   }
   if (answer.stdout === "204") {
-    return "cachet: revoked this job's read credential and every other credential of its run attempt";
+    return "cachet: revoked this job's read credential and every other credential of the job";
   }
   if (answer.stdout === "404") {
     return "cachet: the deployment held no such credential, because it was already revoked or has expired";

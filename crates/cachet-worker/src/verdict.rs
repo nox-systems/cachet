@@ -674,12 +674,11 @@ async fn resolve_issued_token(
         // why: no GitHub call for a run. Its OIDC token was verified at
         // the exchange and is long expired by now, and nothing else could
         // re-prove the run: the deployment does not keep the token. What
-        // is checked is that its run attempt's list still names it, which
-        // is how revoking one of the attempt's credentials ends them all.
+        // is checked is that its job has not been revoked, which is how
+        // revoking one of the job's credentials ends them all.
         ReadTokenHolder::Run(run) => {
-            let held = read_run_credentials(&kv, &run_tokens_key_for(run)).await?;
-            if !held.is_some_and(|held| held.holds(digest_hex)) {
-                log::event("info", "auth.read_token_unlisted", &[]);
+            if job_revoked(&kv, &job_digest(run)).await? {
+                log::event("info", "auth.read_token_revoked_job", &[]);
                 return Err(ClientError::Unauthorized);
             }
             return Ok((
@@ -921,28 +920,29 @@ pub async fn issue_read_token(
     .await
 }
 
-/// Issue a read credential to a workflow run that proved itself with its
-/// GitHub OIDC token.
+/// Issue a read credential to a job of a workflow run that proved itself
+/// with its GitHub OIDC token.
 ///
 /// The token is checked exactly as a CI read checks it, by the write
 /// path's own verifier: RS256 against GitHub's JWKS, the exact issuer
 /// and audience, the served orgs, and the token's own clock. It is not
-/// stored. What the run keeps is a credential that lasts as long as
+/// stored. What the job keeps is a credential that lasts as long as
 /// GitHub lets a job run, which is what the nix daemon needs: it reads
 /// the netrc on every substitution, long after the OIDC token behind it
 /// has expired (ADR 0022). The credential only reads. Writes still take
 /// an OIDC token and nothing else, and a run is never an admin.
 ///
-/// One run attempt holds at most
+/// One job holds at most
 /// [`RUN_READ_TOKENS_MAX`](cachet_core::constants::RUN_READ_TOKENS_MAX)
-/// credentials, listed together so that revoking one revokes them all.
+/// credentials, and a job whose credentials were revoked is issued no
+/// more.
 ///
 /// # Errors
 ///
 /// [`ClientError::Unauthorized`] for a forged, expired, or mis-addressed
-/// token, or one naming no run; [`ClientError::ForbiddenOrg`] for a valid
-/// one outside the deployment's orgs; [`ClientError::CredentialLimit`]
-/// for an attempt at its bound or already revoked;
+/// token, or one that does not name its job; [`ClientError::ForbiddenOrg`]
+/// for a valid one outside the deployment's orgs;
+/// [`ClientError::CredentialLimit`] for a job at its bound or revoked;
 /// [`ClientError::AuthUnavailable`] when the JWKS or KV cannot answer.
 pub async fn issue_run_read_token(
     env: &Env,
@@ -958,62 +958,67 @@ pub async fn issue_run_read_token(
     let kv = env
         .kv(KV_BINDING)
         .map_err(|_| ClientError::AuthUnavailable)?;
-    let list_key = run_tokens_key_for(run);
-    let mut held = read_run_credentials(&kv, &list_key)
-        .await?
-        .unwrap_or_default();
-    let (token, digest_hex) = mint_token();
+    let job = job_digest(run);
     let audit = [
         ("repository", identity.repository.clone()),
         ("ref", identity.ref_.clone()),
         ("run", identity.run_id.clone()),
         ("attempt", identity.run_attempt.clone()),
+        ("checkRun", identity.check_run_id.clone()),
     ];
-    if let Err(refusal) = held.admit(&digest_hex) {
-        let reason = if held.revoked { "revoked" } else { "limit" };
+    let refuse = |reason: &str| {
         let mut fields = vec![("kind", "run".to_string()), ("reason", reason.to_string())];
         fields.extend(audit.iter().cloned());
         log::event("info", "auth.exchange_refused", &fields);
-        return Err(refusal);
+        ClientError::CredentialLimit
+    };
+    if job_revoked(&kv, &job).await? {
+        return Err(refuse("revoked"));
     }
-    // why this order: the record first, the list second. A credential the
-    // list does not name never reads, so a failure between the two leaves
-    // an inert record that expires on its own.
+    let list_key = cachet_core::read_token::run_tokens_key(&job);
+    let mut held = read_run_credentials(&kv, &list_key).await?;
+    let (token, digest_hex) = mint_token();
+    if held.admit(&digest_hex).is_err() {
+        return Err(refuse("limit"));
+    }
     store_record(&kv, &digest_hex, &record).await?;
     put_run_credentials(&kv, &list_key, &held).await?;
     Ok(issued(token, record, &audit))
 }
 
-/// The key one run attempt's credentials are listed under.
-fn run_tokens_key_for(run: &RunBinding) -> String {
-    cachet_core::read_token::run_tokens_key(&hex_digest(&sha256(run.attempt_name().as_bytes())))
+/// The digest that names one job, which its count and its revocation are
+/// keyed by.
+fn job_digest(run: &RunBinding) -> String {
+    hex_digest(&sha256(run.job_name().as_bytes()))
 }
 
-/// Read one run attempt's list of credentials. An absent list is `None`.
-/// An unreadable one is a storage fault, and it reads as revoked: a list
-/// the worker cannot read cannot vouch for anything.
-async fn read_run_credentials(
-    kv: &worker::kv::KvStore,
-    key: &str,
-) -> Result<Option<RunCredentials>> {
+/// Whether the job's credentials were revoked.
+async fn job_revoked(kv: &worker::kv::KvStore, job: &str) -> Result<bool> {
+    kv.get(&cachet_core::read_token::run_revoked_key(job))
+        .text()
+        .await
+        .map(|marked| marked.is_some())
+        .map_err(|_| ClientError::AuthUnavailable)
+}
+
+/// Read one job's list of credentials. An absent list is an empty one.
+async fn read_run_credentials(kv: &worker::kv::KvStore, key: &str) -> Result<RunCredentials> {
     let stored = kv
         .get(key)
         .text()
         .await
         .map_err(|_| ClientError::AuthUnavailable)?;
-    Ok(stored.map(|text| {
-        RunCredentials::parse(&text).unwrap_or_else(|_| {
+    match stored {
+        None => Ok(RunCredentials::default()),
+        Some(text) => RunCredentials::parse(&text).map_err(|_| {
             log::event("error", "auth.run_tokens_corrupt", &[]);
-            RunCredentials {
-                digests: Vec::new(),
-                revoked: true,
-            }
-        })
-    }))
+            ClientError::AuthUnavailable
+        }),
+    }
 }
 
-/// Write one run attempt's list. It lives as long as the newest
-/// credential it could name, so it outlasts every one of them.
+/// Write one job's list. It lives as long as the newest credential it
+/// counts, so the bound holds for as long as any of them reads.
 async fn put_run_credentials(
     kv: &worker::kv::KvStore,
     key: &str,
@@ -1097,9 +1102,9 @@ fn issued(
 
 /// Revoke one issued token, by the token itself. Logging out is the
 /// holder proving they hold it; nobody else can name the record. A run's
-/// credential revokes every credential of its run attempt, and the
-/// attempt is issued no more, so credentials a step of the job minted
-/// for itself end with the job too.
+/// credential revokes every credential of its job, and the job is issued
+/// no more, so credentials a step of the job minted for itself end with
+/// the job too.
 ///
 /// Answers whether there was a record to revoke.
 ///
@@ -1123,21 +1128,34 @@ pub async fn revoke_read_token(env: &Env, token: &str) -> Result<bool> {
     else {
         return Ok(false);
     };
-    // why the list before the record: a failure between the two then
-    // leaves every credential of the attempt refused, where the other
-    // order could leave the list vouching for credentials nobody revoked.
+    // why the mark before the record: a failure between the two then
+    // leaves every credential of the job refused, where the other order
+    // could leave siblings reading that nobody revoked.
     if let Some(run) = ReadTokenRecord::parse(&text)
         .ok()
         .as_ref()
         .and_then(ReadTokenRecord::run)
     {
-        let list_key = run_tokens_key_for(run);
-        let mut held = read_run_credentials(&kv, &list_key)
-            .await?
+        let job = job_digest(run);
+        // why its own key: an exchange reads the job's list and writes it
+        // whole, so a mark kept in the list could be overwritten by an
+        // exchange that read the list before the revocation, which would
+        // bring the job's siblings back. Nothing but this writes the mark.
+        // It lives six hours from now, past every credential the job holds.
+        let ttl_seconds = cachet_core::constants::RUN_READ_TOKEN_TTL_MS / 1_000;
+        kv.put(&cachet_core::read_token::run_revoked_key(&job), "revoked\n")
+            .map(|builder| builder.expiration_ttl(ttl_seconds))
+            .map_err(|_| ClientError::AuthUnavailable)?
+            .execute()
+            .await
+            .map_err(|_| ClientError::AuthUnavailable)?;
+        // The siblings this isolate remembers go too. Best effort: the
+        // mark is what refuses them everywhere else.
+        let siblings = read_run_credentials(&kv, &cachet_core::read_token::run_tokens_key(&job))
+            .await
+            .map(|held| held.digests)
             .unwrap_or_default();
-        held.revoked = true;
-        put_run_credentials(&kv, &list_key, &held).await?;
-        for sibling in &held.digests {
+        for sibling in &siblings {
             memo_forget(sibling);
         }
         log::event(
@@ -1147,7 +1165,8 @@ pub async fn revoke_read_token(env: &Env, token: &str) -> Result<bool> {
                 ("repository", run.repository.clone()),
                 ("run", run.run_id.clone()),
                 ("attempt", run.run_attempt.clone()),
-                ("credentials", held.digests.len().to_string()),
+                ("checkRun", run.check_run_id.clone()),
+                ("credentials", siblings.len().to_string()),
             ],
         );
     }

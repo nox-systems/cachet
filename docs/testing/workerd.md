@@ -196,13 +196,18 @@ credential resolves as the run (`/api/whoami` answers `ci` for the
 repository owner), cannot renew a lease or reach the admin surface, and
 is stored under its digest as a record holding the run's claims and a
 six-hour lifetime and neither the credential nor the OIDC token, with its
-run attempt's list naming it. Three more exchanges for the same attempt
-succeed and the fifth answers 403 `credential_limit`, while another
-attempt of the run starts a fresh count and a token naming no run is
-refused. The revoke action's post step, `action/revoke/post.cjs`, then
-ends the step's credential and a sibling the scenario minted and had
-already read with, so the isolate's memo is cleared too, and the attempt
-is refused any further exchange. Revoking again answers 404 and the step
+job's count naming it. Three more exchanges for the same job succeed and
+the fifth answers 403 `credential_limit`, while another job of the run
+and a re-run of this one each start a fresh count, and a token missing
+its run id, run attempt, or check run id is refused. The revoke action's
+post step, `action/revoke/post.cjs`, then ends the step's credential and
+a sibling the scenario minted and had already read with, so the
+isolate's memo is cleared too, and the job is refused any further
+exchange. Rewriting the job's count afterwards, as an exchange that read
+it before the revocation would, does not bring the sibling back. One
+job's revocation leaves another job of the same run reading, and
+eighteen jobs of one run exchanging at once all succeed, which is what
+cachet's own ci.yml asks of it. Revoking again answers 404 and the step
 says the credential was already gone, a credential never issued answers
 404 as well, and a `sudo` that refuses is named as the reason in the
 step's log. The stub's pass-through to the worker then answers an

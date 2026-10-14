@@ -85,6 +85,7 @@ mod tests {
             ref_: "refs/heads/main".to_string(),
             run_id: "41".to_string(),
             run_attempt: "1".to_string(),
+            check_run_id: "1".to_string(),
             sha: "abc".to_string(),
         }
     }

@@ -39,9 +39,13 @@ something the deployment already knows how to verify: its OIDC token.
 2. The answer is the same `cachet_` credential a laptop gets. The
    deployment stores only its SHA-256, under `readtoken/<digest>`, against
    a record naming the repository owner and the claims the token proved:
-   repository, ref, run id, run attempt, and commit. The OIDC token is not
-   stored. A token without a run id or run attempt is refused, because
-   point 6 counts and revokes credentials by that pair.
+   repository, ref, run id, run attempt, check run id, and commit. The
+   OIDC token is not stored. Those claims name the job that holds the
+   credential: every job of a workflow run shares the run id and attempt,
+   and the check run id ("The check run ID of the current job",
+   https://docs.github.com/en/actions/reference/security/oidc) tells one
+   job from another. A token missing any of the three is refused, because
+   points 6 and 7 count and revoke credentials per job.
 3. The record lives six hours from the exchange. GitHub ends a job on a
    GitHub-hosted runner after six hours ("Each job in a workflow can run
    for up to 6 hours of execution time",
@@ -59,26 +63,28 @@ something the deployment already knows how to verify: its OIDC token.
    OIDC token as every earlier version did and logs one line saying the
    cache stops answering the job when that token expires. A job without
    the `id-token` grant builds uncached, as before.
-6. One run attempt holds at most four credentials. The deployment lists
-   an attempt's credentials under `runtokens/<digest>`, the digest of its
-   repository, run id, and run attempt, and a run's credential reads only
-   while that list names it. A fifth exchange answers 403
-   `credential_limit`. Four covers a job that uses the composite twice
-   and an exchange retried after its answer was lost. Without a bound,
-   any step holding the job's `id-token` grant could mint credentials
-   without limit, each outliving the job by up to six hours and each
-   costing a KV write.
-7. Revoking a run's credential revokes every credential of its run
-   attempt: the list is marked revoked, so none of them reads again and
-   the attempt is issued no more, even with an OIDC token minted before
-   the job ended. `POST /api/login/revoke` answers 204 when there was a
-   record to revoke and 404 when there was not. The 404 tells nobody
-   anything, because only the holder of a credential can name its record.
+6. One job holds at most four credentials. The exchange counts a job's
+   credentials under `runtokens/<job>`, where `<job>` is the digest of
+   the repository, run id, run attempt, and check run id, and a fifth
+   exchange answers 403 `credential_limit`. Four covers a job that uses
+   the composite twice and an exchange retried after its answer was
+   lost. Without a bound, any step holding the job's `id-token` grant
+   could mint credentials without limit, each outliving the job by up to
+   six hours and each costing a KV write. The count bounds the exchange
+   and nothing else: no read consults it.
+7. Revoking a run's credential revokes every credential of its job. The
+   revocation writes `runrevoked/<job>`, which nothing else writes, and a
+   read of any of the job's credentials refuses while it exists, as does
+   any further exchange for the job, even with an OIDC token minted
+   before the job ended. Other jobs of the same run are untouched.
+   `POST /api/login/revoke` answers 204 when there was a record to revoke
+   and 404 when there was not. The 404 tells nobody anything, because
+   only the holder of a credential can name its record.
 8. A nested action, `action/revoke`, revokes the job's credential in its
    post phase, whether the job succeeded or failed, and never fails the
    job. Point 7 takes credentials a step of the job minted for itself
    with it, along with the credential of a second use of the composite
-   in the same job. The revoke action is the composite's first step.
+   in the same job, which shares the job's check run id. The revoke action is the composite's first step.
    GitHub runs post phases in the reverse order of their main phases and
    runs one only for a step whose main phase ran, so the first step's
    post phase should run after the push's and still run when a later
@@ -104,24 +110,35 @@ its credential and builds the rest of the job uncached.
 
 A step holding the job's `id-token` grant, or anyone who steals an OIDC
 token during its five minutes, can mint at most four credentials for the
-run attempt, counting the action's own. All of them end when the revoke
-step runs. A stolen token therefore buys reads until the job ends, or up
-to six hours when the revoke step cannot run, in place of the five
-minutes of reads and writes the token itself allowed.
+job, counting the action's own. All of them end when the revoke step
+runs. A stolen token therefore buys reads until the job ends, or up to
+six hours when the revoke step cannot run, in place of the five minutes
+of reads and writes the token itself allowed.
 
-The list is one KV entry per run attempt, so two exchanges that race on
-it can lose one of their entries, and that credential then never reads.
-KV takes one write a second to one key, so an exchange that follows the
-attempt's previous one within a second can answer 503 and is retried.
-The action exchanges once per use of the composite, so neither happens to
-a job that is not racing itself. Listing KV keys instead of keeping one
-list was rejected because a listing lags writes by up to a minute, and a
-count or a revocation built on it could miss a credential minted moments
-earlier.
+The count is one KV entry per job, read and written whole by each
+exchange. Two exchanges for one job that race on it can lose an entry,
+which admits one credential past the bound, and KV takes one write a
+second to one key, so an exchange that follows the job's previous one
+within a second can answer 503 and is retried. The action exchanges once
+per use of the composite, so neither happens to a job that is not racing
+itself, and different jobs never share the entry. Listing KV keys instead
+of keeping one count was rejected because a listing lags writes by up to
+a minute. Revocation is kept out of the count on purpose: an exchange
+that read the count before a revocation, or from a colo whose copy was
+stale, writes it back afterwards, and a mark kept inside it would have
+been undone.
+
+A read of a run's credential costs two KV reads, its record and its
+job's revocation mark, and the isolate memo answers repeats for two
+minutes. The mark is normally absent, so a read straight after the
+exchange cannot be refused by a KV copy that has not caught up. A
+revocation reaches a colo that cached the mark's absence within KV's
+own propagation, up to a minute and sometimes more, plus the memo's two
+minutes.
 
 Each CI job costs the deployment three KV writes and one delete: the
-exchange writes the credential's record and its run attempt's list, and
-the revoke marks the list and deletes the record. Workers Free allows
+exchange writes the credential's record and its job's count, and the
+revoke writes the job's revocation mark and deletes the record. Workers Free allows
 1,000 KV writes a day (https://developers.cloudflare.com/kv/platform/limits/),
 about 330 jobs, so a deployment serving CI expects Workers Paid.
 

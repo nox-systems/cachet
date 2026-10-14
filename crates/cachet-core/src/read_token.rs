@@ -145,7 +145,9 @@ impl GitHubGrant {
 
 /// The claims a run's OIDC token proved at the exchange, kept so an
 /// operator reading the record, or the event the exchange logged, can
-/// tell which execution of which workflow holds the credential.
+/// tell which job of which workflow run holds the credential. They also
+/// name the job, which is what the bound on credentials and revocation
+/// apply to ([`RunBinding::job_name`]).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RunBinding {
     /// `owner/repo`, folded.
@@ -157,9 +159,12 @@ pub struct RunBinding {
     #[serde(rename = "runId")]
     pub run_id: String,
     /// Which attempt of that run. A re-run keeps its run id, so the pair
-    /// names one execution.
+    /// names one execution of the whole workflow.
     #[serde(rename = "runAttempt")]
     pub run_attempt: String,
+    /// The check run of the job, which tells it from the run's other jobs.
+    #[serde(rename = "checkRunId")]
+    pub check_run_id: String,
     /// The commit the run built.
     pub sha: String,
 }
@@ -178,16 +183,23 @@ impl ReadTokenRecord {
     /// # Errors
     ///
     /// [`ClientError::Unauthorized`](crate::error::ClientError::Unauthorized)
-    /// for a token without a run id or run attempt. Every token GitHub
-    /// issues to a run carries both, and the credentials one run attempt
-    /// may hold are counted and revoked by that pair, so a token missing
-    /// either would share its count with every other such token.
+    /// for a token without a run id, run attempt, or check run id. The
+    /// credentials one job may hold are counted and revoked by those
+    /// three, so a token missing one would share its count and its
+    /// revocation with every other such token.
     pub fn for_run(
         identity: &crate::auth::OidcIdentity,
         now: crate::types::UnixMillis,
     ) -> crate::error::Result<Self> {
         let unknown = crate::constants::UNKNOWN_CLAIM;
-        if identity.run_id == unknown || identity.run_attempt == unknown {
+        if [
+            &identity.run_id,
+            &identity.run_attempt,
+            &identity.check_run_id,
+        ]
+        .iter()
+        .any(|claim| claim.as_str() == unknown)
+        {
             return Err(crate::error::ClientError::Unauthorized);
         }
         Ok(Self {
@@ -201,6 +213,7 @@ impl ReadTokenRecord {
                 reference: identity.ref_.clone(),
                 run_id: identity.run_id.clone(),
                 run_attempt: identity.run_attempt.clone(),
+                check_run_id: identity.check_run_id.clone(),
                 sha: identity.sha.clone(),
             }),
         })
@@ -344,36 +357,41 @@ impl From<ReadTokenRecord> for RecordWire {
 }
 
 impl RunBinding {
-    /// The bytes that name this run attempt, which the worker hashes into
-    /// the key of [`RunCredentials`]. Newlines separate the parts because
-    /// none of them can contain one.
+    /// The bytes that name this job, which the worker hashes into the key
+    /// its credentials are counted and revoked under. Newlines separate
+    /// the parts because none of them can contain one.
+    ///
+    /// why the check run: every job of a workflow run shares the run id
+    /// and attempt, so a name without it made one bound and one revocation
+    /// cover the whole run. A run with eighteen jobs refused the fifth
+    /// job onwards, and the first job to finish revoked everyone else's
+    /// credential mid-build.
     #[must_use]
-    pub fn attempt_name(&self) -> String {
-        format!("{}\n{}\n{}", self.repository, self.run_id, self.run_attempt)
+    pub fn job_name(&self) -> String {
+        format!(
+            "{}\n{}\n{}\n{}",
+            self.repository, self.run_id, self.run_attempt, self.check_run_id
+        )
     }
 }
 
-/// The credentials one workflow run attempt holds, stored beside them.
+/// The credentials one job was issued, counted so a job cannot mint them
+/// without bound.
 ///
-/// A run's credential reads only while this list names it. That puts two
-/// things in one place: the bound on how many credentials an attempt may
-/// hold, and revocation of all of them at once. Revoking marks the list
-/// rather than deleting it, so the same run attempt cannot exchange again
-/// afterwards with an OIDC token it minted before the job ended.
+/// The list bounds the exchange and nothing else: a read never consults
+/// it, and revocation lives under its own key, which no exchange writes
+/// ([`run_revoked_key`]). An exchange reads this list and writes it whole,
+/// so two exchanges for one job that race can lose an entry and admit
+/// one credential more than the bound. That is the whole cost of the
+/// race, because nothing else depends on what the list holds.
 ///
-/// why one list rather than one key per credential: listing KV keys lags
-/// writes by up to a minute, so a count or a revocation that enumerated
-/// keys could miss a credential minted moments earlier. Two exchanges
-/// that race on this list can lose one entry, and that credential then
-/// fails closed: it never reads.
+/// why one list rather than one KV key per credential: listing KV keys
+/// lags writes by up to a minute, so a count built on a listing could
+/// miss credentials minted moments earlier.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RunCredentials {
-    /// The digests of the attempt's credentials, in issue order.
+    /// The digests of the job's credentials, in issue order.
     pub digests: Vec<String>,
-    /// Set when the attempt's credentials were revoked. None of them reads
-    /// again, and the attempt is issued no more.
-    #[serde(default)]
-    pub revoked: bool,
 }
 
 impl RunCredentials {
@@ -382,26 +400,20 @@ impl RunCredentials {
     /// # Errors
     ///
     /// [`ClientError::CredentialLimit`](crate::error::ClientError::CredentialLimit)
-    /// when the attempt's credentials were revoked, or when it already
-    /// holds [`RUN_READ_TOKENS_MAX`](crate::constants::RUN_READ_TOKENS_MAX).
+    /// when the job already holds
+    /// [`RUN_READ_TOKENS_MAX`](crate::constants::RUN_READ_TOKENS_MAX).
     pub fn admit(&mut self, digest_hex: &str) -> crate::error::Result<()> {
-        if self.revoked || self.digests.len() >= crate::constants::RUN_READ_TOKENS_MAX {
+        if self.digests.len() >= crate::constants::RUN_READ_TOKENS_MAX {
             return Err(crate::error::ClientError::CredentialLimit);
         }
         self.digests.push(digest_hex.to_string());
         Ok(())
     }
 
-    /// Whether the credential with this digest may read.
-    #[must_use]
-    pub fn holds(&self, digest_hex: &str) -> bool {
-        !self.revoked && self.digests.iter().any(|held| held == digest_hex)
-    }
-
     /// Serialize with a trailing newline.
     #[must_use]
     pub fn serialize(&self) -> String {
-        let mut body = serde_json::to_string(self).expect("string and boolean fields");
+        let mut body = serde_json::to_string(self).expect("string fields");
         body.push('\n');
         body
     }
@@ -417,13 +429,26 @@ impl RunCredentials {
     }
 }
 
-/// Where one run attempt's [`RunCredentials`] live in KV, from the digest
-/// of its [`RunBinding::attempt_name`].
+/// Where one job's [`RunCredentials`] live in KV, from the digest of its
+/// [`RunBinding::job_name`].
 #[must_use]
-pub fn run_tokens_key(attempt_digest_hex: &str) -> String {
+pub fn run_tokens_key(job_digest_hex: &str) -> String {
     format!(
-        "{}{attempt_digest_hex}",
+        "{}{job_digest_hex}",
         crate::constants::RUN_TOKENS_KEY_PREFIX
+    )
+}
+
+/// Where one job's revocation is marked in KV, from the digest of its
+/// [`RunBinding::job_name`]. Only revocation writes this key. A read of
+/// any of the job's credentials refuses while it exists, and so does an
+/// exchange for the job, so an exchange that read a stale list can never
+/// bring a revoked job back.
+#[must_use]
+pub fn run_revoked_key(job_digest_hex: &str) -> String {
+    format!(
+        "{}{job_digest_hex}",
+        crate::constants::RUN_REVOKED_KEY_PREFIX
     )
 }
 
@@ -488,6 +513,7 @@ mod tests {
             "ref": "refs/heads/main",
             "run_id": "38468685026",
             "run_attempt": "2",
+            "check_run_id": "115735782585",
             "sha": "abc",
         })
     }
@@ -550,6 +576,7 @@ mod tests {
                 reference: "refs/heads/main".to_string(),
                 run_id: "38468685026".to_string(),
                 run_attempt: "2".to_string(),
+                check_run_id: "115735782585".to_string(),
                 sha: "abc".to_string(),
             })
         );
@@ -596,11 +623,11 @@ mod tests {
                 "neither: the shape a withdrawn version once wrote",
             ),
             (
-                r#"{"login":"o","issuedAtMs":1,"expiresAtMs":2,"githubToken":"gho_live","run":{"repository":"o/r","ref":"refs/heads/main","runId":"1","runAttempt":"1","sha":"abc"}}"#,
+                r#"{"login":"o","issuedAtMs":1,"expiresAtMs":2,"githubToken":"gho_live","run":{"repository":"o/r","ref":"refs/heads/main","runId":"1","runAttempt":"1","checkRunId":"1","sha":"abc"}}"#,
                 "both",
             ),
             (
-                r#"{"login":"o","issuedAtMs":1,"expiresAtMs":2,"githubRefreshToken":"ghr_live","run":{"repository":"o/r","ref":"refs/heads/main","runId":"1","runAttempt":"1","sha":"abc"}}"#,
+                r#"{"login":"o","issuedAtMs":1,"expiresAtMs":2,"githubRefreshToken":"ghr_live","run":{"repository":"o/r","ref":"refs/heads/main","runId":"1","runAttempt":"1","checkRunId":"1","sha":"abc"}}"#,
                 "a run with half a GitHub grant",
             ),
         ] {
@@ -635,7 +662,7 @@ mod tests {
     #[test]
     fn a_token_without_its_run_is_not_issued_a_credential() {
         let now = UnixMillis::new(1_780_000_000_000);
-        for missing in ["run_id", "run_attempt"] {
+        for missing in ["run_id", "run_attempt", "check_run_id"] {
             let mut claims = run_claims(1_780_000_000);
             claims.as_object_mut().expect("an object").remove(missing);
             let identity = crate::auth::verify_claims(&claims, &run_config(), now)
@@ -649,7 +676,7 @@ mod tests {
     }
 
     #[test]
-    fn a_run_attempt_holds_four_credentials_and_revocation_ends_them_all() {
+    fn a_job_is_issued_four_credentials() {
         let mut held = RunCredentials::default();
         for digest in ["a1", "b2", "c3", "d4"] {
             held.admit(digest).expect("under the bound");
@@ -659,49 +686,45 @@ mod tests {
             Err(crate::error::ClientError::CredentialLimit),
             "the fifth is refused"
         );
-        assert!(held.holds("a1") && held.holds("d4"));
-        assert!(!held.holds("e5"), "a refused credential never reads");
-        held.revoked = true;
-        for digest in ["a1", "b2", "c3", "d4"] {
-            assert!(!held.holds(digest), "{digest} ends with the others");
-        }
-        let mut emptied = RunCredentials {
-            digests: Vec::new(),
-            revoked: true,
-        };
-        assert_eq!(
-            emptied.admit("f6"),
-            Err(crate::error::ClientError::CredentialLimit),
-            "a revoked attempt is issued no more"
-        );
+        assert_eq!(held.digests.len(), 4, "a refusal adds nothing");
         assert_eq!(
             RunCredentials::parse(&held.serialize()).expect("its own form"),
             held
         );
         assert_eq!(
             held.serialize(),
-            "{\"digests\":[\"a1\",\"b2\",\"c3\",\"d4\"],\"revoked\":true}\n"
+            "{\"digests\":[\"a1\",\"b2\",\"c3\",\"d4\"]}\n"
         );
     }
 
-    #[test]
-    fn a_run_attempt_is_named_by_repository_run_and_attempt() {
-        let binding = RunBinding {
+    fn binding(check_run_id: &str) -> RunBinding {
+        RunBinding {
             repository: "my-org/my-repo".to_string(),
             reference: "refs/heads/main".to_string(),
             run_id: "38468685026".to_string(),
             run_attempt: "2".to_string(),
+            check_run_id: check_run_id.to_string(),
             sha: "abc".to_string(),
-        };
-        assert_eq!(binding.attempt_name(), "my-org/my-repo\n38468685026\n2");
-        // The ref and commit do not split an attempt: they are fixed for
-        // it anyway.
+        }
+    }
+
+    #[test]
+    fn a_job_is_named_by_its_run_its_attempt_and_its_check_run() {
+        assert_eq!(
+            binding("115735782585").job_name(),
+            "my-org/my-repo\n38468685026\n2\n115735782585"
+        );
+        // Two jobs of one run attempt are two names: one job's bound and
+        // revocation must never reach another's.
+        assert_ne!(binding("1").job_name(), binding("2").job_name());
+        // The ref and commit do not split a job: they are fixed for it.
         let other_ref = RunBinding {
             reference: "refs/heads/other".to_string(),
-            ..binding.clone()
+            ..binding("1")
         };
-        assert_eq!(other_ref.attempt_name(), binding.attempt_name());
+        assert_eq!(other_ref.job_name(), binding("1").job_name());
         assert_eq!(run_tokens_key("abc"), "runtokens/abc");
+        assert_eq!(run_revoked_key("abc"), "runrevoked/abc");
     }
 
     #[test]

@@ -351,6 +351,7 @@ function mint(overrides = {}) {
     ref: "refs/heads/main",
     run_id: "41",
     run_attempt: "1",
+    check_run_id: "4100",
     sha: "abc",
     ...claimOverrides,
   };
@@ -1148,9 +1149,36 @@ function kvGet(persist, key) {
 
 // Where a run attempt of the lane's repository lists its credentials:
 // the digest of the repository, run id, and attempt, one per line.
-function runTokensKey(runId, runAttempt) {
-  const name = `lane-org/lane-repo\n${runId}\n${runAttempt}`;
-  return `runtokens/${crypto.createHash("sha256").update(name).digest("hex")}`;
+// Where one job of the lane's repository is counted and marked revoked:
+// the digest of the repository, run id, attempt, and check run id, one
+// per line.
+function jobKey(prefix, checkRunId, runAttempt = "1") {
+  const name = `lane-org/lane-repo\n41\n${runAttempt}\n${checkRunId}`;
+  return `${prefix}/${crypto.createHash("sha256").update(name).digest("hex")}`;
+}
+
+// Write one value into the lane worker's local KV, as a stale exchange
+// would have.
+function kvPut(persist, key, value) {
+  const put = spawnSync(
+    "wrangler",
+    [
+      "kv",
+      "key",
+      "put",
+      key,
+      value,
+      "--binding",
+      "CACHET_KV",
+      "--local",
+      "--persist-to",
+      persist,
+      "--config",
+      configPath,
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(put.status, 0, put.stderr);
 }
 
 async function actionRunner(base) {
@@ -1413,6 +1441,7 @@ async function actionAssertions(base, persist, newRunner) {
         ref: "refs/heads/main",
         runId: "41",
         runAttempt: "1",
+        checkRunId: "4100",
         sha: "abc",
       });
       assert.equal(record.login, "lane-org");
@@ -1424,9 +1453,9 @@ async function actionAssertions(base, persist, newRunner) {
       );
       assert.ok(!got.stdout.includes(credential));
       assert.ok(!got.stdout.includes(oidcToken));
-      // And its run attempt lists it, by digest.
-      const listed = JSON.parse(kvGet(persist, runTokensKey("41", "1")));
-      assert.deepEqual(listed, { digests: [digest], revoked: false });
+      // And its job counts it, by digest.
+      const listed = JSON.parse(kvGet(persist, jobKey("runtokens", "4100")));
+      assert.deepEqual(listed, { digests: [digest] });
     },
   );
 
@@ -1440,9 +1469,9 @@ async function actionAssertions(base, persist, newRunner) {
   };
   let sibling = "";
 
-  await check("a run attempt holds at most four credentials", async () => {
+  await check("a job holds at most four credentials", async () => {
     // The provisioning step holds one. Three more, as a step with the
-    // job's id-token grant could mint for itself, fill the attempt.
+    // job's id-token grant could mint for itself, fill the job.
     for (let more = 0; more < 3; more += 1) {
       const answer = await exchange({});
       assert.equal(answer.status, 200, JSON.stringify(answer.body));
@@ -1451,12 +1480,21 @@ async function actionAssertions(base, persist, newRunner) {
     const fifth = await exchange({});
     assert.equal(fifth.status, 403, JSON.stringify(fifth.body));
     assert.equal(fifth.body.code, "credential_limit");
-    // Another attempt of the same run counts afresh.
+    // Another job of the same run, and a re-run of this one, count
+    // afresh.
+    const otherJob = await exchange({ check_run_id: "4101" });
+    assert.equal(otherJob.status, 200, JSON.stringify(otherJob.body));
     const rerun = await exchange({ run_attempt: "9" });
     assert.equal(rerun.status, 200, JSON.stringify(rerun.body));
-    // A token that names no run is not issued one at all.
-    const unnamed = await exchange({ run_id: undefined });
-    assert.equal(unnamed.status, 401, JSON.stringify(unnamed.body));
+    // A token that does not name its job is not issued one at all.
+    for (const missing of ["run_id", "run_attempt", "check_run_id"]) {
+      const unnamed = await exchange({ [missing]: undefined });
+      assert.equal(
+        unnamed.status,
+        401,
+        `${missing}: ${JSON.stringify(unnamed.body)}`,
+      );
+    }
     // The sibling reads now, so this isolate remembers it, which the
     // revocation below has to overcome.
     const read = await fetch(`${base}/${NARINFO_KEY}`, {
@@ -1471,28 +1509,90 @@ async function actionAssertions(base, persist, newRunner) {
   };
 
   await check(
-    "the revoke post step ends every credential of the run attempt",
+    "the revoke post step ends every credential of the job",
     async () => {
       const ran = await runner.revoke(revokeEnv);
       assert.equal(ran.status, 0, ran.stderr);
       assert.match(
         ran.stdout,
-        /cachet: revoked this job's read credential and every other credential of its run attempt/,
+        /cachet: revoked this job's read credential and every other credential of the job/,
       );
       assert.equal(await runner.readWithNetrc(NARINFO_KEY), "401");
       const read = await fetch(`${base}/${NARINFO_KEY}`, {
         headers: { authorization: `Bearer ${sibling}` },
       });
       assert.equal(read.status, 401, "the sibling a step minted ends too");
-      // The attempt is issued no more, even with a token still in date.
+      // The job is issued no more, even with a token still in date.
       const after = await exchange({});
       assert.equal(after.status, 403, JSON.stringify(after.body));
       assert.equal(after.body.code, "credential_limit");
-      const listed = JSON.parse(kvGet(persist, runTokensKey("41", "1")));
-      assert.equal(listed.revoked, true);
-      assert.equal(listed.digests.length, 4);
+      assert.equal(kvGet(persist, jobKey("runrevoked", "4100")), "revoked\n");
     },
   );
+
+  await check(
+    "a list an exchange rewrites cannot revive a revoked job",
+    async () => {
+      // An exchange reads the job's list and writes it whole. One that
+      // read before the revocation, or from a colo whose copy is stale,
+      // rewrites it after; the revocation must not depend on the list.
+      const listKey = jobKey("runtokens", "4100");
+      const listed = kvGet(persist, listKey);
+      kvPut(persist, listKey, listed);
+      const read = await fetch(`${base}/${NARINFO_KEY}`, {
+        headers: { authorization: `Bearer ${sibling}` },
+      });
+      assert.equal(read.status, 401, await read.text());
+    },
+  );
+
+  await check(
+    "one job's revocation leaves the run's other jobs reading",
+    async () => {
+      const first = await exchange({ check_run_id: "5001" });
+      const second = await exchange({ check_run_id: "5002" });
+      assert.equal(first.status, 200, JSON.stringify(first.body));
+      assert.equal(second.status, 200, JSON.stringify(second.body));
+      const gone = await fetch(`${base}/api/login/revoke`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${first.body.token}` },
+      });
+      assert.equal(gone.status, 204, await gone.text());
+      for (const [token, expected] of [
+        [first.body.token, 401],
+        [second.body.token, 200],
+      ]) {
+        const read = await fetch(`${base}/${NARINFO_KEY}`, {
+          headers: { authorization: `Bearer ${token}` },
+        });
+        assert.equal(read.status, expected, await read.text());
+      }
+    },
+  );
+
+  await check("eighteen jobs of one run exchange at once", async () => {
+    // cachet's own ci.yml starts eighteen jobs together, and every one
+    // of them has to come away with its own credential.
+    const answers = await Promise.all(
+      Array.from({ length: 18 }, (_, at) =>
+        exchange({ check_run_id: String(6001 + at) }),
+      ),
+    );
+    for (const answer of answers) {
+      assert.equal(answer.status, 200, JSON.stringify(answer.body));
+    }
+    const reads = await Promise.all(
+      answers.map((answer) =>
+        fetch(`${base}/${NARINFO_KEY}`, {
+          headers: { authorization: `Bearer ${answer.body.token}` },
+        }).then(async (res) => {
+          await res.arrayBuffer();
+          return res.status;
+        }),
+      ),
+    );
+    assert.deepEqual(reads, Array(18).fill(200));
+  });
 
   await check(
     "revoking what is already gone answers 404, and the step says so",
@@ -1531,7 +1631,7 @@ async function actionAssertions(base, persist, newRunner) {
   await check(
     "an exchange retried past an HTML 500 still yields the credential",
     async () => {
-      // A fresh run attempt, so the bound above does not apply, behind
+      // A fresh job, so the bound above does not apply, behind
       // the stub's pass-through, whose first exchange answers 500 with a
       // page. curl retries, and the step must read the second answer
       // alone.

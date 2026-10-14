@@ -362,8 +362,8 @@ only once `v0` points at a commit that has it:
 
 A deployment that serves CI expects the Workers Paid plan. Each job
 costs three KV writes and one delete: the exchange writes the
-credential's record and its run attempt's list, and the revoke step
-marks the list and deletes the record. Workers Free allows 1,000 KV
+credential's record and the job's count of credentials, and the revoke
+step writes the job's revocation mark and deletes the record. Workers Free allows 1,000 KV
 writes a day, about 330 jobs.
 
 ## Losing the env file

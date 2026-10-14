@@ -78,8 +78,8 @@ daemon's netrc. The OIDC token expires within minutes, and the daemon
 presents the netrc's credential on every substitution for the whole job,
 so the issued one is accepted for six hours, the longest GitHub lets a
 job run on its own runners. When the job ends, passed or failed, the
-action revokes it along with every other credential its run attempt
-holds, of which there are at most four. The log line `cachet: read auth probe
+action revokes it along with every other credential the job holds, of
+which there are at most four. Other jobs of the same run keep theirs. The log line `cachet: read auth probe
 returned 404` means the daemon's credential authenticates, and with an
 issued credential that holds for the rest of the job. A self-hosted job
 whose `timeout-minutes` is above 360 outlives its credential and builds

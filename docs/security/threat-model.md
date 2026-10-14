@@ -96,24 +96,28 @@ credential, and any step holding the job's `id-token` grant can mint
 more. Defense: the exchange verifies the OIDC token exactly as a CI read
 does, checking the signature, issuer, audience, served orgs, and the
 token's clock. The credential only reads, because writes accept an OIDC
-token and nothing else and a run is never an admin. One run attempt
-holds at most four credentials, counting the action's own, and a run's
-credential reads only while its attempt's list names it. The action's
-revoke step marks that list revoked when the job ends, passed or failed,
-which ends every credential of the attempt and refuses the attempt any
-more. Every record also expires six hours after its exchange. What a
+token and nothing else and a run is never an admin. One job holds at
+most four credentials, counting the action's own. A job is named by its
+repository, run id, run attempt, and check run id, so the jobs of one
+run never share a bound or a revocation. The action's revoke step marks
+the job revoked when it ends, passed or failed, under a key that no
+exchange writes, which ends every credential of the job and refuses the
+job any more. Every record also expires six hours after its exchange. What a
 copy or a minted credential gains over the OIDC token the netrc used to
 hold is time, until the job ends or up to six hours when the revoke step
 cannot run (a cancelled runner, or one without passwordless sudo), and
 what it loses is the ability to write. A stolen OIDC token buys the same
-during its own few minutes and no more, because its run attempt's bound
-and revocation apply to whatever it mints. Proven: the workerd lane's
+during its own few minutes and no more, because its job's bound and
+revocation apply to whatever it mints. Proven: the workerd lane's
 action scenario, which runs the action's own provisioning script and
 revoke step against the lane worker (the credential reads after its
 token is refused, resolves as `ci`, cannot renew a lease or reach the
 admin surface, is stored as claims under its digest with neither token,
-the attempt's fifth exchange is refused, and the revocation ends a
-sibling credential a step minted and refuses later exchanges), the
+the job's fifth exchange is refused, the revocation ends a sibling
+credential a step minted, refuses later exchanges, and survives an
+exchange rewriting the job's count, one job's revocation leaves another
+job of the run reading, and eighteen jobs of one run exchange at once),
+the
 record's unit tests in cachet-core, and the integration lane's exchange
 against GitHub's real issuer.
 

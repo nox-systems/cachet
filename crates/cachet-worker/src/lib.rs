@@ -162,8 +162,8 @@ async fn login_exchange(env: &Env, now: UnixMillis, mut req: Request) -> Result<
 }
 
 /// `POST /api/login/revoke`: the holder presents the token, and the
-/// deployment forgets it, along with every other credential of its run
-/// attempt when it is a run's. Nobody else can name the record, because
+/// deployment forgets it, along with every other credential of its job
+/// when it is a workflow run's. Nobody else can name the record, because
 /// it is keyed by the token's own hash.
 async fn login_revoke(env: &Env, req: &Request) -> Result<Response> {
     let Some(token) = verdict::presented_token(req) else {

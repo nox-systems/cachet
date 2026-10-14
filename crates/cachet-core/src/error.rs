@@ -90,9 +90,9 @@ pub enum ClientError {
     /// at or past its end. The answer names the object's size, so a
     /// client can ask again.
     RangeNotSatisfiable,
-    /// A workflow run attempt asking for a read credential after it
-    /// already holds as many as one attempt may, or after its credentials
-    /// were revoked when its job ended. A new run attempt starts afresh.
+    /// A job of a workflow run asking for a read credential after it
+    /// already holds as many as one job may, or after its credentials were
+    /// revoked when it ended. A re-run of the job starts afresh.
     CredentialLimit,
 }
 
@@ -197,7 +197,7 @@ impl ClientError {
             Self::MalformedProbe => "probe payload did not parse",
             Self::MalformedQuery => "query names a choice this deployment does not offer",
             Self::RangeNotSatisfiable => "the range covers no byte of the object",
-            Self::CredentialLimit => "the run attempt holds all the read credentials it may",
+            Self::CredentialLimit => "the job holds all the read credentials it may",
         }
     }
 }
