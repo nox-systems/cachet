@@ -192,6 +192,16 @@ pub const RUN_READ_TOKEN_TTL_MS: u64 = 6 * MILLIS_PER_HOUR;
 /// deployment a KV write.
 pub const RUN_READ_TOKENS_MAX: usize = 4;
 
+/// How much longer than a credential's own life KV keeps the entries
+/// that decide it: its record, and its job's revocation mark.
+///
+/// Reads enforce the record's expiry themselves, so the margin grants
+/// nothing. It covers a revoke that runs late, which still has to find
+/// the record to learn the job it belongs to, and a credential issued
+/// just after a revoke by an exchange that read a stale absence of the
+/// mark, which must not outlive the mark that refuses it.
+pub const RECORD_KV_MARGIN_MS: u64 = MILLIS_PER_HOUR;
+
 /// Each job's credentials are counted under this KV prefix, keyed by a
 /// digest of the repository, run id, run attempt, and check run id.
 pub const RUN_TOKENS_KEY_PREFIX: &str = "runtokens/";

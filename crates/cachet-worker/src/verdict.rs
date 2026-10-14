@@ -1062,13 +1062,14 @@ async fn store_record(
     digest_hex: &str,
     record: &ReadTokenRecord,
 ) -> Result<()> {
-    // why: KV's own expiry is a backstop for storage, set to the record's
-    // life. The record's expiry is what the read path enforces, because
-    // KV expiry is eventual.
+    // why: KV's own expiry is a backstop for storage, set an hour past
+    // the record's life (RECORD_KV_MARGIN_MS) so a revoke that runs late
+    // still finds it. The record's expiry is what the read path enforces,
+    // because KV expiry is eventual.
     let ttl_seconds = record
         .expires_at_ms
         .saturating_sub(record.issued_at_ms)
-        .max(60_000)
+        .saturating_add(cachet_core::constants::RECORD_KV_MARGIN_MS)
         / 1_000;
     kv.put(
         &cachet_core::read_token::read_token_key(digest_hex),
@@ -1141,8 +1142,12 @@ pub async fn revoke_read_token(env: &Env, token: &str) -> Result<bool> {
         // whole, so a mark kept in the list could be overwritten by an
         // exchange that read the list before the revocation, which would
         // bring the job's siblings back. Nothing but this writes the mark.
-        // It lives six hours from now, past every credential the job holds.
-        let ttl_seconds = cachet_core::constants::RUN_READ_TOKEN_TTL_MS / 1_000;
+        // It lives an hour longer than any credential issued from now on,
+        // so one an exchange issues after this, on a stale read of the
+        // mark's absence, still ends before the mark does.
+        let ttl_seconds = (cachet_core::constants::RUN_READ_TOKEN_TTL_MS
+            + cachet_core::constants::RECORD_KV_MARGIN_MS)
+            / 1_000;
         kv.put(&cachet_core::read_token::run_revoked_key(&job), "revoked\n")
             .map(|builder| builder.expiration_ttl(ttl_seconds))
             .map_err(|_| ClientError::AuthUnavailable)?

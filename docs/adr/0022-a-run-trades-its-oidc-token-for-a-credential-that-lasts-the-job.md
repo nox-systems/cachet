@@ -116,10 +116,14 @@ six hours when the revoke step cannot run, in place of the five minutes
 of reads and writes the token itself allowed.
 
 The count is one KV entry per job, read and written whole by each
-exchange. Two exchanges for one job that race on it can lose an entry,
-which admits one credential past the bound, and KV takes one write a
-second to one key, so an exchange that follows the job's previous one
-within a second can answer 503 and is retried. The action exchanges once
+exchange. Exchanges for one job that race on it can lose entries, and an
+exchange in a colo whose copy of the count is stale reads fewer than
+there are, so either can admit credentials past four. How many is
+bounded by the OIDC token's five minutes and by the number of colos an
+attacker can reach in them, and revocation still ends every one of them,
+because the revocation mark covers the job and not the count's entries.
+KV takes one write a second to one key, so an exchange that follows the
+job's previous one within a second can answer 503 and is retried. The action exchanges once
 per use of the composite, so neither happens to a job that is not racing
 itself, and different jobs never share the entry. Listing KV keys instead
 of keeping one count was rejected because a listing lags writes by up to
@@ -130,7 +134,11 @@ been undone.
 
 A read of a run's credential costs two KV reads, its record and its
 job's revocation mark, and the isolate memo answers repeats for two
-minutes. The mark is normally absent, so a read straight after the
+minutes. KV keeps the record and the mark an hour past the six hours
+(`RECORD_KV_MARGIN_MS`), which the read path's own expiry check makes
+harmless: a revoke that runs late still finds the record that names its
+job, and a credential issued after a revocation on a stale read of the
+mark still ends before the mark does. The mark is normally absent, so a read straight after the
 exchange cannot be refused by a KV copy that has not caught up. A
 revocation reaches a colo that cached the mark's absence within KV's
 own propagation, up to a minute and sometimes more, plus the memo's two
