@@ -172,4 +172,17 @@ present-but-unparseable credential (oversized header, wrong scheme)
 answers 400 malformed_auth, a parseable-but-wrong one answers 401
 unauthorized.
 
+The CLI scenario assumes it is the only writer to the nix store while it
+runs, and that holds on CI, where each runner's store belongs to the one
+job. `cachet push` uploads every path the store gained since its snapshot
+step, as the composite action does in a CI job, and the scenario's checks
+count those uploads exactly. On a machine where another nix build
+registers a path between the snapshot and a push, the push uploads that
+path too and the counting checks fail with more new paths than the
+scenario added. On October 14 a build that registered a path between the
+two payloads turned the multipart check's one new path into two. The
+scenario runs against the machine's own store until it gets a private
+chroot store of its own, so a local failure of that shape is this
+interference.
+
 Run it: `just workerd`.

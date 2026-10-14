@@ -15,6 +15,9 @@ use std::cell::RefCell;
 use std::io::Read;
 use std::rc::Rc;
 
+use ruzstd::decoding::errors::{FrameDecoderError, ReadFrameHeaderError};
+use ruzstd::decoding::{BlockDecodingStrategy, FrameDecoder};
+
 /// Bytes buffered ahead of the decoder: a zstd block body tops out at
 /// 128 KiB on the wire, plus header and trailer slack. Any block started
 /// with this much pending input is guaranteed completable, which is what
@@ -22,9 +25,24 @@ use std::rc::Rc;
 /// corruption.
 const ZSTD_BLOCK_WIRE_MAX: usize = 132_096;
 
-/// Bytes buffered before the decoder's header probe: the largest frame
-/// header prefix a real producer emits.
+/// Bytes buffered before the decoder's header probe. A frame header is at
+/// most 18 bytes, so a probe made with this much pending reads the whole
+/// header, and a refusal there is the frame's verdict. Only a probe at
+/// close can run out of bytes.
 const HEADER_PROBE_MAX: usize = 64;
+
+/// The widest decode window a frame may declare. The decoder holds up to
+/// a window of output in memory, and the worker isolate has 128 MiB in
+/// all.
+// why: nix and the push client (COMPRESSION_LEVEL) compress at libzstd's
+// default level 3, whose frames declare a 2 MiB window (window log 21).
+// The fixture NAR, which `nix copy` wrote, carries window descriptor 0x58,
+// and so does `nix store dump-path | zstd`. Over the same dump, zstd 1.5.7
+// declares 8 MiB at -19 (log 23) and 32 MiB at --ultra -20 (log 25). Only
+// --ultra -21 (64 MiB), --ultra -22 and --long (128 MiB each) go past
+// 32 MiB. At this bound the window takes a quarter of the isolate, which
+// leaves the rest to the pipe and the request.
+const MAX_WINDOW_BYTES: u64 = 32 * 1024 * 1024;
 
 /// Consumed input is dropped once the drained prefix reaches this. The
 /// pipe must never hold the whole object: the worker isolate caps linear
@@ -76,29 +94,15 @@ impl Pipe {
         self.inner.borrow_mut().get_mut().extend_from_slice(bytes);
     }
 
-    /// The unread position, for header-probe rewinds.
-    fn position(&self) -> u64 {
-        self.inner.borrow().position()
-    }
-
-    /// Rewind to a saved position: a failed probe must leave the reader
-    /// exactly where it started, so the next attempt replays identical
-    /// bytes.
-    fn set_position(&self, position: u64) {
-        self.inner.borrow_mut().set_position(position);
-    }
-
     /// Bytes the reader has not yet consumed.
     fn pending(&self) -> usize {
         let cursor = self.inner.borrow();
         cursor.get_ref().len() - usize::try_from(cursor.position()).expect("cursor ≤ len")
     }
 
-    /// Drop the consumed prefix. Legal only while a decoder is running:
-    /// the header-probe rewind (`set_position` in `push`) is the sole
-    /// consumer of absolute positions, it resolves inside the `push` call
-    /// that opened the probe, and a live decoder holds its own scratch, so
-    /// nothing outside this type can ever observe the shift.
+    /// Drop the consumed prefix. Nothing reads absolute positions and the
+    /// decoder holds its own scratch, so nothing outside this type can
+    /// observe the shift.
     fn compact(&self) {
         let mut cursor = self.inner.borrow_mut();
         let position = usize::try_from(cursor.position()).expect("cursor ≤ len");
@@ -121,10 +125,9 @@ impl Read for Pipe {
 pub struct ZstdStream {
     pipe: Pipe,
     // why: FrameDecoder::init reads the frame header eagerly, and a header
-    // can span pushes, so construction defers until the pipe has enough to
-    // satisfy it; on failure the cursor rewinds and the next push retries
-    // over identical bytes plus new ones.
-    decoder: Option<Box<ruzstd::FrameDecoder>>,
+    // can span pushes, so construction defers until the pipe holds
+    // HEADER_PROBE_MAX bytes or the stream closes.
+    decoder: Option<Box<FrameDecoder>>,
     limit: u64,
     decompressed: u64,
     closed: bool,
@@ -153,37 +156,26 @@ impl ZstdStream {
     /// [`ZstdError`] on corrupt frames, over-limit output, or (after
     /// [`ZstdStream::finish`]) on a stream that ends mid-frame.
     pub fn push(&mut self, bytes: &[u8]) -> Result<Vec<u8>, ZstdError> {
-        // Drain before growing: once the decoder exists, no probe rewind
-        // is outstanding, so the consumed prefix is dead weight.
-        if self.decoder.is_some() {
-            self.pipe.compact();
-        }
+        // Drain before growing: the consumed prefix is dead weight.
+        self.pipe.compact();
         self.pipe.append(bytes);
         let mut produced = Vec::new();
 
         if self.decoder.is_none() {
-            let can_probe = self.pipe.pending() >= HEADER_PROBE_MAX || self.closed;
-            if can_probe {
-                let position = self.pipe.position();
-                let mut decoder = Box::new(ruzstd::FrameDecoder::new());
-                match decoder.init(&mut self.pipe) {
-                    Ok(()) => self.decoder = Some(decoder),
-                    Err(ruzstd::frame_decoder::FrameDecoderError::FailedToInitialize(_)) => {
-                        self.pipe.set_position(position);
-                        return Err(ZstdError::CorruptFrame);
-                    }
-                    Err(_) => {
-                        self.pipe.set_position(position);
-                        return if self.closed {
-                            Err(ZstdError::Truncated)
-                        } else {
-                            Ok(produced)
-                        };
-                    }
-                }
-            } else {
+            if self.pipe.pending() < HEADER_PROBE_MAX && !self.closed {
                 return Ok(produced);
             }
+            // why: a refused header answers now. Waiting for close would
+            // hold every byte of the object in the pipe, because only a
+            // running decoder consumes from it. A window over
+            // MAX_WINDOW_BYTES is one such refusal, and ruzstd 0.7 never
+            // checked a first frame's window at all.
+            let mut decoder = Box::new(FrameDecoder::new());
+            decoder.set_max_window_size(MAX_WINDOW_BYTES);
+            if let Err(error) = decoder.init(&mut self.pipe) {
+                return Err(map_header_error(&error));
+            }
+            self.decoder = Some(decoder);
         }
 
         // Decode one block per pass, each started only behind the watermark
@@ -205,7 +197,7 @@ impl ZstdStream {
                 .decoder
                 .as_mut()
                 .expect("decoder built above")
-                .decode_blocks(&mut self.pipe, ruzstd::BlockDecodingStrategy::UptoBlocks(1));
+                .decode_blocks(&mut self.pipe, BlockDecodingStrategy::UptoBlocks(1));
             match result {
                 Ok(_) => {
                     self.collect(&mut produced)?;
@@ -243,7 +235,7 @@ impl ZstdStream {
     /// Frame errors mean corruption after the watermark (a block is always
     /// complete there); under it, on close, they mean truncation when the
     /// pipe drained empty mid-frame.
-    fn map_frame_error(&self, error: &ruzstd::frame_decoder::FrameDecoderError) -> ZstdError {
+    fn map_frame_error(&self, error: &FrameDecoderError) -> ZstdError {
         let _ = error;
         if self.closed && self.pipe.pending() == 0 {
             ZstdError::Truncated
@@ -271,6 +263,24 @@ impl ZstdStream {
     /// Total decompressed bytes seen so far.
     pub const fn decompressed_bytes(&self) -> u64 {
         self.decompressed
+    }
+}
+
+/// A refused header is corruption, except a short read, which only a probe
+/// at close can hit: that stream ended inside its header. A window over
+/// [`MAX_WINDOW_BYTES`] counts as corruption too, because no producer
+/// cachet serves declares one, and a header of flipped bytes declares
+/// such a window as often as not.
+fn map_header_error(error: &FrameDecoderError) -> ZstdError {
+    match error {
+        FrameDecoderError::ReadFrameHeaderError(
+            ReadFrameHeaderError::MagicNumberReadError(_)
+            | ReadFrameHeaderError::FrameDescriptorReadError(_)
+            | ReadFrameHeaderError::WindowDescriptorReadError(_)
+            | ReadFrameHeaderError::DictionaryIdReadError(_)
+            | ReadFrameHeaderError::FrameContentSizeReadError(_),
+        ) => ZstdError::Truncated,
+        _ => ZstdError::CorruptFrame,
     }
 }
 
@@ -342,6 +352,69 @@ mod tests {
         assert_eq!(
             decode_all(NAR_ZST, 10).unwrap_err(),
             ZstdError::LimitExceeded
+        );
+    }
+
+    /// A frame with no checksum, the given window descriptor byte, and one
+    /// raw last block of 64 zero bytes, so the first push alone reaches
+    /// the header probe.
+    fn one_block_frame(window_descriptor: u8) -> Vec<u8> {
+        let mut frame = vec![0x28, 0xb5, 0x2f, 0xfd, 0x00, window_descriptor];
+        let header = (64u32 << 3) | 1;
+        frame.extend_from_slice(&header.to_le_bytes()[..3]);
+        frame.extend_from_slice(&[0u8; 64]);
+        frame
+    }
+
+    #[test]
+    fn a_window_up_to_32_mib_decodes() {
+        // Window log 21 (2 MiB) is what nix and the push client write, and
+        // window log 25 (32 MiB) is the bound itself.
+        for (window_descriptor, window) in [(11u8 << 3, "2 MiB"), (15 << 3, "32 MiB")] {
+            assert_eq!(
+                decode_all(&one_block_frame(window_descriptor), 1_000_000)
+                    .unwrap_or_else(|error| panic!("a {window} window decodes: {error}")),
+                vec![0u8; 64]
+            );
+        }
+    }
+
+    #[test]
+    fn a_window_over_32_mib_is_refused_at_the_first_probe() {
+        // Window log 26 (64 MiB) and 28 (256 MiB) are over the bound, and
+        // the first push answers with the refusal instead of buffering the
+        // object until close.
+        for window_descriptor in [16u8 << 3, 18 << 3] {
+            let mut stream = ZstdStream::new(1_000_000);
+            assert_eq!(
+                stream
+                    .push(&one_block_frame(window_descriptor))
+                    .unwrap_err(),
+                ZstdError::CorruptFrame
+            );
+        }
+    }
+
+    #[test]
+    fn a_bad_magic_number_is_refused_at_the_first_probe() {
+        let mut frame = NAR_ZST.to_vec();
+        frame[0] ^= 0xff;
+        let mut stream = ZstdStream::new(1_000_000);
+        assert_eq!(
+            stream.push(&frame[..HEADER_PROBE_MAX]).unwrap_err(),
+            ZstdError::CorruptFrame
+        );
+    }
+
+    #[test]
+    fn a_header_cut_short_at_close_is_truncated() {
+        assert_eq!(
+            decode_all(&[], 1_000_000).unwrap_err(),
+            ZstdError::Truncated
+        );
+        assert_eq!(
+            decode_all(&NAR_ZST[..3], 1_000_000).unwrap_err(),
+            ZstdError::Truncated
         );
     }
 
