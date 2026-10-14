@@ -55,9 +55,11 @@ inputs:
     required: false
     default: "true"
   cachet-version:
-    description: The cachet release to download and run.
+    description: >-
+      The cachet release to download and run. Unset, it is the release this
+      action's own commit belongs to, read from the commit's Cargo.toml.
     required: false
-    default: 0.1.0
+    default: ""
 
 runs:
   using: composite
@@ -118,6 +120,21 @@ runs:
         CACHET_VERSION: ${{ inputs.cachet-version }}
       run: |
         set -euo pipefail
+        # why the action's own Cargo.toml: a fixed default here went stale
+        # (it said 0.1.0 through 0.1.5, so every job pushed with the 0.1.0
+        # binary). The workspace version of the commit this action was
+        # checked out at names the release built from that commit.
+        if [ -z "${CACHET_VERSION}" ]; then
+          CACHET_VERSION="$(awk '
+            /^\[/ { section = $0 }
+            section == "[workspace.package]" && /^version *= *"/ {
+              gsub(/^version *= *"|".*$/, ""); print; exit
+            }' "${GITHUB_ACTION_PATH}/../Cargo.toml")"
+        fi
+        if ! [[ ${CACHET_VERSION} =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          echo "cachet: no release version to download (read '${CACHET_VERSION}')" >&2
+          exit 1
+        fi
         case "${{ runner.os }}-${{ runner.arch }}" in
           Linux-X64) triple="x86_64-unknown-linux-gnu" ;;
           Linux-ARM64) triple="aarch64-unknown-linux-gnu" ;;
