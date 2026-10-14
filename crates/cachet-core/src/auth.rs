@@ -89,6 +89,16 @@ pub struct OidcIdentity {
     pub ref_: String,
     /// The workflow run id, when present.
     pub run_id: String,
+    /// Which attempt of that run, when present. A re-run keeps its run
+    /// id and counts up here, so the pair names one execution of the
+    /// whole workflow.
+    pub run_attempt: String,
+    /// The check run of the current job, when present ("The check run ID
+    /// of the current job",
+    /// <https://docs.github.com/en/actions/reference/security/oidc>).
+    /// Every job of a run shares the run id and attempt, so this is the
+    /// claim that tells one job from another.
+    pub check_run_id: String,
     /// The commit sha, when present.
     pub sha: String,
 }
@@ -174,20 +184,22 @@ pub fn verify_claims(
         return Err(ClientError::ForbiddenOrg);
     }
 
+    // why numbers too: GitHub writes its ids as strings, but an id is a
+    // number, and reading one written as a number as absent would refuse
+    // a run for its claim's spelling.
+    let optional = |name: &str| match raw.get(name) {
+        Some(serde_json::Value::String(text)) => text.clone(),
+        Some(serde_json::Value::Number(number)) if number.is_u64() => number.to_string(),
+        _ => crate::constants::UNKNOWN_CLAIM.to_string(),
+    };
     Ok(OidcIdentity {
         repository,
         repository_owner,
         ref_,
-        run_id: raw
-            .get("run_id")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or(crate::constants::UNKNOWN_CLAIM)
-            .to_string(),
-        sha: raw
-            .get("sha")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or(crate::constants::UNKNOWN_CLAIM)
-            .to_string(),
+        run_id: optional("run_id"),
+        run_attempt: optional("run_attempt"),
+        check_run_id: optional("check_run_id"),
+        sha: optional("sha"),
     })
 }
 
@@ -358,6 +370,8 @@ mod tests {
             "repository_owner": "my-org",
             "ref": "refs/heads/main",
             "run_id": "42",
+            "run_attempt": "2",
+            "check_run_id": "57",
             "sha": "abc",
         })
     }
@@ -368,6 +382,21 @@ mod tests {
             .expect("the contract passes");
         assert_eq!(identity.repository_owner, "my-org");
         assert_eq!(identity.run_id, "42");
+        assert_eq!(identity.run_attempt, "2");
+        assert_eq!(identity.check_run_id, "57");
+    }
+
+    #[test]
+    fn an_id_written_as_a_number_reads_as_its_digits() {
+        let mut raw = claims();
+        raw["check_run_id"] = serde_json::json!(115_735_782_585_u64);
+        let identity = verify_claims(&raw, &config(), UnixMillis::new(1_780_000_000_000))
+            .expect("the contract passes");
+        assert_eq!(identity.check_run_id, "115735782585");
+        raw["check_run_id"] = serde_json::json!(-1);
+        let identity = verify_claims(&raw, &config(), UnixMillis::new(1_780_000_000_000))
+            .expect("the contract passes");
+        assert_eq!(identity.check_run_id, crate::constants::UNKNOWN_CLAIM);
     }
 
     #[test]
@@ -569,6 +598,8 @@ mod folding_tests {
             repository_owner: "nox-systems".to_string(),
             ref_: "refs/heads/main".to_string(),
             run_id: "1".to_string(),
+            run_attempt: "1".to_string(),
+            check_run_id: "1".to_string(),
             sha: "abc".to_string(),
         };
         assert!(

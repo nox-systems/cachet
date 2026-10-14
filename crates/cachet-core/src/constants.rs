@@ -162,6 +162,55 @@ pub const GITHUB_RENEW_SKEW_MS: u64 = 300_000;
 /// is deleting the record.
 pub const READ_TOKEN_TTL_MS: u64 = 30 * MILLIS_PER_DAY;
 
+/// How long a read credential issued to a workflow run is accepted.
+///
+/// The nix daemon reads the run's credential out of a netrc on every
+/// substitution, so the credential has to outlive the job that holds it.
+/// GitHub stops a job on a GitHub-hosted runner after six hours of
+/// execution ("Each job in a workflow can run for up to 6 hours of
+/// execution time", <https://docs.github.com/en/actions/reference/limits>),
+/// and a job's `timeout-minutes` defaults to 360 on any runner
+/// (<https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax>).
+/// The exchange happens inside the job, so six hours from the exchange
+/// covers what is left of it. A self-hosted job that raises its timeout
+/// past six hours outlives its credential and builds the rest uncached.
+///
+/// Nothing re-checks a run after the exchange. The OIDC token it traded
+/// proved the run belongs to a served org, and no later request could
+/// ask that question again, because the token expires within minutes
+/// and the deployment does not keep it. This bound is the credential's
+/// whole life unless the action's post step revokes it first.
+pub const RUN_READ_TOKEN_TTL_MS: u64 = 6 * MILLIS_PER_HOUR;
+
+/// How many read credentials one job of a workflow run may hold.
+///
+/// The action exchanges once per use of the composite, a job can use it
+/// more than once, and an exchange whose answer was lost on the network
+/// is retried. Four covers those. Without a bound, any step holding the
+/// job's `id-token: write` grant could mint credentials without limit,
+/// each outliving the job by up to six hours and each costing the
+/// deployment a KV write.
+pub const RUN_READ_TOKENS_MAX: usize = 4;
+
+/// How much longer than a credential's own life KV keeps the entries
+/// that decide it: its record, and its job's revocation mark.
+///
+/// Reads enforce the record's expiry themselves, so the margin grants
+/// nothing. It covers a revoke that runs late, which still has to find
+/// the record to learn the job it belongs to, and a credential issued
+/// just after a revoke by an exchange that read a stale absence of the
+/// mark, which must not outlive the mark that refuses it.
+pub const RECORD_KV_MARGIN_MS: u64 = MILLIS_PER_HOUR;
+
+/// Each job's credentials are counted under this KV prefix, keyed by a
+/// digest of the repository, run id, run attempt, and check run id.
+pub const RUN_TOKENS_KEY_PREFIX: &str = "runtokens/";
+
+/// A job whose credentials were revoked is marked under this KV prefix,
+/// keyed like [`RUN_TOKENS_KEY_PREFIX`]. Reads and exchanges refuse while
+/// the mark exists, and nothing but revocation writes it.
+pub const RUN_REVOKED_KEY_PREFIX: &str = "runrevoked/";
+
 /// An Authorization header longer than this is refused as malformed_auth:
 /// JWTs run a few kilobytes, so 8 KiB is generous room while still a hard
 /// guard in front of the parsers.
@@ -360,6 +409,9 @@ pub const SESSION_COOKIE_NAME: &str = "cachet_session";
 /// Milliseconds in a day, the unit conversion used by the retention
 /// constants.
 pub const MILLIS_PER_DAY: u64 = 86_400_000;
+
+/// Milliseconds in an hour.
+pub const MILLIS_PER_HOUR: u64 = 3_600_000;
 
 /// Negative answers to the edge cache last this long: a missing narinfo is
 /// usually being written this second.

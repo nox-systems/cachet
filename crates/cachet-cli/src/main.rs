@@ -161,7 +161,11 @@ async fn logout(
         return Ok(());
     };
     match cachet_cli::login::revoke_read_token(&client, &url, &token).await {
-        Ok(()) => println!("cachet: {} revoked this machine's credential", config.host),
+        Ok(true) => println!("cachet: {} revoked this machine's credential", config.host),
+        Ok(false) => println!(
+            "cachet: {} no longer held this machine's credential",
+            config.host
+        ),
         // why: the local copy goes either way. A deployment that cannot
         // be reached must not leave a credential sitting on the disk of
         // someone who asked to be logged out, and the credential expires
@@ -194,7 +198,8 @@ async fn forget(
     if let Some(token) = config::read_token(&dir, &host)? {
         let client = cachet_cli::http_client()?;
         match cachet_cli::login::revoke_read_token(&client, &url, &token).await {
-            Ok(()) => println!("cachet: {host} revoked this machine's credential"),
+            Ok(true) => println!("cachet: {host} revoked this machine's credential"),
+            Ok(false) => println!("cachet: {host} no longer held this machine's credential"),
             Err(failure) => {
                 eprintln!("cachet: could not reach {host} to revoke: {failure}");
                 eprintln!("  the local copy is removed anyway; it expires on its own.");

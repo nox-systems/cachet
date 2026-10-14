@@ -72,6 +72,20 @@ The action installs nix trusting the cache, snapshots the store before
 your build, and pushes what the build added on success. Signing happens
 server-side; the job needs no secrets beyond its OIDC token.
 
+Before nix starts, the action trades the job's OIDC token for a read
+credential the deployment issues and writes that credential to the nix
+daemon's netrc. The OIDC token expires within minutes, and the daemon
+presents the netrc's credential on every substitution for the whole job,
+so the issued one is accepted for six hours, the longest GitHub lets a
+job run on its own runners. When the job ends, passed or failed, the
+action revokes it along with every other credential the job holds, of
+which there are at most four. Other jobs of the same run keep theirs. The log line `cachet: read auth probe
+returned 404` means the daemon's credential authenticates, and with an
+issued credential that holds for the rest of the job. A self-hosted job
+whose `timeout-minutes` is above 360 outlives its credential and builds
+the rest uncached. A job without `id-token: write`, which includes a
+pull request from a fork, builds without the cache and still passes.
+
 ## For admins
 
 Open `https://<the deployment's host>/` in a browser and sign in with

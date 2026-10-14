@@ -2,7 +2,8 @@
 # this cache, provision the job's read credential before the daemon starts,
 # download the pinned cachet binary, and hand the push phases to the nested
 # main/post action. Signing happens server-side, so the action holds no key
-# material; the job's OIDC token is the only credential it ever touches.
+# material. The credentials it touches are the job's OIDC token and the
+# read credential the deployment issues in exchange for it.
 name: cachet setup
 description: >-
   Install nix wired to a cachet deployment, then push what the
@@ -61,71 +62,28 @@ inputs:
 runs:
   using: composite
   steps:
+    # The revoke action does nothing in its main phase. Its post phase
+    # forgets the read credential the next step obtains, on success and on
+    # failure alike, and never fails the job.
+    # why first: GitHub runs post phases in the reverse order of their
+    # main phases, so the first step's post runs after every other post in
+    # this action, the push included, and the push may still substitute
+    # through the daemon. A post phase also runs only for a step whose
+    # main phase ran, so the earliest position is the one that still
+    # revokes when a later step fails. The actionlint gate holds this
+    # order (scripts/check-action-post-order.sh).
+    - uses: nox-systems/cachet/action/revoke@v0
+
     # Provision the read credential BEFORE nix is installed and its daemon
-    # starts. The daemon reads netrc-file when it starts and not again, so
-    # a credential written afterwards is a credential the daemon never
-    # sees: cache reads answer 401 and every build recompiles from source.
+    # starts: trade the job's OIDC token for a credential the deployment
+    # issues, write it to the daemon's netrc, and stage the nix config
+    # that points at it. The script says why each piece is there.
     - name: Prepare the cachet cache before the nix daemon starts
       shell: bash
       env:
         CACHET_CACHE_URL: ${{ inputs.cache-url }}
         CACHET_AUDIENCE: ${{ inputs.audience }}
-      run: |
-        set -euo pipefail
-
-        # The OIDC token authenticates this job's reads; the runner is
-        # authorized because it is provably the org's CI. GitHub provisions
-        # no token plumbing for forked pull requests — by design, so that
-        # arbitrary code cannot impersonate the repo. The right answer
-        # there is a plain build: skip every cache-related write so the
-        # job continues uncached instead of dying before nix exists.
-        if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
-          echo "cachet: no OIDC token grant in this job (a forked pull request, or missing id-token: write)."
-          echo "  nix installs and builds WITHOUT the ${CACHET_CACHE_URL} cache; everything else runs normally."
-          echo "  Forks that want caching: deploy cachet and point cache-url at it."
-          echo "CACHET_EXTRA_CONF=" >> "${GITHUB_ENV}"
-          exit 0
-        fi
-        # A token fetch that dies on the network is the same class as a
-        # fork: setup could not complete, the build continues uncached.
-        # --retry covers the blips (connection resets, DNS, 5xx), and what
-        # outlives them degrades as loud log lines with the job green.
-        if ! token="$(curl -fsSL --retry 4 --retry-all-errors --retry-delay 2 \
-          -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
-          "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${CACHET_AUDIENCE}" | jq -r '.value')"; then
-          echo "cachet: the OIDC token fetch failed on the network after retries."
-          echo "  nix installs and builds WITHOUT the ${CACHET_CACHE_URL} cache; everything else runs normally."
-          echo "CACHET_EXTRA_CONF=" >> "${GITHUB_ENV}"
-          exit 0
-        fi
-        host="$(printf '%s' "${CACHET_CACHE_URL}" | sed -e 's#^https\?://##' -e 's#/.*$##')"
-
-        # The credential file: real, outside the nix store, 0600. The
-        # daemon is pointed at it by the netrc-file line below, which it
-        # reads when it starts, so the file has to exist first.
-        sudo mkdir -p /etc/nix
-        printf 'machine %s login cachet password %s\n' "${host}" "${token}" \
-          | sudo tee /etc/nix/netrc >/dev/null
-        sudo chmod 600 /etc/nix/netrc
-
-        # The deployment names its own signing key: fetch the public half
-        # from the worker rather than asking consumers to paste it. This
-        # doubles as the connectivity check: a cache that cannot answer its
-        # public config fails the job here, before the build starts. The
-        # retry only asks that "cannot answer" outlive a blip.
-        public_key="$(curl -fsSL --retry 4 --retry-all-errors --retry-delay 2 "${CACHET_CACHE_URL%/}/api/public/config" | jq -r '.publicKey')"
-        # why: nix treats the key settings as restricted, so an untrusted
-        # caller's extra-trusted-public-keys line is parsed and dropped;
-        # the invoking user must itself be trusted for the key to count.
-        {
-          echo "CACHET_EXTRA_CONF<<EOF_CACHET_CONF"
-          echo "netrc-file = /etc/nix/netrc"
-          echo "extra-substituters = ${CACHET_CACHE_URL%/}"
-          echo "extra-trusted-public-keys = ${public_key}"
-          echo "trusted-users = root $(whoami)"
-          echo "EOF_CACHET_CONF"
-        } >> "${GITHUB_ENV}"
-        echo "cachet: read credential provisioned before the daemon starts"
+      run: bash "${GITHUB_ACTION_PATH}/provision.sh"
 
     # Determinate's installer, installing plain nix rather than
     # Determinate Nix.
@@ -219,6 +177,12 @@ runs:
         # regression surfaces in the log rather than as a silent rebuild: a
         # 404 means the credential is present and authenticated (the probed
         # path is simply absent), while a 401 means it is not.
+        #
+        # The netrc normally holds the credential the deployment issued for
+        # this job, which it accepts for six hours, so a 404 here holds for
+        # the rest of the job. When the provisioning step logged that it
+        # fell back to the OIDC token itself, a 404 holds only until that
+        # token expires a few minutes from now.
         #
         # why: under sudo. The probe has to read the same file the daemon
         # reads, and that file is the credential: 0600 and owned by root.

@@ -339,6 +339,33 @@ in the README, run `cachet login --cache-url https://<host>`,
 collector fires on the cron, and its runs appear under
 `/api/self/gc-runs` for an admin.
 
+In CI, the action's log says whether the deployment issued the job a
+read credential. The provisioning step prints `cachet: exchanged the
+job's OIDC token for a read credential` with the time the credential
+stops being accepted, six hours on, and the configure step's read probe
+answers 404, which then holds for the rest of the job. A deployment from
+before the exchange accepted OIDC tokens answers the exchange with 401
+instead, and the step prints that the netrc carries the OIDC token and
+that the cache stops answering the job when that token expires, a few
+minutes in (ADR 0022).
+
+Release a change to the action in this order, because the composite
+refers to `nox-systems/cachet/action/revoke@v0` and that action exists
+only once `v0` points at a commit that has it:
+
+1. Deploy the worker, staging and then production.
+2. Move the `v0` tag to the release commit.
+3. Open the log of a real job that uses the action. Check that the
+   push's post step finishes before the line `cachet: revoked this job's
+   read credential`. GitHub does not document the order of post steps
+   for actions in a composite. This log is the proof.
+
+A deployment that serves CI expects the Workers Paid plan. Each job
+costs three KV writes and one delete: the exchange writes the
+credential's record and the job's count of credentials, and the revoke
+step writes the job's revocation mark and deletes the record. Workers Free allows 1,000 KV
+writes a day, about 330 jobs.
+
 ## Losing the env file
 
 The deployment keeps running without the clone; deleting the repository
@@ -360,6 +387,10 @@ Redeploy the previous commit: `git checkout <previous> && just deploy
 <name>` converges the stack to that state. The collector's grace window
 protects cache content through it; leases and reports persist in the
 bucket, which is deployment-scoped, so a rollback never strands state.
+Rolling back past the release that let workflow runs exchange their
+OIDC tokens ends every run credential at once, because the older worker
+refuses those records as corrupt. Jobs that start afterwards fall back
+to their OIDC tokens and lose the cache when those expire.
 
 ## Key rotation
 

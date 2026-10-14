@@ -14,7 +14,7 @@ The signing key, held as a Workers secret binding. The bucket's object
 integrity: what a client substitutes must be what CI's build produced.
 The org boundary: nobody outside the configured orgs authenticates for
 anything. The OAuth client secret, browser sessions, and the read
-credentials the deployment issues to laptops. The action
+credentials the deployment issues to laptops and to workflow runs. The action
 users' CI jobs, from cachet's own release artifacts. GC's correctness:
 live paths (leases and their closures) are never swept.
 
@@ -60,8 +60,10 @@ one-refetch rule, the audience array, mistyped claims).
 
 **Ex-member's token.** A person leaves the org; their access should
 die. The bound differs by credential class. A CI job's OIDC token
-expires in minutes and is re-verified
-against GitHub's JWKS every time. A laptop holds a token this
+expires in minutes and is re-verified against GitHub's JWKS every time.
+The read credential the action trades it for speaks for the run, and it
+ends with the job or at its six-hour bound, as the scenario on a run's
+credential below describes. A laptop holds a token this
 deployment issued, which is a pointer to a record holding the GitHub
 credential it stands for, so every read re-checks membership through
 the verdict cache and closes at 600s for an allow and 60s for a deny
@@ -85,11 +87,47 @@ GitHub API), the issued-token scenario's membership-lapse and revocation
 rows, the browser-flow scenario's 401 on a narinfo and a NAR against a
 live session cookie, and the TTL constants in cachet-core.
 
+**A run's read credential copied out of its job.** The action trades
+the job's OIDC token for a credential the deployment issues and writes it
+to the daemon's netrc, because the daemon presents that file for the
+whole job and the OIDC token expires within minutes (ADR 0022). Anything
+the job runs can read that file, so a malicious dependency can copy the
+credential, and any step holding the job's `id-token` grant can mint
+more. Defense: the exchange verifies the OIDC token exactly as a CI read
+does, checking the signature, issuer, audience, served orgs, and the
+token's clock. The credential only reads, because writes accept an OIDC
+token and nothing else and a run is never an admin. One job holds at
+most four credentials, counting the action's own. A job is named by its
+repository, run id, run attempt, and check run id, so the jobs of one
+run never share a bound or a revocation. The action's revoke step marks
+the job revoked when it ends, passed or failed, under a key that no
+exchange writes, which ends every credential of the job and refuses the
+job any more. Every record also expires six hours after its exchange. What a
+copy or a minted credential gains over the OIDC token the netrc used to
+hold is time, until the job ends or up to six hours when the revoke step
+cannot run (a cancelled runner, or one without passwordless sudo), and
+what it loses is the ability to write. A stolen OIDC token buys the same
+during its own few minutes and no more, because its job's bound and
+revocation apply to whatever it mints. Proven: the workerd lane's
+action scenario, which runs the action's own provisioning script and
+revoke step against the lane worker (the credential reads after its
+token is refused, resolves as `ci`, cannot renew a lease or reach the
+admin surface, is stored as claims under its digest with neither token,
+the job's fifth exchange is refused, the revocation ends a sibling
+credential a step minted, refuses later exchanges, and survives an
+exchange rewriting the job's count, one job's revocation leaves another
+job of the run reading, and eighteen jobs of one run exchange at once),
+the
+record's unit tests in cachet-core, and the integration lane's exchange
+against GitHub's real issuer.
+
 **A stolen copy of the deployment's own state.** An attacker reads the
 KV namespace or an export of it. What they find: read-token records
 keyed by SHA-256, so the issued credentials themselves are not there and
-the digests authenticate nothing; and, inside those records, the GitHub
-tokens the deployment holds so that membership stays checkable. Those
+the digests authenticate nothing; inside a workflow run's record, the
+claims its OIDC token proved and no credential of any kind; and, inside
+a laptop's record, the GitHub tokens the deployment holds so that
+membership stays checkable. Those
 last are the real prize, and the honest statement is that KV is where
 they live, alongside the browser sessions it already held (ADR 0003).
 The scope is `read:org`, they belong to members of the deployment's own

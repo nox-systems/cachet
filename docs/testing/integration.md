@@ -25,7 +25,12 @@ The assertions, in order:
    here rather than in somebody's browser.
 3. An anonymous narinfo read answers 401.
 4. The runner's real OIDC token (audience from the deployment) reads
-   the impossible-probe narinfo as 404: authenticated, absent.
+   the impossible-probe narinfo as 404: authenticated, absent. The
+   token then exchanges at `POST /api/login/exchange` for a read
+   credential, the way the action trades it (ADR 0022). The credential
+   must live six hours, give or take five minutes, resolve as `ci` at
+   `/api/whoami`, and read the same narinfo as 404. The substitution and
+   the miss check below read with that credential.
 5. The composite's main step snapshots the store, a one-line file
    enters the local store with `nix-store --add-fixed`, the freshly
    built `cachet push` sends exactly it, and the log counts at least
@@ -38,6 +43,13 @@ The assertions, in order:
    asset layer never answers a path the protocol owns: a cache miss
    answered with the console's shell would be 200 text/html to every nix
    client that asked whether this cache holds a path (ADR 0014).
+8. The credential revokes with 204, sent from the netrc the way the
+   action's revoke step sends it, and a credential the deployment never
+   issued answers 404. The lane asserts only those answers: a read
+   straight after the revocation can still be admitted for up to two
+   minutes by another isolate's memo of the credential, and for longer
+   when that read meets a KV copy that has not yet seen the revocation,
+   so a 401 there would be a race.
 
 The lane's configuration keeps it from damaging the deployment it
 tests. It forces `GITHUB_REF` off the default branch, so its push can

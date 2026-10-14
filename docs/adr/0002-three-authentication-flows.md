@@ -1,6 +1,6 @@
 # ADR 0002: OIDC writes, deployment-issued laptop reads, browser OAuth for the UI
 
-- **Status:** Accepted
+- **Status:** Accepted; point 5 amended by [ADR 0022](0022-a-run-trades-its-oidc-token-for-a-credential-that-lasts-the-job.md)
 - **Date:** 2026-08-25
 - **Context doc:** [../../CLAUDE.md](../../CLAUDE.md) §1; [../../SECURITY.md](../../SECURITY.md)
 
@@ -77,7 +77,11 @@ which is a store of other people's credentials it has no reason to keep.
    apart by their grammar, not by trying each verifier in turn: the
    `cachet_` prefix and a fixed body length name an issued token, three
    base64url segments name an OIDC token, and anything else is a GitHub
-   token checked upstream.
+   token checked upstream. Amended by ADR 0022: an OIDC token expires
+   within minutes while the daemon reads the netrc for the whole job, so
+   the action now trades the token at `POST /api/login/exchange` for an
+   issued credential that lasts six hours, and that credential is what
+   the netrc carries. An OIDC token presented directly still reads.
 
 ## Consequences
 

@@ -236,18 +236,23 @@ pub fn whoami() {}
 pub fn health() {}
 
 /// `POST /api/login/exchange`: trade a GitHub identity for this
-/// deployment's own read credential. The GitHub token is checked for org
-/// membership once, here, and neither side keeps it: what the caller
-/// keeps is the answer's token, which is what the nix daemon carries
-/// afterwards (ADR 0002). The deployment stores only the token's
-/// SHA-256.
+/// deployment's own read credential, which is what the nix daemon
+/// carries afterwards. The deployment stores only the issued token's
+/// SHA-256. A laptop presents its GitHub token, which is checked for org
+/// membership here and never crosses the wire again, and its credential
+/// lasts thirty days (ADR 0002). A workflow run presents its GitHub OIDC
+/// token, which is checked as a CI read checks it and is not kept, and
+/// its credential lasts six hours, the longest GitHub lets a job run, so
+/// it outlives the OIDC token by the rest of the job (ADR 0022). One job
+/// of a run holds at most four credentials, and none once they are
+/// revoked.
 #[utoipa::path(
     post,
     path = "/api/login/exchange",
     responses(
         (status = 200, description = "The issued credential, its holder, and its expiry", body = ReadTokenIssued, content_type = "application/json"),
         (status = 401, description = "problem+json; code=unauthorized", body = ProblemBody, content_type = "application/problem+json"),
-        (status = 403, description = "problem+json; code=forbidden_org", body = ProblemBody, content_type = "application/problem+json"),
+        (status = 403, description = "problem+json; code=forbidden_org, or code=credential_limit for a job at its bound or revoked", body = ProblemBody, content_type = "application/problem+json"),
         (status = 503, description = "problem+json; code=auth_unavailable", body = ProblemBody, content_type = "application/problem+json"),
     )
 )]
@@ -255,13 +260,16 @@ pub fn login_exchange() {}
 
 /// `POST /api/login/revoke`: forget the presented credential. The holder
 /// proves they hold it by presenting it, and nobody else can name the
-/// record, because it is keyed by the token's own hash.
+/// record, because it is keyed by the token's own hash. A workflow run's
+/// credential takes every credential of its job with it, and the job is
+/// issued no more (ADR 0022).
 #[utoipa::path(
     post,
     path = "/api/login/revoke",
     responses(
         (status = 204, description = "Forgotten; the credential no longer authenticates"),
         (status = 401, description = "problem+json; code=unauthorized", body = ProblemBody, content_type = "application/problem+json"),
+        (status = 404, description = "problem+json; code=not_found: no such credential, because it was already revoked or has expired", body = ProblemBody, content_type = "application/problem+json"),
         (status = 503, description = "problem+json; code=auth_unavailable", body = ProblemBody, content_type = "application/problem+json"),
     )
 )]

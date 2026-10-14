@@ -11,6 +11,9 @@ use base64ct::Encoding as _;
 use cachet_core::auth::{SessionRecord, Verdict, session_live, verdict_fresh, verdict_ttl_ms};
 use cachet_core::constants::{SESSION_COOKIE_NAME, SESSION_KEY_PREFIX, VERDICT_KEY_PREFIX};
 use cachet_core::error::{ClientError, Result};
+use cachet_core::read_token::{
+    GitHubGrant, ReadTokenHolder, ReadTokenRecord, RunBinding, RunCredentials,
+};
 use cachet_core::types::UnixMillis;
 use cachet_crypto::sha256::{hex_digest, sha256};
 use worker::{Env, Fetch, Headers, Method, Request};
@@ -100,8 +103,9 @@ pub enum ReadIdentity {
     /// A person's machine: a credential this deployment issued, or the
     /// GitHub token behind one.
     Token { login: String },
-    /// A workflow run, holding the OIDC token it also writes with. Its
-    /// own variant because the two answer different questions: a run is
+    /// A workflow run: the OIDC token it also writes with, or the
+    /// credential this deployment issued in exchange for one. Its own
+    /// variant because the two answer different questions: a run is
     /// never an admin, and counting it as a laptop would make every
     /// read statistic claim people were at their desks.
     Ci {
@@ -595,14 +599,17 @@ async fn resolve_issued_token_memoized(
     now: UnixMillis,
     digest_hex: &str,
 ) -> Result<ReadIdentity> {
-    let identity = resolve_issued_token(env, now, digest_hex).await;
-    match &identity {
-        Ok(identity) => memo_write(
+    let resolved = resolve_issued_token(env, now, digest_hex).await;
+    match &resolved {
+        // why: the entry dies with the record at the latest. A run's
+        // credential lives six hours, and a memo entry that outlived it
+        // would stretch a bound the threat model states exactly.
+        Ok((identity, expires_at_ms)) => memo_write(
             digest_hex,
             MemoDecision::Member {
                 identity: identity.clone(),
             },
-            now.as_u64() + MEMO_ALLOW_TTL_MS,
+            (now.as_u64() + MEMO_ALLOW_TTL_MS).min(*expires_at_ms),
             now,
         ),
         Err(ClientError::Unauthorized) => memo_write(
@@ -616,23 +623,26 @@ async fn resolve_issued_token_memoized(
         // minute.
         _ => {}
     }
-    identity
+    resolved.map(|(identity, _)| identity)
 }
 
 /// Look one issued read token up, and check the identity behind it.
+/// Answers the identity and the instant the record stops being accepted.
 ///
-/// The record is a pointer, not a verdict: it names the GitHub token
-/// this credential stands for, and membership is re-checked against
-/// GitHub through the same verdict cache every other credential uses.
-/// That is what keeps the revocation window at one verdict TTL rather
-/// than the credential's whole life (ADR 0002). An absent, unreadable,
-/// or expired record all answer the same refusal, because a credential
-/// this deployment does not recognize is not something to explain.
+/// A laptop's record is a pointer, not a verdict: it names the GitHub
+/// token this credential stands for, and membership is re-checked
+/// against GitHub through the same verdict cache every other credential
+/// uses. That is what keeps the revocation window at one verdict TTL
+/// rather than the credential's whole life (ADR 0002). A run's record is
+/// the verdict: the exchange verified its OIDC token, and the record's
+/// six-hour life is the bound (ADR 0022). An absent, unreadable, or
+/// expired record all answer the same refusal, because a credential this
+/// deployment does not recognize is not something to explain.
 async fn resolve_issued_token(
     env: &Env,
     now: UnixMillis,
     digest_hex: &str,
-) -> Result<ReadIdentity> {
+) -> Result<(ReadIdentity, u64)> {
     let kv = env
         .kv(KV_BINDING)
         .map_err(|_| ClientError::AuthUnavailable)?;
@@ -645,16 +655,43 @@ async fn resolve_issued_token(
     let Some(text) = stored else {
         return Err(ClientError::Unauthorized);
     };
-    let Ok(mut record) = cachet_core::read_token::ReadTokenRecord::parse(&text) else {
+    let Ok(record) = cachet_core::read_token::ReadTokenRecord::parse(&text) else {
         // The worker wrote this; an unreadable one is a storage fault,
         // and refusing is still the only safe answer to the caller.
         log::event("error", "auth.read_token_corrupt", &[]);
         return Err(ClientError::Unauthorized);
     };
     if !record.is_live(now) {
-        log::event("info", "auth.read_token_expired", &[]);
+        log::event(
+            "info",
+            "auth.read_token_expired",
+            &[("kind", record.kind().to_string())],
+        );
         return Err(ClientError::Unauthorized);
     }
+    let expires_at_ms = record.expires_at_ms;
+    let grant = match &record.holder {
+        // why: no GitHub call for a run. Its OIDC token was verified at
+        // the exchange and is long expired by now, and nothing else could
+        // re-prove the run: the deployment does not keep the token. What
+        // is checked is that its job has not been revoked, which is how
+        // revoking one of the job's credentials ends them all.
+        ReadTokenHolder::Run(run) => {
+            if job_revoked(&kv, &job_digest(run)).await? {
+                log::event("info", "auth.read_token_revoked_job", &[]);
+                return Err(ClientError::Unauthorized);
+            }
+            return Ok((
+                ReadIdentity::Ci {
+                    login: record.login.clone(),
+                    repository: run.repository.clone(),
+                    reference: run.reference.clone(),
+                },
+                expires_at_ms,
+            ));
+        }
+        ReadTokenHolder::Laptop(grant) => grant.clone(),
+    };
 
     // The verdict first, and the verdict is keyed by this credential
     // rather than by the GitHub token behind it: renewing that token
@@ -669,16 +706,18 @@ async fn resolve_issued_token(
     // all have raced, and since GitHub rotates a refresh token on use,
     // one would have won and the rest would have presented a spent one.
     if let Some(verdict) = fresh_verdict(&kv, digest_hex, now).await {
-        return decide_membership(&record, verdict);
+        return decide_membership(&record.login, verdict).map(|identity| (identity, expires_at_ms));
     }
 
     // GitHub has to be asked, so the token has to be able to ask.
-    if record.github_token_stale(now) {
-        record = renew_stored_token(env, &kv, &key, now, record).await?;
-    }
-    let verdict = check_github_token(env, now, &record.github_token).await?;
+    let grant = if grant.stale(now) {
+        renew_stored_token(env, &kv, &key, now, &record, grant).await?
+    } else {
+        grant
+    };
+    let verdict = check_github_token(env, now, &grant.token).await?;
     cache_verdict(&kv, digest_hex, &verdict).await;
-    decide_membership(&record, verdict)
+    decide_membership(&record.login, verdict).map(|identity| (identity, expires_at_ms))
 }
 
 /// The cached verdict for one issued credential, if it is still fresh.
@@ -698,10 +737,7 @@ async fn fresh_verdict(
 }
 
 /// Turn a membership answer into an identity, or the refusal.
-fn decide_membership(
-    record: &cachet_core::read_token::ReadTokenRecord,
-    verdict: Verdict,
-) -> Result<ReadIdentity> {
+fn decide_membership(login: &str, verdict: Verdict) -> Result<ReadIdentity> {
     if verdict.org_member {
         Ok(ReadIdentity::Token {
             login: verdict.login,
@@ -710,7 +746,7 @@ fn decide_membership(
         log::event(
             "info",
             "auth.read_token_membership_lapsed",
-            &[("login", record.login.clone())],
+            &[("login", login.to_string())],
         );
         Err(ClientError::Unauthorized)
     }
@@ -728,13 +764,14 @@ async fn renew_stored_token(
     kv: &worker::kv::KvStore,
     key: &str,
     now: UnixMillis,
-    record: cachet_core::read_token::ReadTokenRecord,
-) -> Result<cachet_core::read_token::ReadTokenRecord> {
-    if !record.can_renew() {
+    record: &ReadTokenRecord,
+    grant: GitHubGrant,
+) -> Result<GitHubGrant> {
+    if !grant.can_renew() {
         log::event("info", "auth.github_token_unrenewable", &[]);
         return Err(ClientError::Unauthorized);
     }
-    let Ok(renewed) = renew_github_token(env, now, &record).await else {
+    let Ok(renewed) = renew_github_token(env, now, &grant).await else {
         // The lost-race path: another request rotated the refresh token
         // first, so re-read and use whatever it wrote.
         let stored = kv
@@ -744,8 +781,12 @@ async fn renew_stored_token(
             .map_err(|_| ClientError::AuthUnavailable)?;
         let Some(reread) = stored
             .as_deref()
-            .and_then(|text| cachet_core::read_token::ReadTokenRecord::parse(text).ok())
-            .filter(|reread| !reread.github_token_stale(now))
+            .and_then(|text| ReadTokenRecord::parse(text).ok())
+            .and_then(|reread| match reread.holder {
+                ReadTokenHolder::Laptop(grant) => Some(grant),
+                ReadTokenHolder::Run(_) => None,
+            })
+            .filter(|reread| !reread.stale(now))
         else {
             log::event("info", "auth.github_token_renewal_failed", &[]);
             return Err(ClientError::Unauthorized);
@@ -753,13 +794,13 @@ async fn renew_stored_token(
         log::event("info", "auth.github_token_renewed_elsewhere", &[]);
         return Ok(reread);
     };
-    let ttl = renewed
-        .expires_at_ms
-        .saturating_sub(now.as_u64())
-        .max(1_000)
-        / 1_000;
+    let ttl = record.expires_at_ms.saturating_sub(now.as_u64()).max(1_000) / 1_000;
+    let updated = ReadTokenRecord {
+        holder: ReadTokenHolder::Laptop(renewed.clone()),
+        ..record.clone()
+    };
     if let Ok(builder) = kv
-        .put(key, renewed.serialize())
+        .put(key, updated.serialize())
         .map(|builder| builder.expiration_ttl(ttl))
     {
         // why: best effort. A renewal that lands at GitHub but not in KV
@@ -779,8 +820,8 @@ async fn renew_stored_token(
 async fn renew_github_token(
     env: &Env,
     now: UnixMillis,
-    record: &cachet_core::read_token::ReadTokenRecord,
-) -> Result<cachet_core::read_token::ReadTokenRecord> {
+    grant: &GitHubGrant,
+) -> Result<GitHubGrant> {
     let client_id = env
         .var("CACHET_OAUTH_CLIENT_ID")
         .map(|value| value.to_string())
@@ -791,7 +832,7 @@ async fn renew_github_token(
     );
     let reply = crate::oauth::post_token_form(
         &format!("{web_base}/login/oauth/access_token"),
-        cachet_core::oauth::refresh_form(&client_id, &record.github_refresh_token),
+        cachet_core::oauth::refresh_form(&client_id, &grant.refresh_token),
     )
     .await?;
     // GitHub answers a refused refresh as 200 with no token, the same
@@ -801,22 +842,21 @@ async fn renew_github_token(
         .filter(|token| !token.is_empty())
         .ok_or(ClientError::Unauthorized)?;
     let expires_in = reply.expires_in.unwrap_or(0);
-    Ok(cachet_core::read_token::ReadTokenRecord {
-        github_token: access,
+    Ok(GitHubGrant {
+        token: access,
         // why: a rotated refresh token replaces the old one, and GitHub
         // rotates on every use. Keeping the old one would make the next
         // renewal fail.
-        github_refresh_token: reply
+        refresh_token: reply
             .refresh_token
             .filter(|token| !token.is_empty())
-            .unwrap_or_else(|| record.github_refresh_token.clone()),
-        github_expires_at_ms: if expires_in == 0 {
+            .unwrap_or_else(|| grant.refresh_token.clone()),
+        expires_at_ms: if expires_in == 0 {
             0
         } else {
             now.as_u64()
                 .saturating_add(expires_in.saturating_mul(1_000))
         },
-        ..record.clone()
     })
 }
 
@@ -852,74 +892,294 @@ pub async fn issue_read_token(
         );
         return Err(ClientError::ForbiddenOrg);
     }
-    let token = cachet_core::read_token::format_read_token(&sample_token_body());
-    let digest_hex = hex_digest(&sha256(token.as_bytes()));
-    let expires_at_ms = now
-        .as_u64()
-        .saturating_add(cachet_core::constants::READ_TOKEN_TTL_MS);
-    let record = cachet_core::read_token::ReadTokenRecord {
+    let record = ReadTokenRecord {
         login: verdict.login.clone(),
         issued_at_ms: now.as_u64(),
-        expires_at_ms,
+        expires_at_ms: now
+            .as_u64()
+            .saturating_add(cachet_core::constants::READ_TOKEN_TTL_MS),
         // The GitHub credentials stay here and only here: this is what
         // keeps membership checkable without the laptop ever sending
         // them again (ADR 0002).
-        github_token: github_token.to_string(),
-        github_refresh_token: grant.refresh_token.clone(),
-        github_expires_at_ms: if grant.expires_in_seconds == 0 {
-            0
-        } else {
-            now.as_u64()
-                .saturating_add(grant.expires_in_seconds.saturating_mul(1_000))
-        },
+        holder: ReadTokenHolder::Laptop(GitHubGrant {
+            token: github_token.to_string(),
+            refresh_token: grant.refresh_token.clone(),
+            expires_at_ms: if grant.expires_in_seconds == 0 {
+                0
+            } else {
+                now.as_u64()
+                    .saturating_add(grant.expires_in_seconds.saturating_mul(1_000))
+            },
+        }),
     };
+    store_issued(
+        env,
+        record,
+        &[("renewable", (!grant.refresh_token.is_empty()).to_string())],
+    )
+    .await
+}
+
+/// Issue a read credential to a job of a workflow run that proved itself
+/// with its GitHub OIDC token.
+///
+/// The token is checked exactly as a CI read checks it, by the write
+/// path's own verifier: RS256 against GitHub's JWKS, the exact issuer
+/// and audience, the served orgs, and the token's own clock. It is not
+/// stored. What the job keeps is a credential that lasts as long as
+/// GitHub lets a job run, which is what the nix daemon needs: it reads
+/// the netrc on every substitution, long after the OIDC token behind it
+/// has expired (ADR 0022). The credential only reads. Writes still take
+/// an OIDC token and nothing else, and a run is never an admin.
+///
+/// One job holds at most
+/// [`RUN_READ_TOKENS_MAX`](cachet_core::constants::RUN_READ_TOKENS_MAX)
+/// credentials, and a job whose credentials were revoked is issued no
+/// more.
+///
+/// # Errors
+///
+/// [`ClientError::Unauthorized`] for a forged, expired, or mis-addressed
+/// token, or one that does not name its job; [`ClientError::ForbiddenOrg`]
+/// for a valid one outside the deployment's orgs;
+/// [`ClientError::CredentialLimit`] for a job at its bound or revoked;
+/// [`ClientError::AuthUnavailable`] when the JWKS or KV cannot answer.
+pub async fn issue_run_read_token(
+    env: &Env,
+    now: UnixMillis,
+    oidc_token: &str,
+) -> Result<cachet_api::ReadTokenIssued> {
+    let identity =
+        crate::auth::authorize_write(env, now, Some(&format!("Bearer {oidc_token}"))).await?;
+    let record = ReadTokenRecord::for_run(&identity, now)?;
+    let run = record
+        .run()
+        .expect("invariant: for_run builds a run's record");
     let kv = env
         .kv(KV_BINDING)
         .map_err(|_| ClientError::AuthUnavailable)?;
-    let ttl_seconds = cachet_core::constants::READ_TOKEN_TTL_MS / 1_000;
-    let key = cachet_core::read_token::read_token_key(&digest_hex);
-    let builder = kv
-        .put(&key, record.serialize())
-        .map(|builder| builder.expiration_ttl(ttl_seconds))
-        .map_err(|_| ClientError::AuthUnavailable)?;
-    builder
-        .execute()
-        .await
-        .map_err(|_| ClientError::AuthUnavailable)?;
-    log::event(
-        "info",
-        "auth.read_token_issued",
-        &[
-            ("login", verdict.login.clone()),
-            ("renewable", (!grant.refresh_token.is_empty()).to_string()),
-        ],
-    );
-    Ok(cachet_api::ReadTokenIssued {
-        token,
-        login: verdict.login,
-        expires_at_ms,
-    })
+    let job = job_digest(run);
+    let audit = [
+        ("repository", identity.repository.clone()),
+        ("ref", identity.ref_.clone()),
+        ("run", identity.run_id.clone()),
+        ("attempt", identity.run_attempt.clone()),
+        ("checkRun", identity.check_run_id.clone()),
+    ];
+    let refuse = |reason: &str| {
+        let mut fields = vec![("kind", "run".to_string()), ("reason", reason.to_string())];
+        fields.extend(audit.iter().cloned());
+        log::event("info", "auth.exchange_refused", &fields);
+        ClientError::CredentialLimit
+    };
+    if job_revoked(&kv, &job).await? {
+        return Err(refuse("revoked"));
+    }
+    let list_key = cachet_core::read_token::run_tokens_key(&job);
+    let mut held = read_run_credentials(&kv, &list_key).await?;
+    let (token, digest_hex) = mint_token();
+    if held.admit(&digest_hex).is_err() {
+        return Err(refuse("limit"));
+    }
+    store_record(&kv, &digest_hex, &record).await?;
+    put_run_credentials(&kv, &list_key, &held).await?;
+    Ok(issued(token, record, &audit))
 }
 
-/// Delete one issued token, by the token itself. Logging out is the
-/// holder proving they hold it; nobody else can name the record.
+/// The digest that names one job, which its count and its revocation are
+/// keyed by.
+fn job_digest(run: &RunBinding) -> String {
+    hex_digest(&sha256(run.job_name().as_bytes()))
+}
+
+/// Whether the job's credentials were revoked.
+async fn job_revoked(kv: &worker::kv::KvStore, job: &str) -> Result<bool> {
+    kv.get(&cachet_core::read_token::run_revoked_key(job))
+        .text()
+        .await
+        .map(|marked| marked.is_some())
+        .map_err(|_| ClientError::AuthUnavailable)
+}
+
+/// Read one job's list of credentials. An absent list is an empty one.
+async fn read_run_credentials(kv: &worker::kv::KvStore, key: &str) -> Result<RunCredentials> {
+    let stored = kv
+        .get(key)
+        .text()
+        .await
+        .map_err(|_| ClientError::AuthUnavailable)?;
+    match stored {
+        None => Ok(RunCredentials::default()),
+        Some(text) => RunCredentials::parse(&text).map_err(|_| {
+            log::event("error", "auth.run_tokens_corrupt", &[]);
+            ClientError::AuthUnavailable
+        }),
+    }
+}
+
+/// Write one job's list. It lives as long as the newest credential it
+/// counts, so the bound holds for as long as any of them reads.
+async fn put_run_credentials(
+    kv: &worker::kv::KvStore,
+    key: &str,
+    held: &RunCredentials,
+) -> Result<()> {
+    let ttl_seconds = cachet_core::constants::RUN_READ_TOKEN_TTL_MS / 1_000;
+    kv.put(key, held.serialize())
+        .map(|builder| builder.expiration_ttl(ttl_seconds))
+        .map_err(|_| ClientError::AuthUnavailable)?
+        .execute()
+        .await
+        .map_err(|_| ClientError::AuthUnavailable)
+}
+
+/// Mint a token for a laptop's record, store it, and answer what the
+/// caller keeps.
+async fn store_issued(
+    env: &Env,
+    record: ReadTokenRecord,
+    audit: &[(&str, String)],
+) -> Result<cachet_api::ReadTokenIssued> {
+    let kv = env
+        .kv(KV_BINDING)
+        .map_err(|_| ClientError::AuthUnavailable)?;
+    let (token, digest_hex) = mint_token();
+    store_record(&kv, &digest_hex, &record).await?;
+    Ok(issued(token, record, audit))
+}
+
+/// A fresh token and the digest its record is keyed by. The token itself
+/// is never stored.
+fn mint_token() -> (String, String) {
+    let token = cachet_core::read_token::format_read_token(&sample_token_body());
+    let digest_hex = hex_digest(&sha256(token.as_bytes()));
+    (token, digest_hex)
+}
+
+/// Store one record under its token's digest.
+async fn store_record(
+    kv: &worker::kv::KvStore,
+    digest_hex: &str,
+    record: &ReadTokenRecord,
+) -> Result<()> {
+    // why: KV's own expiry is a backstop for storage, set an hour past
+    // the record's life (RECORD_KV_MARGIN_MS) so a revoke that runs late
+    // still finds it. The record's expiry is what the read path enforces,
+    // because KV expiry is eventual.
+    let ttl_seconds = record
+        .expires_at_ms
+        .saturating_sub(record.issued_at_ms)
+        .saturating_add(cachet_core::constants::RECORD_KV_MARGIN_MS)
+        / 1_000;
+    kv.put(
+        &cachet_core::read_token::read_token_key(digest_hex),
+        record.serialize(),
+    )
+    .map(|builder| builder.expiration_ttl(ttl_seconds))
+    .map_err(|_| ClientError::AuthUnavailable)?
+    .execute()
+    .await
+    .map_err(|_| ClientError::AuthUnavailable)
+}
+
+/// Log the issue and build the answer.
+fn issued(
+    token: String,
+    record: ReadTokenRecord,
+    audit: &[(&str, String)],
+) -> cachet_api::ReadTokenIssued {
+    let mut fields = vec![
+        ("kind", record.kind().to_string()),
+        ("login", record.login.clone()),
+    ];
+    fields.extend(audit.iter().cloned());
+    log::event("info", "auth.read_token_issued", &fields);
+    cachet_api::ReadTokenIssued {
+        token,
+        login: record.login,
+        expires_at_ms: record.expires_at_ms,
+    }
+}
+
+/// Revoke one issued token, by the token itself. Logging out is the
+/// holder proving they hold it; nobody else can name the record. A run's
+/// credential revokes every credential of its job, and the job is issued
+/// no more, so credentials a step of the job minted for itself end with
+/// the job too.
+///
+/// Answers whether there was a record to revoke.
 ///
 /// # Errors
 ///
 /// [`ClientError::AuthUnavailable`] when KV cannot answer.
-pub async fn revoke_read_token(env: &Env, token: &str) -> Result<()> {
+pub async fn revoke_read_token(env: &Env, token: &str) -> Result<bool> {
     let digest_hex = hex_digest(&sha256(token.as_bytes()));
     let kv = env
         .kv(KV_BINDING)
         .map_err(|_| ClientError::AuthUnavailable)?;
-    kv.delete(&cachet_core::read_token::read_token_key(&digest_hex))
-        .await
-        .map_err(|_| ClientError::AuthUnavailable)?;
+    let key = cachet_core::read_token::read_token_key(&digest_hex);
     // The isolate memo would otherwise keep answering for this token for
     // up to its own TTL, which would make a logout look ignored.
     memo_forget(&digest_hex);
+    let Some(text) = kv
+        .get(&key)
+        .text()
+        .await
+        .map_err(|_| ClientError::AuthUnavailable)?
+    else {
+        return Ok(false);
+    };
+    // why the mark before the record: a failure between the two then
+    // leaves every credential of the job refused, where the other order
+    // could leave siblings reading that nobody revoked.
+    if let Some(run) = ReadTokenRecord::parse(&text)
+        .ok()
+        .as_ref()
+        .and_then(ReadTokenRecord::run)
+    {
+        let job = job_digest(run);
+        // why its own key: an exchange reads the job's list and writes it
+        // whole, so a mark kept in the list could be overwritten by an
+        // exchange that read the list before the revocation, which would
+        // bring the job's siblings back. Nothing but this writes the mark.
+        // It lives an hour longer than any credential issued from now on,
+        // so one an exchange issues after this, on a stale read of the
+        // mark's absence, still ends before the mark does.
+        let ttl_seconds = (cachet_core::constants::RUN_READ_TOKEN_TTL_MS
+            + cachet_core::constants::RECORD_KV_MARGIN_MS)
+            / 1_000;
+        kv.put(&cachet_core::read_token::run_revoked_key(&job), "revoked\n")
+            .map(|builder| builder.expiration_ttl(ttl_seconds))
+            .map_err(|_| ClientError::AuthUnavailable)?
+            .execute()
+            .await
+            .map_err(|_| ClientError::AuthUnavailable)?;
+        // The siblings this isolate remembers go too. Best effort: the
+        // mark is what refuses them everywhere else.
+        let siblings = read_run_credentials(&kv, &cachet_core::read_token::run_tokens_key(&job))
+            .await
+            .map(|held| held.digests)
+            .unwrap_or_default();
+        for sibling in &siblings {
+            memo_forget(sibling);
+        }
+        log::event(
+            "info",
+            "auth.run_tokens_revoked",
+            &[
+                ("repository", run.repository.clone()),
+                ("run", run.run_id.clone()),
+                ("attempt", run.run_attempt.clone()),
+                ("checkRun", run.check_run_id.clone()),
+                ("credentials", siblings.len().to_string()),
+            ],
+        );
+    }
+    kv.delete(&key)
+        .await
+        .map_err(|_| ClientError::AuthUnavailable)?;
     log::event("info", "auth.read_token_revoked", &[]);
-    Ok(())
+    Ok(true)
 }
 
 /// The entropy seam (CLAUDE.md §3): sampled at the edge, formatted by

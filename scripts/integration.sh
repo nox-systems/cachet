@@ -86,6 +86,30 @@ code="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer ${token
   "${URL}/0000000000000000000000000000000a.narinfo")"
 [ "${code}" = "404" ] || fail "the OIDC read probe answered ${code}, expected 404 (authenticated and absent)"
 
+# --- the run's read credential (ADR 0022) ---
+
+# The action trades the job's OIDC token for a credential the deployment
+# issues, because the token expires within minutes and the daemon reads
+# the netrc for the whole job. This is that exchange against GitHub's
+# real issuer, and the credential carries every read below.
+say "exchanging the job's OIDC token for a read credential"
+issued="$(curl -fsS -X POST -H "Authorization: Bearer ${token}" "${URL}/api/login/exchange")" ||
+  fail "the exchange refused the runner's OIDC token"
+credential="$(jq -r '.token' <<<"${issued}")"
+[[ ${credential} =~ ^cachet_[A-Za-z0-9_-]{43}$ ]] ||
+  fail "the exchange answered no credential"
+lifetime_s="$(($(jq -r '.expiresAtMs' <<<"${issued}") / 1000 - $(date +%s)))"
+# Six hours (21600s), within five minutes either way for the round trip
+# and for the runner's clock disagreeing with the worker's.
+[ "${lifetime_s}" -ge 21300 ] && [ "${lifetime_s}" -le 21900 ] ||
+  fail "the issued credential lives ${lifetime_s}s, expected six hours"
+standing="$(curl -fsS -H "Authorization: Bearer ${credential}" "${URL}/api/whoami" | jq -r '.credential')"
+[ "${standing}" = "ci" ] || fail "the issued credential resolved as '${standing}', expected ci"
+code="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer ${credential}" \
+  "${URL}/0000000000000000000000000000000a.narinfo")"
+[ "${code}" = "404" ] || fail "the issued credential's read probe answered ${code}, expected 404"
+say "the run's credential reads for ${lifetime_s}s: ok"
+
 # --- the push ---
 
 work="$(mktemp -d)"
@@ -126,7 +150,7 @@ nix-store --delete "${store_path}" >/dev/null 2>&1 ||
 
 say "substituting ${store_path} with only the deployment's key trusted"
 host_only="$(printf '%s' "${URL}" | sed -e 's#^https\?://##' -e 's#/.*$##')"
-printf 'machine %s login cachet password %s\n' "${host_only}" "${token}" >"${work}/netrc"
+printf 'machine %s login cachet password %s\n' "${host_only}" "${credential}" >"${work}/netrc"
 chmod 600 "${work}/netrc"
 NIX_CONFIG="
 substituters = ${URL}
@@ -146,5 +170,21 @@ miss="$(curl -s -o "${work}/miss.body" -w '%{http_code}' \
 grep -qi 'html' "${work}/miss.body" &&
   fail "an absent narinfo answered HTML: nix would read the console's shell as a narinfo"
 say "the miss answered 404 and no shell: ok"
+
+# The action's revoke post step, as it runs it: the credential read out of
+# the netrc. Only the answer is asserted. A read right after it could
+# still be admitted by another isolate's two-minute memo, or by a KV read
+# that has not yet seen the revocation, so a 401 here would be a race.
+say "revoking the run's read credential"
+code="$(curl -s -o /dev/null -w '%{http_code}' --netrc-file "${work}/netrc" \
+  -X POST "${URL}/api/login/revoke")"
+[ "${code}" = "204" ] || fail "the revoke answered ${code}, expected 204"
+# A credential the deployment never issued has no record to revoke. The
+# lane does not revoke its own credential twice for this, because the
+# second request could read KV before the first one's delete reached it.
+never="cachet_$(printf 'A%.0s' $(seq 1 43))"
+code="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer ${never}" \
+  -X POST "${URL}/api/login/revoke")"
+[ "${code}" = "404" ] || fail "revoking a credential never issued answered ${code}, expected 404"
 
 say "the round trip holds"
