@@ -416,9 +416,8 @@ async fn stored_narinfo(
     // why the head is made again for a narinfo stored since the request
     // began: a push stores the NAR before the narinfo, so that narinfo can
     // name a NAR the push stored after this request's first head.
-    let already_missing = known_missing.is_some_and(|(nar, started)| {
-        missing_answer_holds(nar, &document.url, stored_at, started)
-    });
+    let already_missing = known_missing
+        .is_some_and(|(nar, started)| missing_answer_holds(nar, &document.url, stored_at, started));
     if !already_missing && nar_in_bucket(bucket, &document.url).await? {
         return Ok(StoredNarinfo::Servable(text));
     }
