@@ -52,8 +52,9 @@ mark phase's inputs are suspect.
    did not keep that promise. A push could store a narinfo again between
    the two deletions, an unmarked narinfo inside its grace window could
    share a dead path's NAR, and an edge entry outlived the sweep. ADR 0023
-   keeps a NAR written since the grace boundary and answers a narinfo
-   only beside its NAR.)
+   keeps a NAR written since the grace boundary, answers a narinfo only
+   beside its NAR, and keeps a held list so that a NAR a claim kept, which
+   no narinfo may name later, is still deleted once nothing claims it.)
 6. Every run lands a report at `gc-reports/{runId}.json` plus a
    `latest.json`, and the admin API serves the history.
 

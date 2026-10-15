@@ -191,9 +191,22 @@ where a missing narinfo would have let it build the one path. Defense: the
 read path answers a narinfo only when the colo answering it or the
 bucket can serve its NAR, and deletes a narinfo the bucket holds without its NAR, so the
 next push finds the path absent and uploads it (ADR 0023). A reader can
-delete only a narinfo whose NAR the bucket has just answered is absent,
-which is a path no client could substitute. Proven: the workerd lane's
-narinfo scenario and the push that repairs a path whose NAR is gone.
+delete only a narinfo whose NAR the bucket answered absent during that
+same request, and a narinfo stored after the request began is checked
+again first. No client can substitute such a path from the bucket. A
+colo that still holds the NAR's own edge entry could have served it, and
+the deletion costs that colo's clients one build of the path, which the
+next push uploads again. Proven: the workerd lane's narinfo scenario and
+the push that repairs a path whose NAR is gone.
+
+**A write that replaces a stored NAR.** A NAR write with bytes that are
+not the key's used to replace the stored NAR before its measurement
+refused them, and the refusal then deleted it and left its facts
+document vouching for nothing. Defense: a write to a key that holds a
+measured NAR is measured without being stored, and a multipart upload to
+such a key assembles under a scratch key, so a refused write never
+touches the stored NAR (ADR 0023). Proven: the workerd lane's refused
+single write and refused completion over a stored NAR.
 
 **Credential leaves in artifacts or logs.** The signing key or an OIDC
 token lands in the shipped bundle, a log line, or a committed file.

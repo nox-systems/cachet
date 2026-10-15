@@ -165,13 +165,39 @@ A narinfo is answered only beside a NAR the deployment can serve
 its NAR. A narinfo the bucket holds without its NAR answers a GET with the
 protocol's own 404, logs `read.narinfo_nar_missing`, and is gone from the
 bucket afterwards, and a HEAD and a ranged GET of such a narinfo answer
-404 as well. A narinfo the edge cache kept from before the bucket lost
-both objects, the state a sweep leaves behind, answers 404 once the
-worker finds the NAR in neither the edge cache nor the bucket. When the
-edge cache kept the NAR too, the narinfo still answers, because the NAR
-still serves from there. The CLI push scenario ends by removing a pushed path's NAR and facts from the
-bucket: the narinfo read answers 404, and the next push finds the path
-absent, uploads it again, and both objects serve.
+404 and leave the bucket without it as well. A narinfo the edge cache kept
+from before the bucket lost both objects, the state a sweep leaves
+behind, answers 404 once the worker finds the NAR in neither the edge
+cache nor the bucket, and the next read finds no stale copy to log. An
+edge copy whose NAR is gone while the bucket still holds the narinfo
+answers 404 and deletes the bucket's copy too, and one whose bucket now
+holds a newer narinfo naming a NAR that is there serves the newer one.
+When the edge cache kept the NAR too, the narinfo still answers, because
+the NAR still serves from there. The CLI push scenario ends by removing a
+pushed path's NAR and facts from the bucket: the narinfo read answers
+404, and the next push finds the path absent, uploads it again, and both
+objects serve.
+
+A write never replaces a NAR the bucket holds with its facts (ADR 0023).
+In the write scenario, a single write of a decodable zstd frame that is
+not the stored NAR's bytes is refused with `file_hash_mismatch`, and a
+HEAD, which reads the bucket rather than the edge, still answers the
+stored NAR's length. The NAR's own bytes then answer 204 and log
+`write.nar_claimed`, the facts rewrite the collector keeps a NAR by. The
+multipart scenario does the same over the NAR it assembled: an upload of
+the stranger's bytes assembles under a scratch key and its completion is
+refused, and an upload of the NAR's own bytes completes with 204, both
+leaving the stored NAR's length as it was.
+
+Three collector scenarios cover what the sweep keeps. Two park a run at
+its sweep with two planned NARs, one whose facts document was written
+after the plan's cutoff and one with none, the first cursor carrying the
+cutoff and the second written before cursors carried one. The run keeps
+the claimed NAR and its facts, deletes the other, reports `narsDeleted`
+as 1, and leaves the claimed NAR on the held list at `meta/gc-held-nars`.
+The third seeds that list with two NARs no narinfo names, under an hour
+of grace: the run deletes the one with no facts document and holds the
+one written seconds before.
 
 A download that breaks partway has its own scenario, over a three MiB
 object of random bytes seeded under a NAR key. The driver reads a MiB of

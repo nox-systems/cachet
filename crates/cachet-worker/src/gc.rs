@@ -28,14 +28,15 @@
 use std::collections::BTreeMap;
 
 use cachet_core::constants::{
-    BUCKET_LIST_PAGE_LIMIT, GC_CURSOR_OBJECT_KEY, GC_DELETE_BATCH, GC_HEADROOM_MS, GC_OP_BUDGET,
-    GC_REPORTS_KEY_PREFIX, GC_RUNS_KEY_PREFIX, GC_RUNS_RETENTION_MS, GENERATION_OBJECT_KEY,
-    ROOTS_KEY_PREFIX, UPLOAD_STALE_MAX_MS, UPLOADS_KEY_PREFIX,
+    BUCKET_LIST_PAGE_LIMIT, GC_CURSOR_OBJECT_KEY, GC_DELETE_BATCH, GC_HEADROOM_MS,
+    GC_HELD_NARS_KEY, GC_OP_BUDGET, GC_REPORTS_KEY_PREFIX, GC_RUNS_KEY_PREFIX,
+    GC_RUNS_RETENTION_MS, GENERATION_OBJECT_KEY, ROOTS_KEY_PREFIX, UPLOAD_STALE_MAX_MS,
+    UPLOADS_KEY_PREFIX,
 };
 use cachet_core::gc::{
-    ClosureWalker, CollectCursor, CollectedUrl, GateTrip, GcCursor, GcReport, GcStage,
-    InventoryItem, SweepCursor, WalkOutcome, WalkReadError, claimed_since, nar_claims,
-    plan_deletions, sweep_candidates,
+    ClosureWalker, CollectCursor, CollectedUrl, GateTrip, GcCursor, GcReport, GcStage, HeldNars,
+    InventoryItem, SweepCursor, WalkOutcome, WalkReadError, claimed_since, claims_expired,
+    nar_claims, plan_deletions, sweep_candidates,
 };
 use cachet_core::generation::GenerationDocument;
 use cachet_core::keys::{NarKey, parse_nar_key, parse_store_path};
@@ -357,7 +358,7 @@ async fn reap_stale_uploads(bucket: &Bucket, budget: &mut Budget, now: UnixMilli
             .unwrap_or_default()
             .to_string();
         budget.spend();
-        if let Ok(upload) = bucket.resume_multipart_upload(&record.key, &upload_id) {
+        if let Ok(upload) = bucket.resume_multipart_upload(record.assembles_at(), &upload_id) {
             let _ = upload.abort().await;
         }
         budget.spend();
@@ -804,12 +805,7 @@ async fn run_collect_and_plan(
             continue;
         }
         if budget.spent_out(now_ms()) {
-            cursor.collect = Some(CollectCursor {
-                next_index: collected.len() as u64,
-                collected: collected.into_values().collect(),
-            });
-            freeze(bucket, budget, cursor).await?;
-            return Ok(PlanVerdict::Frozen);
+            return park_collect(bucket, budget, cursor, collected).await;
         }
         match read_walk_narinfo(bucket, budget, hash).await {
             WalkFetch::Document(document) => {
@@ -825,16 +821,12 @@ async fn run_collect_and_plan(
             // deletes as a narinfo, and the NAR stays for the same reason
             // it stayed before this run.
             WalkFetch::Missing | WalkFetch::Corrupt => {}
-            WalkFetch::Outage(_) => {
-                cursor.collect = Some(CollectCursor {
-                    next_index: collected.len() as u64,
-                    collected: collected.into_values().collect(),
-                });
-                freeze(bucket, budget, cursor).await?;
-                return Ok(PlanVerdict::Frozen);
-            }
+            WalkFetch::Outage(_) => return park_collect(bucket, budget, cursor, collected).await,
         }
     }
+    let Ok(held) = read_held_nars(bucket, budget).await else {
+        return park_collect(bucket, budget, cursor, collected).await;
+    };
 
     let candidate_urls: Vec<(StorePathHash, NarKey)> = candidates
         .iter()
@@ -850,6 +842,7 @@ async fn run_collect_and_plan(
         &outcome.marked,
         &outcome.marked_urls,
         &candidate_urls,
+        &held,
         now,
         grace_ms,
     );
@@ -877,6 +870,44 @@ async fn run_collect_and_plan(
     Ok(PlanVerdict::Ready)
 }
 
+/// Park the collect stage with the URLs it has read so far.
+async fn park_collect(
+    bucket: &Bucket,
+    budget: &mut Budget,
+    cursor: &mut GcCursor,
+    collected: BTreeMap<String, CollectedUrl>,
+) -> Result<PlanVerdict> {
+    cursor.collect = Some(CollectCursor {
+        next_index: collected.len() as u64,
+        collected: collected.into_values().collect(),
+    });
+    freeze(bucket, budget, cursor).await?;
+    Ok(PlanVerdict::Frozen)
+}
+
+/// The NARs earlier runs held back, from `meta/gc-held-nars`. A bucket
+/// failure parks the run. A list that will not parse reads as empty, which
+/// deletes none of the NARs it named and leaks them, the safe direction.
+async fn read_held_nars(
+    bucket: &Bucket,
+    budget: &mut Budget,
+) -> std::result::Result<Vec<String>, ()> {
+    budget.spend();
+    let read = bucket.get(GC_HELD_NARS_KEY).execute().await;
+    let Some(object) = read.map_err(|_| ())? else {
+        return Ok(Vec::new());
+    };
+    let Some(body) = object.body() else {
+        return Err(());
+    };
+    let text = body.text().await.map_err(|_| ())?;
+    if let Ok(held) = HeldNars::parse(&text) {
+        return Ok(held.nars);
+    }
+    log::alert("gc.held_nars_corrupt");
+    Ok(Vec::new())
+}
+
 /// The persisted plan: the two ordered key lists and the size map the
 /// freed-bytes accounting reads from.
 fn plan_into_sweep(
@@ -895,13 +926,15 @@ fn plan_into_sweep(
         bytes_freed: 0,
         bytes_by_key,
         nars_spared: 0,
+        nars_held: plan.nars_held.clone(),
         claim_cutoff_ms: Some(plan.claim_cutoff_ms),
     }
 }
 
 /// The sweep: narinfo batches, then NAR batches, at the plan's own pace.
-/// Narinfos go first at every instant, so the bucket always serves a
-/// subset of a coherent earlier state. Returns true when nothing remains.
+/// Narinfos go first, and a NAR a write claimed since the plan stays, so a
+/// push that stores a path again while the run sweeps keeps the NAR it
+/// wrote (ADR 0023). Returns true when nothing remains.
 async fn run_sweep_stage(
     bucket: &Bucket,
     budget: &mut Budget,
@@ -949,9 +982,9 @@ async fn run_sweep_stage(
 }
 
 /// The NAR half of the sweep: the planned NARs nothing has written since
-/// the plan's claim cutoff are deleted in batches, and the rest stay.
-/// Answers false when the tick has to park, with the progress so far
-/// already in `sweep`.
+/// the plan's claim cutoff are deleted in batches, and the rest stay and
+/// join the held list. Answers false when the tick has to park, with the
+/// progress so far already in `sweep`.
 async fn sweep_nars(
     bucket: &Bucket,
     budget: &mut Budget,
@@ -960,33 +993,34 @@ async fn sweep_nars(
     grace_ms: u64,
 ) -> Result<bool> {
     let mut nars_done = usize::try_from(sweep.nars_deleted).expect("deletion progress fits memory");
-    if nars_done >= sweep.nar_deletes.len() {
-        return Ok(true);
-    }
-    if budget.spent_out(now_ms()) {
-        return Ok(false);
-    }
-    // why: the claims are read fresh, once per tick and right before the
-    // deletions. The plan can be an hour old by the time its NARs go,
-    // because a run parks between stages, and the narinfos it deleted
-    // first are exactly the paths the next push uploads again. That push
-    // writes each NAR before its narinfo, which rewrites the NAR's facts
-    // document. Deleting such a NAR left a stored narinfo naming nothing,
-    // which nix fails on and the push's probe reports as held (ADR 0023).
-    // The listing costs one call per thousand NARs.
-    let Ok(listed) = full_listing(bucket, budget, &facts_prefix()).await else {
-        return Ok(false);
-    };
-    let claims = nar_claims(&inventory_items(&listed));
     // why the run's start for a cursor without a cutoff: the plan was made
     // after the run started, so this cutoff is never later than the plan's
     // own would have been, and an earlier cutoff only keeps more.
     let cutoff = sweep
         .claim_cutoff_ms
         .unwrap_or_else(|| cursor.started_at_ms.saturating_sub(grace_ms));
+    let mut claims = BTreeMap::new();
+    let mut listed_at_ms: Option<u64> = None;
     while nars_done < sweep.nar_deletes.len() {
         if budget.spent_out(now_ms()) {
             return Ok(false);
+        }
+        // why: the claims are read fresh, before the first batch and again
+        // once the listing is a minute old. The plan can be an hour old by
+        // the time its NARs go, because a run parks between stages, and
+        // the narinfos it deleted first are exactly the paths the next push
+        // uploads again. That push writes each NAR before its narinfo,
+        // which rewrites the NAR's facts document. Deleting such a NAR left
+        // a stored narinfo naming nothing, which nix fails on and the
+        // push's probe reports as held (ADR 0023). A listing costs one call
+        // per thousand NARs.
+        if listed_at_ms.is_none_or(|at| claims_expired(at, now_ms())) {
+            let listing_started_ms = now_ms();
+            let Ok(listed) = full_listing(bucket, budget, &facts_prefix()).await else {
+                return Ok(false);
+            };
+            claims = nar_claims(&inventory_items(&listed));
+            listed_at_ms = Some(listing_started_ms);
         }
         let end = (nars_done + GC_DELETE_BATCH).min(sweep.nar_deletes.len());
         let (doomed, spared): (Vec<String>, Vec<String>) = sweep.nar_deletes[nars_done..end]
@@ -1022,6 +1056,7 @@ async fn sweep_nars(
                     ("count", spared.len().to_string()),
                 ],
             );
+            sweep.nars_held.extend(spared);
         }
         nars_done = end;
         sweep.nars_deleted = nars_done as u64;
@@ -1037,6 +1072,15 @@ async fn finish_report_stage(
     budget: &mut Budget,
     cursor: &mut GcCursor,
 ) -> Result<()> {
+    // why first, and only with a sweep: the held list must land even when
+    // the generation gate ends the run below, and a run that never planned
+    // decided none of the held NARs, so writing its empty list would
+    // forget every one.
+    if let Some(sweep) = &cursor.sweep {
+        let held = HeldNars::new(sweep.nars_held.clone()).serialize();
+        budget.spend();
+        bucket.put(GC_HELD_NARS_KEY, held).execute().await?;
+    }
     let deletions = cursor
         .sweep
         .as_ref()

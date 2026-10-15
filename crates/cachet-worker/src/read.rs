@@ -18,10 +18,12 @@ use cachet_core::keys::NarKey;
 use cachet_core::narinfo::Narinfo;
 use cachet_core::read::{
     ByteRange, NOT_FOUND_BODY, ObjectKind, cache_info_response_headers,
-    generation_response_headers, is_edge_cacheable, not_found_response_headers,
-    object_response_headers, partial_response_headers, resolve_range, unsatisfiable_range_header,
+    generation_response_headers, is_edge_cacheable, missing_answer_holds,
+    not_found_response_headers, object_response_headers, partial_response_headers, resolve_range,
+    unsatisfiable_range_header,
 };
 use cachet_core::stats::{StatCaller, StatEvent, StatKind, StatOutcome, StatPoint};
+use cachet_core::types::UnixMillis;
 use worker::{Bucket, Cache, Context, Env, Headers, Response, Result};
 
 use crate::{error, log};
@@ -393,15 +395,16 @@ async fn nar_servable(bucket: &Bucket, nar: &NarKey) -> Result<bool> {
 /// again. The check asks the bucket, because the deletion repairs the
 /// bucket, and an edge entry for the NAR says nothing about what the
 /// bucket holds. `known_missing` is a NAR this request has already found
-/// missing from the bucket.
+/// missing from the bucket, with the instant the request began.
 async fn stored_narinfo(
     bucket: &Bucket,
     bucket_key: &str,
-    known_missing: Option<&NarKey>,
+    known_missing: Option<(&NarKey, UnixMillis)>,
 ) -> Result<StoredNarinfo> {
     let Some(object) = bucket.get(bucket_key).execute().await? else {
         return Ok(StoredNarinfo::Absent);
     };
+    let stored_at = UnixMillis::new(object.uploaded().as_millis());
     let Some(body) = object.body() else {
         return Ok(StoredNarinfo::Bodiless);
     };
@@ -410,7 +413,12 @@ async fn stored_narinfo(
         log::alert("read.narinfo_unparseable");
         return Ok(StoredNarinfo::Servable(text));
     };
-    let already_missing = known_missing == Some(&document.url);
+    // why the head is made again for a narinfo stored since the request
+    // began: a push stores the NAR before the narinfo, so that narinfo can
+    // name a NAR the push stored after this request's first head.
+    let already_missing = known_missing.is_some_and(|(nar, started)| {
+        missing_answer_holds(nar, &document.url, stored_at, started)
+    });
     if !already_missing && nar_in_bucket(bucket, &document.url).await? {
         return Ok(StoredNarinfo::Servable(text));
     }
@@ -483,6 +491,7 @@ fn narinfo_response(text: String) -> Result<Response> {
 pub async fn serve_narinfo(
     env: &Env,
     ctx: &Context,
+    now: UnixMillis,
     request_path: &str,
     bucket_key: &str,
     generation: Option<u64>,
@@ -504,6 +513,7 @@ pub async fn serve_narinfo(
         EdgeNarinfo::Stale(nar) => Some(nar),
         EdgeNarinfo::Absent => None,
     };
+    let known_missing = known_missing.as_ref().map(|nar| (nar, now));
     let miss_key = generation.map(|generation| miss_cache_key(generation, request_path));
     if let Some(miss_key) = &miss_key {
         if let Some(hit) = Cache::default().get(miss_key, true).await? {
@@ -519,7 +529,7 @@ pub async fn serve_narinfo(
         }
     }
 
-    match stored_narinfo(&bucket, bucket_key, known_missing.as_ref()).await? {
+    match stored_narinfo(&bucket, bucket_key, known_missing).await? {
         StoredNarinfo::Servable(text) => {
             let size = text.len() as u64;
             let mut response = narinfo_response(text)?;

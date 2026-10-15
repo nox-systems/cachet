@@ -1,6 +1,9 @@
 # ADR 0012: A NAR is measured by the write that stores it
 
-- **Status:** Accepted
+- **Status:** Accepted; a write to a key that already holds a measured
+  NAR is measured without being stored, and a multipart upload to one
+  assembles under a scratch key, by
+  [ADR 0023](0023-a-narinfo-is-answered-only-beside-its-nar.md)
 - **Date:** 2026-08-25
 - **Context doc:** [../security/threat-model.md](../security/threat-model.md);
   refines the mechanism of [ADR 0001](0001-server-side-signing.md) (its

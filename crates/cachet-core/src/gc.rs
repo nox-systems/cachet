@@ -10,8 +10,8 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use crate::constants::CLOSURE_WALK_PATHS_MAX;
-use crate::keys::{NarKey, is_reserved_key};
+use crate::constants::{CLOSURE_WALK_PATHS_MAX, GC_CLAIMS_MAX_AGE_MS, GC_HELD_NARS_MAX};
+use crate::keys::{NarKey, is_reserved_key, parse_nar_key};
 use crate::nar_facts::nar_key_of_facts;
 use crate::narinfo::Narinfo;
 use crate::types::{StorePathHash, UnixMillis};
@@ -298,6 +298,11 @@ pub struct DeletionPlan {
     pub narinfo_deletes: Vec<String>,
     /// NAR keys to delete after every narinfo is gone.
     pub nar_deletes: Vec<String>,
+    /// NAR keys the plan held back because a write claimed them since the
+    /// cutoff, sorted. The collector keeps them for a later run to decide,
+    /// because no narinfo it reads may name them by then (see
+    /// [`HeldNars`]).
+    pub nars_held: Vec<String>,
     /// The instant a NAR's facts document must reach to keep the NAR:
     /// the grace boundary at plan time. The sweep checks the planned NARs
     /// against it again just before deleting them (see [`claimed_since`]).
@@ -348,6 +353,68 @@ pub fn claimed_since(claims: &BTreeMap<String, u64>, nar_key: &str, cutoff_ms: u
         .is_some_and(|&written_at_ms| written_at_ms >= cutoff_ms)
 }
 
+/// Whether a listing of facts documents taken at `listed_at_ms` is too old
+/// for the sweep to delete by, at `now_ms`. A push that writes a planned
+/// NAR after the listing loses it to the next batch, so the sweep lists
+/// again once this answers true.
+pub const fn claims_expired(listed_at_ms: u64, now_ms: u64) -> bool {
+    now_ms.saturating_sub(listed_at_ms) >= GC_CLAIMS_MAX_AGE_MS
+}
+
+/// The NARs the collector held back from a sweep because a write claimed
+/// them, stored at `meta/gc-held-nars` between runs.
+///
+/// A claim keeps a NAR on the word of a push that wrote it. When that
+/// push's narinfo never lands, because the job was cancelled or the
+/// narinfo was refused, and the dead narinfo that named the NAR is swept,
+/// no narinfo names the NAR any more and no later plan would read its key.
+/// The list is how a later plan still sees it. Each run's plan decides
+/// every held NAR by the rule it applies to a candidate's URL, and the
+/// run stores the ones it held back again.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct HeldNars {
+    /// The held NAR keys, sorted.
+    pub nars: Vec<String>,
+}
+
+impl HeldNars {
+    /// The list a run stores: sorted, deduplicated, and cut at
+    /// [`GC_HELD_NARS_MAX`]. A NAR past the cut is forgotten, which leaks
+    /// its bytes and deletes nothing.
+    pub fn new(mut nars: Vec<String>) -> Self {
+        nars.sort();
+        nars.dedup();
+        nars.truncate(GC_HELD_NARS_MAX);
+        Self { nars }
+    }
+
+    /// Serialize with a trailing newline.
+    pub fn serialize(&self) -> String {
+        let mut body = serde_json::to_string(self).expect("string fields");
+        body.push('\n');
+        body
+    }
+
+    /// Read a stored list. Every entry must be a NAR key, because the
+    /// plan hands these keys to a deletion: a document naming anything
+    /// else is refused whole rather than trusted in part.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::error::ClientError::MalformedRoots`] (the document-rejection
+    /// vocabulary's shared member) for invalid JSON or any entry that is
+    /// not a NAR key.
+    pub fn parse(text: &str) -> crate::error::Result<Self> {
+        let Ok(held) = serde_json::from_str::<Self>(text) else {
+            return Err(crate::error::ClientError::MalformedRoots);
+        };
+        if held.nars.iter().any(|nar| parse_nar_key(nar).is_err()) {
+            return Err(crate::error::ClientError::MalformedRoots);
+        }
+        Ok(held)
+    }
+}
+
 /// The sweep's candidate narinfos: unmarked and past the grace window.
 /// Extracted as one predicate because two consumers must agree exactly:
 /// the planner, which orders their deletion, and the driver, which reads
@@ -387,7 +454,9 @@ pub fn sweep_candidates(
 /// still names, so a NAR shared between a live and a dead path survives,
 /// and minus every NAR whose facts document in the inventory was written
 /// at or after the grace boundary, so a NAR an unmarked narinfo inside
-/// its grace window names survives too ([`claimed_since`]).
+/// its grace window names survives too ([`claimed_since`]). The NARs an
+/// earlier run held back (`held`) are decided by the same rule, and the
+/// claimed ones are held back again in `nars_held`.
 ///
 /// How much one run may delete is not bounded, and used to be. A gate
 /// refusing any sweep past a quarter of the inventory could not be
@@ -402,6 +471,7 @@ pub fn plan_deletions(
     marked: &BTreeSet<StorePathHash>,
     marked_urls: &BTreeMap<StorePathHash, NarKey>,
     candidate_urls: &[(StorePathHash, NarKey)],
+    held: &[String],
     now: UnixMillis,
     grace_ms: u64,
 ) -> DeletionPlan {
@@ -417,15 +487,26 @@ pub fn plan_deletions(
     let live_urls: BTreeSet<&str> = marked_urls.values().map(NarKey::as_str).collect();
     let claims = nar_claims(inventory);
     let cutoff = claim_cutoff(now, grace_ms);
-    let mut nar_deletes: Vec<String> = candidate_urls
+    let decided = candidate_urls
         .iter()
-        .filter(|(_, url)| !live_urls.contains(url.as_str()))
-        .filter(|(_, url)| !claimed_since(&claims, url.as_str(), cutoff))
-        .map(|(_, url)| url.as_str().to_string())
-        .collect();
+        .map(|(_, url)| url.as_str())
+        .chain(held.iter().map(String::as_str))
+        .filter(|url| !live_urls.contains(url));
+    let mut nar_deletes = Vec::new();
+    let mut nars_held = Vec::new();
+    for url in decided {
+        if claimed_since(&claims, url, cutoff) {
+            nars_held.push(url.to_string());
+        } else {
+            nar_deletes.push(url.to_string());
+        }
+    }
     nar_deletes.sort();
     nar_deletes.dedup();
+    nars_held.sort();
+    nars_held.dedup();
     plan.nar_deletes = nar_deletes;
+    plan.nars_held = nars_held;
     plan.claim_cutoff_ms = cutoff;
 
     plan
@@ -614,6 +695,10 @@ pub struct SweepCursor {
     /// because a write claimed them after the plan was made.
     #[serde(rename = "narsSpared", default)]
     pub nars_spared: u64,
+    /// The NARs this run held back, by the plan or by the sweep, which the
+    /// run stores in the held list when it finishes ([`HeldNars`]).
+    #[serde(rename = "narsHeld", default, skip_serializing_if = "Vec::is_empty")]
+    pub nars_held: Vec<String>,
     /// The plan's claim cutoff ([`DeletionPlan::claim_cutoff_ms`]). A
     /// cursor written before the field existed has none, and the sweep
     /// derives one from the run's start, which only ever keeps more.
@@ -816,6 +901,7 @@ mod tests {
                 bytes_freed: 0,
                 bytes_by_key: BTreeMap::new(),
                 nars_spared: 0,
+                nars_held: vec!["nar/".to_string() + &"c".repeat(52) + ".nar.zst"],
                 claim_cutoff_ms: Some(1_778_790_400_000),
             }),
             uploads_aborted: 0,
@@ -851,6 +937,70 @@ mod tests {
         let sweep = cursor.sweep.expect("its sweep survives");
         assert_eq!(sweep.claim_cutoff_ms, None);
         assert_eq!(sweep.nars_spared, 0);
+        assert!(sweep.nars_held.is_empty());
+    }
+
+    #[test]
+    fn a_claim_listing_expires_after_a_minute() {
+        assert!(!claims_expired(1_000, 1_000));
+        assert!(!claims_expired(1_000, 1_000 + GC_CLAIMS_MAX_AGE_MS - 1));
+        assert!(claims_expired(1_000, 1_000 + GC_CLAIMS_MAX_AGE_MS));
+        assert!(!claims_expired(5_000, 1_000), "a clock that went back");
+    }
+
+    #[test]
+    fn the_held_list_holds_nar_keys_alone() {
+        let a = format!("nar/{}.nar.zst", "a".repeat(52));
+        let b = format!("nar/{}.nar.zst", "b".repeat(52));
+        let held = HeldNars::new(vec![b.clone(), a.clone(), b.clone()]);
+        assert_eq!(held.nars, vec![a.clone(), b.clone()], "sorted, once each");
+        assert_eq!(
+            HeldNars::parse(&held.serialize()).expect("its own form parses"),
+            held
+        );
+        // The plan hands these keys to a deletion, so a document naming
+        // anything else is refused whole.
+        for stranger in [
+            "roots/some-project",
+            "meta/gc-cursor",
+            "gggggggggggggggggggggggggggggggg.narinfo",
+        ] {
+            let text = HeldNars {
+                nars: vec![a.clone(), stranger.to_string()],
+            }
+            .serialize();
+            assert!(HeldNars::parse(&text).is_err(), "{stranger}");
+        }
+        assert!(HeldNars::parse("{not json").is_err());
+    }
+
+    #[test]
+    fn a_held_nar_goes_once_nothing_claims_it() {
+        // A NAR an earlier run held back, because a push wrote it for a
+        // narinfo that never landed, is named by no narinfo the plan reads.
+        // The held list is how the plan still decides it.
+        let now = UnixMillis::new(1_000_000_000_000);
+        let nar = |letter: &str| format!("nar/{}.nar.zst", letter.repeat(52));
+        let (gone, kept, live) = (nar("a"), nar("b"), nar("c"));
+        let live_hash = StorePathHash::parse(&"l".repeat(32)).expect("valid");
+        let live_url = crate::keys::parse_nar_key(&live).expect("valid nar key");
+        let written_at_ms = now.as_u64() - GRACE_WINDOW_MS / 2;
+        let inventory = vec![facts_item(&kept, written_at_ms)];
+        let marked: BTreeSet<StorePathHash> = [live_hash.clone()].into_iter().collect();
+        let marked_urls: BTreeMap<StorePathHash, NarKey> =
+            [(live_hash, live_url)].into_iter().collect();
+        let plan = plan_deletions(
+            &inventory,
+            &marked,
+            &marked_urls,
+            &[],
+            &[gone.clone(), kept.clone(), live],
+            now,
+            GRACE_WINDOW_MS,
+        );
+        assert_eq!(plan.nar_deletes, vec![gone], "nothing claims it");
+        assert_eq!(plan.nars_held, vec![kept], "written inside the window");
+        assert!(plan.narinfo_deletes.is_empty());
     }
 
     fn facts_item(nar_key: &str, uploaded_at_ms: u64) -> InventoryItem {
@@ -927,11 +1077,13 @@ mod tests {
             &BTreeSet::new(),
             &BTreeMap::new(),
             &[(dead_hash, shared.clone())],
+            &[],
             now,
             GRACE_WINDOW_MS,
         );
         assert_eq!(plan.narinfo_deletes, vec![format!("{dead}.narinfo")]);
         assert!(plan.nar_deletes.is_empty(), "{plan:?}");
+        assert_eq!(plan.nars_held, vec![shared.as_str().to_string()]);
         assert_eq!(plan.claim_cutoff_ms, now.as_u64() - GRACE_WINDOW_MS);
 
         // The same NAR with a facts document as old as the dead narinfo
@@ -944,6 +1096,7 @@ mod tests {
             &BTreeSet::new(),
             &BTreeMap::new(),
             &[(StorePathHash::parse(&dead).expect("valid"), shared.clone())],
+            &[],
             now,
             GRACE_WINDOW_MS,
         );
@@ -1072,6 +1225,7 @@ mod tests {
             &marked,
             &marked_urls,
             &[(live_hash, live_url.clone()), (dead_hash, dead_url.clone())],
+            &[],
             UnixMillis::new(1_000_000_000_000),
             GRACE_WINDOW_MS,
         );
@@ -1098,6 +1252,7 @@ mod tests {
             &inventory,
             &BTreeSet::new(),
             &BTreeMap::new(),
+            &[],
             &[],
             UnixMillis::new(1_000_000_000_000),
             GRACE_WINDOW_MS,

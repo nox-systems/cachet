@@ -14,6 +14,8 @@ use crate::constants::{
     EDGE_NEGATIVE_TTL_SECONDS, GENERATION_EDGE_TTL_SECONDS, NAR_CONTENT_TYPE, NARINFO_CONTENT_TYPE,
     OBJECT_EDGE_TTL_SECONDS,
 };
+use crate::keys::NarKey;
+use crate::types::UnixMillis;
 
 /// Which kind of object a read serves: decides the content type. The TTL
 /// is one value for both kinds (`OBJECT_EDGE_TTL_SECONDS`), because both
@@ -216,6 +218,26 @@ pub fn generation_response_headers() -> [(&'static str, String); 2] {
     ]
 }
 
+/// Whether a read may delete a narinfo on a head it already made: the
+/// head that found `found_missing` absent from the bucket, made for this
+/// colo's stale copy of the same narinfo.
+///
+/// It may when the narinfo the bucket holds names that same NAR and was
+/// stored before this request began. A push writes a NAR before the
+/// narinfo that names it, so a narinfo stored after the request began
+/// can belong to a push that stored the NAR after the head, and deleting
+/// it on that head would throw away the repair the push just made. The
+/// read heads the NAR again instead.
+#[must_use]
+pub fn missing_answer_holds(
+    found_missing: &NarKey,
+    named: &NarKey,
+    narinfo_stored_at: UnixMillis,
+    request_started: UnixMillis,
+) -> bool {
+    found_missing == named && narinfo_stored_at < request_started
+}
+
 /// Whether an object of this size may be stored at the edge. Larger
 /// objects stream from the bucket on every read: the response works, it
 /// just costs a bucket operation each time, which the worker logs.
@@ -346,6 +368,25 @@ mod tests {
         let headers = not_found_response_headers();
         assert_eq!(headers[1].1, "public, max-age=30");
         assert_eq!(NOT_FOUND_BODY, "not found\n");
+    }
+
+    #[test]
+    fn a_missing_answer_holds_only_for_a_narinfo_older_than_the_request() {
+        let nar = |letter: &str| {
+            crate::keys::parse_nar_key(&format!("nar/{}.nar.zst", letter.repeat(52)))
+                .expect("valid nar key")
+        };
+        let (a, b) = (nar("a"), nar("b"));
+        let started = UnixMillis::new(1_000);
+        let before = UnixMillis::new(999);
+        let during = UnixMillis::new(1_001);
+        assert!(missing_answer_holds(&a, &a, before, started));
+        // A narinfo stored as the request began, or during it, may belong
+        // to a push that stored the NAR after the head.
+        assert!(!missing_answer_holds(&a, &a, started, started));
+        assert!(!missing_answer_holds(&a, &a, during, started));
+        // A narinfo naming another NAR needs a head of its own.
+        assert!(!missing_answer_holds(&a, &b, before, started));
     }
 
     #[test]

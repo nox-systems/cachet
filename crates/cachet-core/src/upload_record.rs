@@ -27,6 +27,12 @@ pub struct UploadRecord {
     /// When the upload was created, in epoch milliseconds.
     #[serde(rename = "createdAtMs")]
     pub created_at_ms: u64,
+    /// Where the parts assemble when that is not `key`: a scratch key
+    /// under the reserved `meta/` prefix, used when `key` already holds a
+    /// measured NAR, so a completion the measurement refuses never
+    /// replaces it (ADR 0023). Absent means `key`.
+    #[serde(rename = "objectKey", default, skip_serializing_if = "Option::is_none")]
+    pub object_key: Option<String>,
 }
 
 impl UploadRecord {
@@ -47,6 +53,11 @@ impl UploadRecord {
         serde_json::from_str(text)
     }
 
+    /// The bucket key the parts assemble under.
+    pub fn assembles_at(&self) -> &str {
+        self.object_key.as_deref().unwrap_or(&self.key)
+    }
+
     /// Whether the upload has been idle long enough to reap.
     pub fn is_stale(&self, now: UnixMillis) -> bool {
         now.saturating_ms_since(UnixMillis::new(self.created_at_ms)) > UPLOAD_STALE_MAX_MS
@@ -65,11 +76,31 @@ mod tests {
             expected_parts: 2,
             nar_bytes: 9_000,
             created_at_ms: 1_780_000_000_000,
+            object_key: None,
         };
         assert_eq!(
             UploadRecord::parse(&record.serialize()).expect("the own form parses"),
             record
         );
+        assert_eq!(record.assembles_at(), record.key);
+        let scratch = UploadRecord {
+            object_key: Some(format!("meta/scratch/1780000000000/{}", record.key)),
+            ..record.clone()
+        };
+        assert_eq!(
+            UploadRecord::parse(&scratch.serialize()).expect("the own form parses"),
+            scratch
+        );
+        assert_eq!(
+            scratch.assembles_at(),
+            format!("meta/scratch/1780000000000/{}", record.key)
+        );
+        // A record written before the field existed assembles at its key.
+        let older = UploadRecord::parse(
+            r#"{"key":"nar/x","totalBytes":1,"expectedParts":1,"narBytes":1,"createdAtMs":1}"#,
+        )
+        .expect("an older record parses");
+        assert_eq!(older.assembles_at(), "nar/x");
     }
 
     #[test]
@@ -80,6 +111,7 @@ mod tests {
             expected_parts: 1,
             nar_bytes: 1,
             created_at_ms: 1_000,
+            object_key: None,
         };
         assert!(!record.is_stale(UnixMillis::new(500)));
         assert!(record.is_stale(UnixMillis::new(1_000 + UPLOAD_STALE_MAX_MS + 1)));

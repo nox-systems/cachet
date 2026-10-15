@@ -482,7 +482,7 @@ async fn read_routes(
             read::head_object(env, &bucket_key, kind).await
         }
         (ObjectKind::Narinfo, None) => {
-            read::serve_narinfo(env, ctx, path, &bucket_key, generation, &caller).await
+            read::serve_narinfo(env, ctx, now, path, &bucket_key, generation, &caller).await
         }
         (ObjectKind::Nar, None) => {
             read::serve_object(env, ctx, path, &bucket_key, kind, generation, &caller).await

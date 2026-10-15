@@ -24,10 +24,12 @@ classes in force now:
   are never swept, an upload exactly at the grace boundary is kept, and a
   NAR URL named by any marked narinfo survives.
 - The claim law. Over a dead narinfo and a young twin naming the same
-  NAR, every combination of the dead one's age, both marks, and when the
-  NAR's facts document was written is exhausted: a NAR whose facts were
-  written at or after the grace boundary is never swept. The plan reads
-  no URL from an unmarked narinfo inside its grace window, so the facts
+  NAR, every combination of the dead one's age, both marks, whether an
+  earlier run held the NAR back, and when the NAR's facts document was
+  written is exhausted: a NAR whose facts were written at or after the
+  grace boundary is never swept and is held back again, and a held NAR
+  nothing claims and no marked narinfo names is swept. The plan reads no
+  URL from an unmarked narinfo inside its grace window, so the facts
   document a push rewrote is the only witness that keeps its NAR
   (ADR 0023).
 - The walk law. Over arbitrary root sets and arbitrary read outcomes,
