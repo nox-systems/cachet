@@ -223,6 +223,7 @@ mod tests {
             expected_parts,
             nar_bytes: total_bytes * 3,
             created_at_ms: 1,
+            object_key: None,
         }
     }
 

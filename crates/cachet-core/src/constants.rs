@@ -362,6 +362,27 @@ pub const GC_DELETE_BATCH: usize = 128;
 /// grammar and every request path already refuse it.
 pub const GC_CURSOR_OBJECT_KEY: &str = "meta/gc-cursor";
 
+/// Where the collector keeps the NARs it held back from a sweep because a
+/// write claimed them, so a later run deletes each one that nothing claims
+/// any more and no live narinfo names (ADR 0023).
+pub const GC_HELD_NARS_KEY: &str = "meta/gc-held-nars";
+
+/// The most NARs the held list keeps. A NAR past it is left in place and
+/// forgotten, which leaks its bytes and deletes nothing.
+pub const GC_HELD_NARS_MAX: usize = 65_536;
+
+/// How old the sweep's listing of facts documents may get before the sweep
+/// lists them again. A push that writes a planned NAR after the listing
+/// and before the batch that deletes it loses that NAR, so this bounds the
+/// window to a minute and one delete call (ADR 0023).
+pub const GC_CLAIMS_MAX_AGE_MS: u64 = 60_000;
+
+/// Where a multipart upload assembles when its key already holds a
+/// measured NAR. The parts land under this reserved prefix, the completion
+/// measures them there, and the stored NAR is never replaced, so a
+/// completion the measurement refuses destroys nothing (ADR 0023).
+pub const NAR_SCRATCH_KEY_PREFIX: &str = "meta/scratch/";
+
 /// GitHub rotates its JWKS on its own schedule; ten minutes bounds our
 /// staleness.
 pub const JWKS_CACHE_TTL_MS: u64 = 600_000;

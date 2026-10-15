@@ -466,12 +466,27 @@ async fn read_routes(
             headers.get("if-range").ok().flatten().as_deref(),
         )
     };
-    if let Some(range) = range {
-        return Some(read::serve_range(env, &bucket_key, kind, range, &caller).await);
-    }
-    Some(match method {
-        Method::Head => read::head_object(env, &bucket_key, kind).await,
-        _ => read::serve_object(env, ctx, path, &bucket_key, kind, generation, &caller).await,
+    // why the narinfo has routes of its own: it is answered only beside a
+    // NAR this deployment can serve, which no other object needs (ADR 0023).
+    Some(match (kind, range) {
+        (ObjectKind::Narinfo, Some(range)) => {
+            read::serve_narinfo_range(env, &bucket_key, range, &caller).await
+        }
+        (ObjectKind::Nar, Some(range)) => {
+            read::serve_range(env, &bucket_key, kind, range, &caller).await
+        }
+        (ObjectKind::Narinfo, None) if method == &Method::Head => {
+            read::head_narinfo(env, &bucket_key).await
+        }
+        (ObjectKind::Nar, None) if method == &Method::Head => {
+            read::head_object(env, &bucket_key, kind).await
+        }
+        (ObjectKind::Narinfo, None) => {
+            read::serve_narinfo(env, ctx, now, path, &bucket_key, generation, &caller).await
+        }
+        (ObjectKind::Nar, None) => {
+            read::serve_object(env, ctx, path, &bucket_key, kind, generation, &caller).await
+        }
     })
 }
 

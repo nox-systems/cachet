@@ -1,6 +1,7 @@
 # ADR 0013: An object's edge-cache key carries no generation
 
-- **Status:** Accepted
+- **Status:** Accepted; its consequence for a deleted narinfo corrected
+  by [ADR 0023](0023-a-narinfo-is-answered-only-beside-its-nar.md)
 - **Date:** 2026-08-25
 - **Context doc:** [testing/workerd.md](../testing/workerd.md)
 
@@ -46,6 +47,11 @@ An object the collector deleted can still answer from a warm point of
 presence until its entry expires. That is a path nothing references any
 more, and a client that substitutes it gets bytes that verify against the
 narinfo naming them, so the staleness is invisible rather than wrong.
+(For a narinfo it was wrong. A colo that still answered a swept narinfo
+often held no entry for its NAR, the NAR read answered 404, and nix
+failed the substitution where a missing narinfo would have let it build
+the path. ADR 0023 answers a narinfo only beside a NAR the deployment can
+serve.)
 
 A narinfo is not strictly immutable: a key rotation re-signs it. A
 rotation adds a key rather than retiring one (docs/DEPLOY.md), so the

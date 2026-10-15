@@ -966,7 +966,9 @@ paths:
         `GET /{hash}.narinfo`: one narinfo document, edge-cached for 30 days
         and byte-immutable. Reads authenticate like every cache read; the
         narinfo's signatures are the content-integrity check, not the gate.
-        A `Range` header is served as the NAR route serves it.
+        A `Range` header is served as the NAR route serves it. A narinfo is
+        answered only while its NAR can be served, and one whose NAR is gone
+        answers 404 and leaves the bucket, so the next push uploads it again.
       operationId: narinfo_get
       parameters:
       - name: hash
@@ -1072,8 +1074,8 @@ paths:
       tags:
       - routes
       summary: |-
-        `HEAD /{hash}.narinfo`: metadata only; bypasses the edge cache so a
-        client can ask what is really stored without evicting anything.
+        `HEAD /{hash}.narinfo`: the GET's headers from the bucket's own copy,
+        bypassing the edge cache, and 404 when the NAR it names is gone.
       operationId: narinfo_head
       parameters:
       - name: hash
@@ -1311,8 +1313,9 @@ components:
       type: object
       description: |-
         The `POST /api/probe` answer: the hashes with a narinfo stored,
-        ascending. A narinfo present implies its NAR (never-dangle), so one
-        list is the whole answer.
+        ascending. A narinfo can be stored without its NAR, and the narinfo
+        route deletes such a narinfo when it reads one, so a path whose NAR is
+        gone reads as absent here once anything has asked for it (ADR 0023).
       required:
       - present
       properties:

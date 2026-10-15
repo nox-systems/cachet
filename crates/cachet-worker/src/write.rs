@@ -8,8 +8,8 @@
 //! verifier's output (verify-then-sign).
 
 use cachet_core::constants::{
-    COMPLETE_BODY_BYTES_MAX, NAR_DECOMPRESSED_BYTES_MAX, NAR_FACTS_BYTES_MAX, NARINFO_BYTES_MAX,
-    UPLOAD_SINGLE_MAX_BYTES, UPLOADS_KEY_PREFIX,
+    COMPLETE_BODY_BYTES_MAX, NAR_DECOMPRESSED_BYTES_MAX, NAR_FACTS_BYTES_MAX,
+    NAR_SCRATCH_KEY_PREFIX, NARINFO_BYTES_MAX, UPLOAD_SINGLE_MAX_BYTES, UPLOADS_KEY_PREFIX,
 };
 use cachet_core::error::ClientError;
 use cachet_core::keys::NarKey;
@@ -254,13 +254,23 @@ pub async fn put_nar(env: &Env, mut req: Request, key: &NarKey) -> Result<Respon
     let Ok(body) = req.stream() else {
         return rejected(ClientError::LengthRequired);
     };
+    let decode_bound = nar_decode_bound(length, declared_nar_bytes);
+    let bucket = env.bucket("CACHE_BUCKET")?;
+    // why: a NAR the bucket holds, measured, is never written over. Writing
+    // first and measuring after meant bytes that are not that NAR replaced
+    // it and were then deleted, which left its facts document vouching for
+    // nothing (ADR 0023). The key names the bytes' hash, so a body that
+    // measures as the key is the stored NAR's own bytes, and only the facts
+    // document is written again, which is the claim the collector reads.
+    if nar_measured(&bucket, key).await? {
+        return remeasure_nar(&bucket, body, key, decode_bound).await;
+    }
     let measure = Rc::new(RefCell::new(NarMeasure::new(
         key.suffix() == ".zst",
-        nar_decode_bound(length, declared_nar_bytes),
+        decode_bound,
     )));
     // A repeated write is harmless: objects are content-addressed, so a
     // retry stores identical bytes under an identical key.
-    let bucket = env.bucket("CACHE_BUCKET")?;
     let stored = bucket
         .put(
             key.as_str(),
@@ -338,11 +348,96 @@ pub async fn put_nar(env: &Env, mut req: Request, key: &NarKey) -> Result<Respon
     stored_response()
 }
 
-/// Delete a NAR the measurement refused, then answer the refusal. The
-/// delete is best effort: an object with no facts beside it can never be
-/// signed, and the collector reaps it.
+/// Whether the bucket holds this NAR together with the facts its write
+/// measured, which is what makes the stored bytes the key's own.
+async fn nar_measured(bucket: &worker::Bucket, key: &NarKey) -> Result<bool> {
+    if bucket.head(key.as_str()).await?.is_none() {
+        return Ok(false);
+    }
+    Ok(bucket.head(facts_key(key)).await?.is_some())
+}
+
+/// Answer a write to a key that already holds a measured NAR: measure the
+/// body as it arrives, store none of it, and write the facts document
+/// again when the body is the key's own bytes.
+async fn remeasure_nar(
+    bucket: &worker::Bucket,
+    mut body: worker::ByteStream,
+    key: &NarKey,
+    decode_bound: u64,
+) -> Result<Response> {
+    let mut measure = NarMeasure::new(key.suffix() == ".zst", decode_bound);
+    while let Some(chunk) = body.next().await {
+        let Ok(chunk) = chunk else {
+            return rejected(ClientError::StorageUnavailable);
+        };
+        if let Err(code) = measure.feed(&chunk) {
+            return rejected(code);
+        }
+    }
+    let facts = match measure.finish() {
+        Ok(facts) => facts,
+        Err(code) => return rejected(code),
+    };
+    if facts.file_hash_nix32 != key.file_hash() {
+        log::event(
+            "warn",
+            "write.nar_rejected",
+            &[
+                ("code", ClientError::FileHashMismatch.code().to_string()),
+                ("fileHashNamed", key.file_hash().to_string()),
+                ("fileHashMeasured", facts.file_hash_nix32.clone()),
+            ],
+        );
+        return rejected(ClientError::FileHashMismatch);
+    }
+    claim_measured_nar(bucket, key, &facts).await
+}
+
+/// Write a stored NAR's facts document again, the claim that keeps the
+/// collector from deleting it (ADR 0023), and confirm the NAR is still
+/// there afterwards. A collector that deleted the NAR and its facts in the
+/// meantime would otherwise leave a facts document vouching for nothing,
+/// so the document goes again and the client is told to retry, which
+/// stores the NAR anew.
+async fn claim_measured_nar(
+    bucket: &worker::Bucket,
+    key: &NarKey,
+    facts: &NarFacts,
+) -> Result<Response> {
+    if let Err(failure) = bucket
+        .put(facts_key(key), facts.serialize())
+        .execute()
+        .await
+    {
+        log::event(
+            "error",
+            "write.nar_facts_store_failed",
+            &[("error", failure.to_string())],
+        );
+        return rejected(ClientError::StorageUnavailable);
+    }
+    if bucket.head(key.as_str()).await?.is_none() {
+        let _ = bucket.delete(facts_key(key)).await;
+        log::event("warn", "write.nar_gone_while_claimed", &[]);
+        return rejected(ClientError::StorageUnavailable);
+    }
+    log::event(
+        "info",
+        "write.nar_claimed",
+        &[("narSizeBytes", facts.nar_size_bytes.to_string())],
+    );
+    stored_response()
+}
+
+/// Delete a NAR the measurement refused, and its facts document, then
+/// answer the refusal. The facts go too because a writer that stored this
+/// key between this write's check and its own put left facts that no
+/// longer describe the bytes. The delete is best effort: an object with no
+/// facts beside it can never be signed, and the collector reaps it.
 async fn discard_nar(bucket: &worker::Bucket, key: &NarKey, code: ClientError) -> Result<Response> {
-    if let Err(failure) = bucket.delete(key.as_str()).await {
+    let doomed = vec![key.as_str().to_string(), facts_key(key)];
+    if let Err(failure) = bucket.delete_multiple(doomed).await {
         log::event(
             "warn",
             "write.nar_discard_failed",
@@ -381,8 +476,16 @@ pub async fn create_multipart(
         Err(code) => return rejected(code),
     };
     let bucket = env.bucket("CACHE_BUCKET")?;
+    // why a scratch key: the parts assemble over whatever the key holds,
+    // and a completion the measurement refuses deletes what it assembled.
+    // Over a measured NAR that was the NAR itself (ADR 0023).
+    let object_key = if nar_measured(&bucket, key).await? {
+        Some(format!("{NAR_SCRATCH_KEY_PREFIX}{}/{key}", now.as_u64()))
+    } else {
+        None
+    };
     let upload = bucket
-        .create_multipart_upload(key.as_str())
+        .create_multipart_upload(object_key.as_deref().unwrap_or(key.as_str()))
         .execute()
         .await?;
     let upload_id = upload.upload_id().await;
@@ -392,6 +495,7 @@ pub async fn create_multipart(
         expected_parts: shape.count,
         nar_bytes: declared_nar_bytes,
         created_at_ms: now.as_u64(),
+        object_key,
     };
     if let Err(failure) = bucket
         .put(upload_record_key(&upload_id), record.serialize())
@@ -513,7 +617,7 @@ pub async fn upload_part(
         return rejected(ClientError::LengthRequired);
     };
     let bucket = env.bucket("CACHE_BUCKET")?;
-    let upload = bucket.resume_multipart_upload(key.as_str(), upload_id)?;
+    let upload = bucket.resume_multipart_upload(record.assembles_at(), upload_id)?;
     // Safe: check_part established the bound 1..=expectedParts ≤ 1000.
     let part_u16 = u16::try_from(part_number).expect("part numbers fit u16 by the plan cap");
     match upload
@@ -572,7 +676,7 @@ pub async fn complete_multipart(
         Err(code) => return rejected(code),
     };
     let bucket = env.bucket("CACHE_BUCKET")?;
-    let upload = bucket.resume_multipart_upload(key.as_str(), upload_id)?;
+    let upload = bucket.resume_multipart_upload(record.assembles_at(), upload_id)?;
     let uploaded_parts: Vec<worker::UploadedPart> = parts
         .iter()
         .map(|part| {
@@ -606,52 +710,104 @@ pub async fn complete_multipart(
     // than on the narinfo request keeps it to one read of the objects
     // large enough to need multipart at all, and the narinfo that follows
     // reads the facts instead of the bytes.
-    match measure_stored_nar(&bucket, key, record.nar_bytes).await {
-        Ok(facts) => {
-            if facts.file_hash_nix32 != key.file_hash() {
-                log::event(
-                    "warn",
-                    "write.nar_rejected",
-                    &[
-                        ("code", ClientError::FileHashMismatch.code().to_string()),
-                        ("fileHashNamed", key.file_hash().to_string()),
-                        ("fileHashMeasured", facts.file_hash_nix32.clone()),
-                    ],
-                );
-                return discard_nar(&bucket, key, ClientError::FileHashMismatch).await;
-            }
-            if let Err(failure) = bucket
-                .put(facts_key(key), facts.serialize())
-                .execute()
-                .await
-            {
-                log::event(
-                    "error",
-                    "write.nar_facts_store_failed",
-                    &[("error", failure.to_string())],
-                );
-                return rejected(ClientError::StorageUnavailable);
-            }
-            log::event(
-                "info",
-                "write.multipart_completed",
-                &[("narSizeBytes", facts.nar_size_bytes.to_string())],
-            );
-            stored_response()
-        }
-        Err(code) => discard_nar(&bucket, key, code).await,
+    let measured = measure_stored_nar(&bucket, record.assembles_at(), key, record.nar_bytes).await;
+    if record.object_key.is_some() {
+        return settle_scratch(&bucket, record.assembles_at(), key, measured).await;
     }
+    settle_assembled(&bucket, key, measured).await
+}
+
+/// Finish an upload that assembled under its own key: record the facts of
+/// bytes that measure as the key, and discard bytes that do not.
+async fn settle_assembled(
+    bucket: &worker::Bucket,
+    key: &NarKey,
+    measured: std::result::Result<NarFacts, ClientError>,
+) -> Result<Response> {
+    let facts = match measured {
+        Ok(facts) => facts,
+        Err(code) => return discard_nar(bucket, key, code).await,
+    };
+    if facts.file_hash_nix32 != key.file_hash() {
+        log::event(
+            "warn",
+            "write.nar_rejected",
+            &[
+                ("code", ClientError::FileHashMismatch.code().to_string()),
+                ("fileHashNamed", key.file_hash().to_string()),
+                ("fileHashMeasured", facts.file_hash_nix32.clone()),
+            ],
+        );
+        return discard_nar(bucket, key, ClientError::FileHashMismatch).await;
+    }
+    if let Err(failure) = bucket
+        .put(facts_key(key), facts.serialize())
+        .execute()
+        .await
+    {
+        log::event(
+            "error",
+            "write.nar_facts_store_failed",
+            &[("error", failure.to_string())],
+        );
+        return rejected(ClientError::StorageUnavailable);
+    }
+    log::event(
+        "info",
+        "write.multipart_completed",
+        &[("narSizeBytes", facts.nar_size_bytes.to_string())],
+    );
+    stored_response()
+}
+
+/// Finish an upload that assembled under a scratch key because its key
+/// already held a measured NAR. The scratch object goes either way, and
+/// the stored NAR is never touched: bytes that measure as the key are the
+/// stored NAR's own, so only its facts document is written again, and
+/// bytes that do not are refused.
+async fn settle_scratch(
+    bucket: &worker::Bucket,
+    scratch_key: &str,
+    key: &NarKey,
+    measured: std::result::Result<NarFacts, ClientError>,
+) -> Result<Response> {
+    if let Err(failure) = bucket.delete(scratch_key).await {
+        log::event(
+            "warn",
+            "write.scratch_delete_failed",
+            &[("error", failure.to_string())],
+        );
+    }
+    let facts = match measured {
+        Ok(facts) => facts,
+        Err(code) => return rejected(code),
+    };
+    if facts.file_hash_nix32 != key.file_hash() {
+        log::event(
+            "warn",
+            "write.nar_rejected",
+            &[
+                ("code", ClientError::FileHashMismatch.code().to_string()),
+                ("fileHashNamed", key.file_hash().to_string()),
+                ("fileHashMeasured", facts.file_hash_nix32.clone()),
+            ],
+        );
+        return rejected(ClientError::FileHashMismatch);
+    }
+    claim_measured_nar(bucket, key, &facts).await
 }
 
 /// Read an assembled object back and measure it, for the multipart path
-/// that could not measure it on the way in.
+/// that could not measure it on the way in. `object_key` is where it
+/// assembled, which is `key` unless the upload used a scratch key.
 async fn measure_stored_nar(
     bucket: &worker::Bucket,
+    object_key: &str,
     key: &NarKey,
     declared_nar_bytes: u64,
 ) -> std::result::Result<NarFacts, ClientError> {
     let Some(object) = bucket
-        .get(key.as_str())
+        .get(object_key)
         .execute()
         .await
         .map_err(|_| ClientError::StorageUnavailable)?
@@ -676,12 +832,13 @@ async fn measure_stored_nar(
 
 /// Discard an upload.
 pub async fn abort_multipart(env: &Env, key: &NarKey, upload_id: &str) -> Result<Response> {
-    if let Err(code) = load_record(env, key, upload_id).await {
-        return rejected(code);
-    }
+    let record = match load_record(env, key, upload_id).await {
+        Ok(record) => record,
+        Err(code) => return rejected(code),
+    };
     let bucket = env.bucket("CACHE_BUCKET")?;
     bucket
-        .resume_multipart_upload(key.as_str(), upload_id)?
+        .resume_multipart_upload(record.assembles_at(), upload_id)?
         .abort()
         .await
         .inspect_err(|failure| {

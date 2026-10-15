@@ -375,8 +375,9 @@ pub struct ReadTokenIssued {
 }
 
 /// The `POST /api/probe` answer: the hashes with a narinfo stored,
-/// ascending. A narinfo present implies its NAR (never-dangle), so one
-/// list is the whole answer.
+/// ascending. A narinfo can be stored without its NAR, and the narinfo
+/// route deletes such a narinfo when it reads one, so a path whose NAR is
+/// gone reads as absent here once anything has asked for it (ADR 0023).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 pub struct ProbeAnswer {
     /// The hashes the bucket holds, sorted.
