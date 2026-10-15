@@ -35,7 +35,9 @@ pub fn cache_info_head() {}
 /// `GET /{hash}.narinfo`: one narinfo document, edge-cached for 30 days
 /// and byte-immutable. Reads authenticate like every cache read; the
 /// narinfo's signatures are the content-integrity check, not the gate.
-/// A `Range` header is served as the NAR route serves it.
+/// A `Range` header is served as the NAR route serves it. A narinfo is
+/// answered only while its NAR can be served, and one whose NAR is gone
+/// answers 404 and leaves the bucket, so the next push uploads it again.
 #[utoipa::path(
     get,
     path = "/{hash}.narinfo",
@@ -52,8 +54,8 @@ pub fn cache_info_head() {}
 )]
 pub fn narinfo_get() {}
 
-/// `HEAD /{hash}.narinfo`: metadata only; bypasses the edge cache so a
-/// client can ask what is really stored without evicting anything.
+/// `HEAD /{hash}.narinfo`: the GET's headers from the bucket's own copy,
+/// bypassing the edge cache, and 404 when the NAR it names is gone.
 #[utoipa::path(
     head,
     path = "/{hash}.narinfo",

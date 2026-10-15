@@ -697,7 +697,7 @@ await scenario(
       },
     );
 
-    await check("HEAD answers from bucket metadata alone", async () => {
+    await check("HEAD answers from the bucket's own copy", async () => {
       const res = await fetch(`${base}/${NARINFO_KEY}`, {
         method: "HEAD",
         headers: READ_AUTH(),
@@ -781,6 +781,7 @@ await scenario(
   async () => [
     [RANGE_NAR_KEY, rangeNarBytes],
     [NARINFO_KEY, await readFile(path.join(fixturesDir, NARINFO_KEY))],
+    [NAR_KEY, await readFile(path.join(fixturesDir, NAR_FILE))],
   ],
   async ({ base }) => {
     const url = `${base}/${RANGE_NAR_KEY}`;
@@ -929,6 +930,7 @@ await scenario(
     const narinfo = await readFile(path.join(fixturesDir, NARINFO_KEY));
     return [
       [NARINFO_KEY, narinfo],
+      [NAR_KEY, await readFile(path.join(fixturesDir, NAR_FILE))],
       ["meta/generation", "this was never json"],
     ];
   },
@@ -987,7 +989,11 @@ await scenario(
   "a login trades a GitHub identity for the deployment's own credential",
   async () => {
     const narinfo = await readFile(path.join(fixturesDir, NARINFO_KEY));
-    return [[NARINFO_KEY, narinfo]];
+    const nar = await readFile(path.join(fixturesDir, NAR_FILE));
+    return [
+      [NARINFO_KEY, narinfo],
+      [NAR_KEY, nar],
+    ];
   },
   async ({ base, persist }) => {
     let issued = null;
@@ -1286,7 +1292,11 @@ try {
     "the action's credential outlives the OIDC token it was traded for",
     async () => {
       const narinfo = await readFile(path.join(fixturesDir, NARINFO_KEY));
-      return [[NARINFO_KEY, narinfo]];
+      const nar = await readFile(path.join(fixturesDir, NAR_FILE));
+      return [
+        [NARINFO_KEY, narinfo],
+        [NAR_KEY, nar],
+      ];
     },
     async ({ base, persist }) => {
       const runners = [];
@@ -2880,6 +2890,12 @@ await scenario(
       `nar/${"w".repeat(52)}.nar.zst`,
       await readFile(path.join(fixturesDir, NAR_FILE)),
     ],
+    // The sweep lists every NAR's facts right before it deletes, and a
+    // NAR nothing has written since the plan goes with its facts.
+    [
+      `meta/nar/${"w".repeat(52)}.nar.zst`,
+      "the collector lists a NAR's facts and never reads them\n",
+    ],
     [
       "uploads/stale-record-1",
       `${JSON.stringify({
@@ -2912,6 +2928,11 @@ await scenario(
       assert.equal(alive.status, 200, "the leased narinfo survived");
       const deadNar = await r2Get(persist, `nar/${"w".repeat(52)}.nar.zst`);
       assert.ok(!deadNar.ok, "the dead NAR followed its narinfo");
+      const deadFacts = await r2Get(
+        persist,
+        `meta/nar/${"w".repeat(52)}.nar.zst`,
+      );
+      assert.ok(!deadFacts.ok, "the dead NAR's facts went with it");
       const staleRecord = await r2Get(persist, "uploads/stale-record-1");
       assert.ok(!staleRecord.ok, "the stale upload record was reaped");
       const cursor = await r2Get(persist, "meta/gc-cursor");
@@ -3122,6 +3143,127 @@ await scenario(
       assert.equal(body.narinfosDeleted, 3, report.body);
       const cursor = await r2Get(persist, "meta/gc-cursor");
       assert.ok(!cursor.ok, "a finished run parks no cursor");
+    });
+  },
+);
+
+// A narinfo is answered only beside a NAR the deployment can serve
+// (ADR 0023). Nix fetches the narinfo first and the NAR second, and a
+// narinfo whose NAR then answers 404 fails the substitution outright, where
+// a narinfo that answers 404 sends nix to build the one missing path and
+// substitute the rest. Each narinfo below outlives its NAR in one way: the
+// bucket holds it without the NAR, a colo cached it before the collector
+// swept both, or a colo cached it beside its NAR.
+const DANGLING = "f".repeat(32);
+const DANGLING_HEAD = "m".repeat(32);
+const DANGLING_RANGE = "p".repeat(32);
+const SWEPT = "h".repeat(32);
+const WARM = "j".repeat(32);
+
+await scenario(
+  "a narinfo is answered only beside its NAR",
+  async () => {
+    const nar = await readFile(path.join(fixturesDir, NAR_FILE));
+    const naming = async (hash, narLetter) => [
+      `${hash}.narinfo`,
+      await deadNarinfoFor(hash, narLetter.repeat(52)),
+    ];
+    return [
+      await naming(DANGLING, "g"),
+      await naming(DANGLING_HEAD, "n"),
+      await naming(DANGLING_RANGE, "q"),
+      await naming(SWEPT, "i"),
+      [`nar/${"i".repeat(52)}.nar.zst`, nar],
+      await naming(WARM, "l"),
+      [`nar/${"l".repeat(52)}.nar.zst`, nar],
+    ];
+  },
+  async ({ base, events, clearEvents, persist }) => {
+    const read = (hash, headers = {}, method = "GET") =>
+      fetch(`${base}/${hash}.narinfo`, {
+        method,
+        headers: { ...READ_AUTH(), ...headers },
+      });
+    const readWarmNar = () =>
+      fetch(`${base}/nar/${"l".repeat(52)}.nar.zst`, {
+        headers: READ_AUTH(),
+      });
+
+    await check("a narinfo whose NAR is gone is a 404", async () => {
+      clearEvents();
+      const res = await read(DANGLING);
+      const body = await res.text();
+      assert.equal(res.status, 404, body);
+      assert.equal(body, "not found\n");
+      await untilEvent(events, '"event":"read.narinfo_nar_missing"');
+      assert.match(events(), /"source":"bucket"/);
+      // The read deleted it, so the next push finds the path absent and
+      // uploads it again rather than skipping it as held.
+      const stored = await r2Get(persist, `${DANGLING}.narinfo`);
+      assert.ok(!stored.ok, "the narinfo left the bucket");
+    });
+
+    await check("HEAD and a range find no narinfo either", async () => {
+      const head = await read(DANGLING_HEAD, {}, "HEAD");
+      assert.equal(head.status, 404);
+      assert.equal(await head.text(), "");
+      const ranged = await read(DANGLING_RANGE, { range: "bytes=0-9" });
+      assert.equal(ranged.status, 404, await ranged.text());
+    });
+
+    await check("a colo's narinfo whose NAR was swept is a 404", async () => {
+      // This colo caches the narinfo, then the bucket loses both objects
+      // the way a sweep removes them, narinfo first. The NAR was never
+      // read here, so this colo cannot serve it either.
+      clearEvents();
+      const first = await read(SWEPT);
+      assert.equal(first.status, 200, await first.text());
+      await untilEvent(events, '"event":"read.bucket_hit"');
+      clearEvents();
+      const second = await read(SWEPT);
+      assert.equal(second.status, 200, await second.text());
+      await untilEvent(events, '"event":"read.edge_hit"');
+      await r2Delete(persist, `${SWEPT}.narinfo`);
+      await r2Delete(persist, `nar/${"i".repeat(52)}.nar.zst`);
+      clearEvents();
+      const swept = await read(SWEPT);
+      assert.equal(swept.status, 404, await swept.text());
+      await untilEvent(events, '"event":"read.narinfo_nar_missing"');
+      assert.match(events(), /"source":"edge"/);
+      // The entry left this colo, so the next read asks the bucket.
+      const again = await read(SWEPT);
+      assert.equal(again.status, 404, await again.text());
+    });
+
+    await check("a colo holding the NAR serves both", async () => {
+      // A NAR's bytes are named by their own hash, so a colo that cached
+      // them serves them whatever the bucket holds, and the narinfo that
+      // names them still answers there.
+      clearEvents();
+      const narinfo = await read(WARM);
+      assert.equal(narinfo.status, 200, await narinfo.text());
+      await untilEvent(events, '"event":"read.bucket_hit"');
+      clearEvents();
+      const nar = await readWarmNar();
+      assert.equal(nar.status, 200);
+      await nar.arrayBuffer();
+      await untilEvent(events, '"event":"read.bucket_hit","kind":"nar"');
+      clearEvents();
+      const warmNar = await readWarmNar();
+      assert.equal(warmNar.status, 200);
+      await warmNar.arrayBuffer();
+      await untilEvent(events, '"event":"read.edge_hit","kind":"nar"');
+      clearEvents();
+      const warm = await read(WARM);
+      assert.equal(warm.status, 200, await warm.text());
+      await untilEvent(events, '"event":"read.edge_hit","kind":"narinfo"');
+      await r2Delete(persist, `${WARM}.narinfo`);
+      await r2Delete(persist, `nar/${"l".repeat(52)}.nar.zst`);
+      clearEvents();
+      const served = await read(WARM);
+      assert.equal(served.status, 200, await served.text());
+      await untilEvent(events, '"event":"read.edge_hit","kind":"narinfo"');
+      assert.doesNotMatch(events(), /read\.narinfo_nar_missing/);
     });
   },
 );
@@ -3744,7 +3886,7 @@ try {
   await scenario(
     "the CLI pushes a store path end to end",
     async () => [],
-    async ({ base }) => {
+    async ({ base, persist }) => {
       // why: `just workerd` builds this binary before driving; the scenario
       // fails loudly rather than silencing a stale or missing build.
       const cli = path.join(repoRoot, "target", "debug", "cachet");
@@ -3985,6 +4127,63 @@ try {
           );
         },
       );
+
+      await check("a push repairs a path whose NAR is gone", async () => {
+        // A narinfo the bucket holds without its NAR, the state a push
+        // racing the collector's sweep left behind (ADR 0023). The probe
+        // reads presence from narinfos alone, so until a read deleted such
+        // a narinfo, every push skipped the path as held and the cache
+        // never got it back.
+        const payload = path.join(runnerTemp, "lane-payload-repair");
+        await writeFile(
+          payload,
+          `cachet workerd lane repair ${crypto.randomUUID()}\n`,
+        );
+        const added = await run("nix-store", [
+          "--add-fixed",
+          "sha256",
+          payload,
+        ]);
+        assert.equal(added.status, 0, added.stderr);
+        const repairPath = added.stdout.trim().split("\n").pop();
+        const first = await runCli(["push"], {
+          ...pushEnv,
+          CACHET_ROOTS: repairPath,
+        });
+        assert.equal(first.status, 0, first.stderr);
+        assert.ok(
+          first.stdout.includes("cachet: uploaded 2 objects"),
+          first.stdout,
+        );
+
+        const hash = repairPath.match(/\/nix\/store\/([a-z0-9]+)-/)[1];
+        const stored = await r2Get(persist, `${hash}.narinfo`);
+        assert.ok(stored.ok, stored.stderr);
+        const narKey = stored.body.match(/^URL: (.+)$/m)[1];
+        await r2Delete(persist, narKey);
+        await r2Delete(persist, `meta/${narKey}`);
+
+        const dangling = await fetch(`${base}/${hash}.narinfo`, {
+          headers: READ_AUTH(),
+        });
+        assert.equal(dangling.status, 404, await dangling.text());
+
+        const second = await runCli(["push"], {
+          ...pushEnv,
+          CACHET_ROOTS: repairPath,
+        });
+        assert.equal(second.status, 0, second.stderr);
+        assert.ok(
+          second.stdout.includes("cachet: uploaded 2 objects"),
+          `the probe found the path absent: ${second.stdout}`,
+        );
+        const narinfo = await fetch(`${base}/${hash}.narinfo`, {
+          headers: READ_AUTH(),
+        });
+        assert.equal(narinfo.status, 200, await narinfo.text());
+        const nar = await fetch(`${base}/${narKey}`, { headers: READ_AUTH() });
+        assert.equal(nar.status, 200, "the NAR is back");
+      });
     },
   );
 } finally {

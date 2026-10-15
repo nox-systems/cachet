@@ -3,7 +3,9 @@
 - **Status:** Accepted; point 4's sweep fraction removed by
   [ADR 0017](0017-the-collector-refuses-on-blindness-not-on-scale.md),
   its unreadable root narrowed by
-  [ADR 0018](0018-only-an-unparseable-root-stops-the-collector.md)
+  [ADR 0018](0018-only-an-unparseable-root-stops-the-collector.md),
+  point 5's ordering completed by
+  [ADR 0023](0023-a-narinfo-is-answered-only-beside-its-nar.md)
 - **Date:** 2026-08-21
 - **Context doc:** [../../CLAUDE.md](../../CLAUDE.md) §1; [../testing/workerd.md](../testing/workerd.md)
 
@@ -46,7 +48,12 @@ mark phase's inputs are suspect.
 5. Narinfos delete before their NARs, in batches, so a narinfo never
    dangles a missing NAR at any instant. Orphan NARs (referenced by no
    narinfo) survive; that is a v2 decision, guarded now by the grace
-   window rather than by a bound on the sweep's size.
+   window rather than by a bound on the sweep's size. (The order alone
+   did not keep that promise. A push could store a narinfo again between
+   the two deletions, an unmarked narinfo inside its grace window could
+   share a dead path's NAR, and an edge entry outlived the sweep. ADR 0023
+   keeps a NAR written since the grace boundary and answers a narinfo
+   only beside its NAR.)
 6. Every run lands a report at `gc-reports/{runId}.json` plus a
    `latest.json`, and the admin API serves the history.
 

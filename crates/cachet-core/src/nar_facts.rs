@@ -17,7 +17,7 @@
 //! only for a NAR whose bytes were measured in full, so a narinfo can
 //! still be signed only after its NAR verifies (CLAUDE.md §1).
 
-use crate::constants::NAR_FACTS_KEY_PREFIX;
+use crate::constants::{NAR_FACTS_KEY_PREFIX, NAR_KEY_PREFIX};
 use crate::keys::NarKey;
 
 /// The measured facts of one stored NAR.
@@ -49,6 +49,20 @@ pub fn facts_key(nar_key: &NarKey) -> String {
 /// form (the collector walks keys, not parsed types).
 pub fn facts_key_for(nar_bucket_key: &str) -> String {
     format!("{NAR_FACTS_KEY_PREFIX}{nar_bucket_key}")
+}
+
+/// The prefix every facts document sits under, `meta/nar/`: what the
+/// collector lists to learn when each NAR was last written.
+pub fn facts_prefix() -> String {
+    facts_key_for(NAR_KEY_PREFIX)
+}
+
+/// The NAR a facts document belongs to, from the document's key, or
+/// `None` for a key that is not a facts document.
+pub fn nar_key_of_facts(facts_bucket_key: &str) -> Option<&str> {
+    facts_bucket_key
+        .strip_prefix(NAR_FACTS_KEY_PREFIX)
+        .filter(|nar| nar.starts_with(NAR_KEY_PREFIX))
 }
 
 impl NarFacts {
@@ -113,5 +127,22 @@ mod tests {
             crate::keys::is_reserved_key(&facts_key(&nar)),
             "facts are unreachable from a request"
         );
+    }
+
+    #[test]
+    fn a_facts_key_names_its_nar_and_nothing_else_does() {
+        let nar = format!("nar/{}.nar.zst", "g".repeat(52));
+        assert_eq!(facts_prefix(), "meta/nar/");
+        assert!(facts_key_for(&nar).starts_with(&facts_prefix()));
+        assert_eq!(nar_key_of_facts(&facts_key_for(&nar)), Some(nar.as_str()));
+        for other in [
+            "meta/generation",
+            "meta/gc-cursor",
+            nar.as_str(),
+            "gggggggggggggggggggggggggggggggg.narinfo",
+            "roots/some-project",
+        ] {
+            assert_eq!(nar_key_of_facts(other), None, "{other}");
+        }
     }
 }

@@ -295,6 +295,101 @@ fn gc_laws_hold_over_the_exhausted_decision_space(_tc: TestCase) {
     }
 }
 
+// why: the claim law over a space of its own. A NAR an unmarked narinfo
+// inside its grace window names is invisible to the plan's URL reads,
+// because the plan reads only marked narinfos and candidates, so the NAR's
+// facts document is the only witness that keeps it. The expected plan is
+// written from the law as docs/testing/property.md states it, never from
+// the planner, and compared whole.
+#[hegel::test(test_cases = 1)]
+fn a_nar_written_since_the_grace_boundary_is_never_swept(_tc: TestCase) {
+    use cachet_core::gc::{InventoryItem, plan_deletions};
+    use cachet_core::nar_facts::facts_key_for;
+    use cachet_core::types::{StorePathHash, UnixMillis};
+    use std::collections::{BTreeMap, BTreeSet};
+
+    const NOW: u64 = 10_000_000_000;
+    const GRACE: u64 = 1_000;
+    // Upload times: ancient, exactly at the grace boundary (kept), and
+    // one millisecond past it (swept).
+    const AGES: [u64; 3] = [0, NOW - GRACE, NOW - GRACE - 1];
+    // When the shared NAR's facts document was written: never, each age
+    // class, and now, as a push that has just stored the twin writes it.
+    const CLAIMS: [Option<u64>; 5] = [
+        None,
+        Some(0),
+        Some(NOW - GRACE),
+        Some(NOW - GRACE - 1),
+        Some(NOW),
+    ];
+
+    let dead = StorePathHash::parse(&"d".repeat(32)).expect("valid");
+    let twin = StorePathHash::parse(&"y".repeat(32)).expect("valid");
+    let shared = cachet_core::keys::parse_nar_key(&format!("nar/{}.nar.zst", "s".repeat(52)))
+        .expect("valid nar key");
+    let item = |key: String, uploaded_at_ms: u64| InventoryItem {
+        key,
+        size_bytes: 10,
+        uploaded_at_ms,
+    };
+
+    for dead_age in AGES {
+        for dead_marked in [false, true] {
+            for twin_marked in [false, true] {
+                for claim in CLAIMS {
+                    // The twin names the same NAR and was pushed just now,
+                    // so it is never a candidate itself.
+                    let mut inventory = vec![
+                        item(format!("{dead}.narinfo"), dead_age),
+                        item(format!("{twin}.narinfo"), NOW),
+                    ];
+                    if let Some(at) = claim {
+                        inventory.push(item(facts_key_for(shared.as_str()), at));
+                    }
+                    let mut marked = BTreeSet::new();
+                    let mut marked_urls = BTreeMap::new();
+                    for (hash, is_marked) in [(&dead, dead_marked), (&twin, twin_marked)] {
+                        if is_marked {
+                            marked.insert(hash.clone());
+                            marked_urls.insert(hash.clone(), shared.clone());
+                        }
+                    }
+                    let candidate = !dead_marked && dead_age != NOW - GRACE;
+                    let candidate_urls = if candidate {
+                        vec![(dead.clone(), shared.clone())]
+                    } else {
+                        Vec::new()
+                    };
+                    let plan = plan_deletions(
+                        &inventory,
+                        &marked,
+                        &marked_urls,
+                        &candidate_urls,
+                        UnixMillis::new(NOW),
+                        GRACE,
+                    );
+
+                    let claimed = claim.is_some_and(|at| at >= NOW - GRACE);
+                    let expected_narinfos = if candidate {
+                        vec![format!("{dead}.narinfo")]
+                    } else {
+                        Vec::new()
+                    };
+                    let expected_nars = if candidate && !twin_marked && !claimed {
+                        vec![shared.as_str().to_string()]
+                    } else {
+                        Vec::new()
+                    };
+                    let case = format!("{dead_age} {dead_marked} {twin_marked} {claim:?}");
+                    assert_eq!(plan.narinfo_deletes, expected_narinfos, "{case}");
+                    assert_eq!(plan.nar_deletes, expected_nars, "{case}");
+                    assert_eq!(plan.claim_cutoff_ms, NOW - GRACE, "{case}");
+                }
+            }
+        }
+    }
+}
+
 /// Series law: a bucketed answer is always exactly the buckets its
 /// window implies, ascending, contiguous, and ending at now's bucket.
 ///

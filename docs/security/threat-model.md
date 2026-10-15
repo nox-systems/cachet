@@ -162,8 +162,9 @@ causes mass deletion. Defense: leases pin roots, the mark phase walks
 narinfo references, the sweep requires age past grace, and the gates
 abort a run whose picture of what is live is incomplete: an unparseable
 lease or root narinfo, a truncated enumeration, an exhausted walk
-budget, a corrupt generation document. Narinfos delete before NARs so a
-client never sees a dangling narinfo.
+budget, a corrupt generation document. Narinfos delete before NARs, and
+a NAR whose facts document was written since the grace boundary stays,
+because a push wrote it for a narinfo the plan never read.
 
 A root whose narinfo is absent does not abort the run. No client can
 substitute that path, because a substitution starts by fetching the
@@ -179,8 +180,20 @@ collecting permanently (ADR 0017). What bounds a mistake is the grace
 window, in time rather than in count, and the recovery is a push, because
 over-deleting from a cache costs a rebuild rather than data. Proven: the
 GC laws in the property lane (reserved keys, marked paths, grace
-boundary, NAR survival, and the walk law that only an unparseable root
-gates) and the four workerd GC scenarios.
+boundary, NAR survival, a NAR written since the grace boundary, and the
+walk law that only an unparseable root gates) and the four workerd GC
+scenarios.
+
+**A narinfo that outlives its NAR.** An edge entry kept after a sweep, or
+a narinfo a push stored again while the sweep deleted its NAR, answers
+200 for a path whose NAR answers 404, and nix then fails the substitution
+where a missing narinfo would have let it build the one path. Defense: the
+read path answers a narinfo only when the colo answering it or the
+bucket can serve its NAR, and deletes a narinfo the bucket holds without its NAR, so the
+next push finds the path absent and uploads it (ADR 0023). A reader can
+delete only a narinfo whose NAR the bucket has just answered is absent,
+which is a path no client could substitute. Proven: the workerd lane's
+narinfo scenario and the push that repairs a path whose NAR is gone.
 
 **Credential leaves in artifacts or logs.** The signing key or an OIDC
 token lands in the shipped bundle, a log line, or a committed file.

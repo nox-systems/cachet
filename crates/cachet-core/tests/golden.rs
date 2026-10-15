@@ -210,6 +210,8 @@ fn the_gc_documents_write_stably() {
             nars_deleted: 0,
             bytes_freed: 1024,
             bytes_by_key: [("aa".to_string(), 1024_u64)].into_iter().collect(),
+            nars_spared: 0,
+            claim_cutoff_ms: Some(1_778_790_400_000),
         }),
         uploads_aborted: 0,
     };
@@ -234,7 +236,9 @@ fn the_gc_documents_write_stably() {
         \"bytesFreed\": 1024,
         \"bytesByKey\": {
           \"aa\": 1024
-        }
+        },
+        \"narsSpared\": 0,
+        \"claimCutoffMs\": 1778790400000
       },
       \"uploadsAborted\": 0
     }
