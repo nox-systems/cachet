@@ -21,6 +21,7 @@ struct FakeCommands {
     facts: Mutex<BTreeMap<String, PathFacts>>,
     nars: Mutex<BTreeMap<String, Vec<u8>>>,
     staged: Mutex<Vec<String>>,
+    invocations: Mutex<Vec<String>>,
 }
 
 impl FakeCommands {
@@ -30,10 +31,24 @@ impl FakeCommands {
     fn staged(&self) -> Vec<String> {
         self.staged.lock().expect("staged log").clone()
     }
+
+    /// Every nix call the pipeline made, in order, each named by the
+    /// command the real adapter starts for it.
+    fn invocations(&self) -> Vec<String> {
+        self.invocations.lock().expect("invocation log").clone()
+    }
+
+    fn invoked(&self, command: String) {
+        self.invocations
+            .lock()
+            .expect("invocation log")
+            .push(command);
+    }
 }
 
 impl Commands for FakeCommands {
     async fn path_info_all(&self) -> Result<String, PushError> {
+        self.invoked("nix path-info --all".to_string());
         self.path_info_all
             .lock()
             .expect("answers queue")
@@ -42,6 +57,7 @@ impl Commands for FakeCommands {
     }
 
     async fn path_info(&self, installable: &str) -> Result<String, PushError> {
+        self.invoked(format!("nix path-info {installable}"));
         self.path_info
             .lock()
             .expect("answers map")
@@ -53,6 +69,7 @@ impl Commands for FakeCommands {
     }
 
     async fn path_facts(&self, paths: &[String]) -> Result<Vec<PathFacts>, PushError> {
+        self.invoked(format!("nix path-info --json {}", paths.join(" ")));
         let facts = self.facts.lock().expect("facts");
         Ok(paths
             .iter()
@@ -61,6 +78,7 @@ impl Commands for FakeCommands {
     }
 
     async fn stage_nar(&self, facts: &PathFacts) -> Result<StagedNar, PushError> {
+        self.invoked(format!("nix store dump-path {}", facts.store_path));
         let bytes = self
             .nars
             .lock()
@@ -1023,4 +1041,143 @@ async fn a_failed_probe_treats_everything_as_absent() {
             .iter()
             .any(|line| line.contains("ProbeBulkFailed"))
     );
+}
+
+/// A sleeper that counts the waits it was asked for and waits for none.
+fn counted_sleep() -> (std::sync::Arc<std::sync::atomic::AtomicU64>, Box<Sleeper>) {
+    let waits = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let sleep: Box<Sleeper> = {
+        let waits = std::sync::Arc::clone(&waits);
+        Box::new(move |_ms| {
+            waits.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Box::pin(async {})
+        })
+    };
+    (waits, sleep)
+}
+
+/// A push whose every new path the cache already holds, off the default
+/// branch, with roots named: what a pull request's post step does once a
+/// sibling job pushed. Its whole cost is one nix call to read the store,
+/// one mint, and one probe. The roots are never evaluated, because only
+/// the default branch renews the lease that reads them, and nothing
+/// waits, retries, stages, or uploads.
+#[tokio::test]
+async fn a_no_op_push_off_the_default_branch_reads_the_store_and_asks_once() {
+    let commands = FakeCommands::default();
+    let held = seed_path(&commands, 'a', "held", b"held".to_vec());
+    commands
+        .path_info
+        .lock()
+        .expect("answers map")
+        .insert(".#root".to_string(), Ok(format!("{}\n", held.store_path)));
+    commands
+        .path_info_all
+        .lock()
+        .expect("queue")
+        .push_back(Ok(format!("{}\n", held.store_path)));
+    let http = FakeHttp::default();
+    stub_probe(&http, &[&held.hash]);
+    // why the production memo: the post step mints through it, so its
+    // count is the number of requests the job makes to GitHub.
+    let source = FakeTokens::default();
+    let tokens = crate::oidc::RunTokens::over(&source);
+    let (waits, sleep) = counted_sleep();
+    let adapters = Adapters {
+        commands: &commands,
+        http: &http,
+        tokens: &tokens,
+        sleep: &sleep,
+    };
+    let (log, mut sink) = collect_events();
+    let mut inputs = inputs(false);
+    inputs.installables = vec![".#root".to_string()];
+
+    let outcome = push(&adapters, &inputs, "", &mut sink)
+        .await
+        .expect("finishes");
+
+    assert_eq!(commands.invocations(), vec!["nix path-info --all"]);
+    assert_eq!(
+        urls(&http.calls(), "POST"),
+        vec![format!("{CACHE}/api/probe")],
+    );
+    assert_eq!(http.calls().len(), 1, "the probe is the only request");
+    assert_eq!(source.mints(), 1);
+    assert_eq!(waits.load(std::sync::atomic::Ordering::SeqCst), 0);
+    assert_eq!(outcome.cache_hits, 1);
+    assert_eq!(outcome.uploaded_objects, 0);
+    assert!(!outcome.lease_renewed);
+    assert!(
+        !log.lock()
+            .expect("log")
+            .iter()
+            .any(|line| line.contains("InstallableUnresolved")),
+        "an unevaluated root reports nothing",
+    );
+}
+
+/// The same push on the default branch evaluates each root once, for the
+/// lease, and adds exactly the renewal to the wire.
+#[tokio::test]
+async fn a_no_op_push_on_the_default_branch_evaluates_each_root_once_and_renews() {
+    let commands = FakeCommands::default();
+    let held = seed_path(&commands, 'a', "held", b"held".to_vec());
+    commands
+        .path_info
+        .lock()
+        .expect("answers map")
+        .insert(".#root".to_string(), Ok(format!("{}\n", held.store_path)));
+    commands
+        .path_info_all
+        .lock()
+        .expect("queue")
+        .push_back(Ok(format!("{}\n", held.store_path)));
+    let http = FakeHttp::default();
+    stub_probe(&http, &[&held.hash]);
+    http.post(&format!("{CACHE}/roots/org-repo"), 204, "");
+    // why the production memo: the post step mints through it, so its
+    // count is the number of requests the job makes to GitHub.
+    let source = FakeTokens::default();
+    let tokens = crate::oidc::RunTokens::over(&source);
+    let (waits, sleep) = counted_sleep();
+    let adapters = Adapters {
+        commands: &commands,
+        http: &http,
+        tokens: &tokens,
+        sleep: &sleep,
+    };
+    let (_log, mut sink) = collect_events();
+    let mut inputs = inputs(true);
+    inputs.installables = vec![".#root".to_string()];
+
+    let outcome = push(&adapters, &inputs, "", &mut sink)
+        .await
+        .expect("finishes");
+
+    assert_eq!(
+        commands.invocations(),
+        vec!["nix path-info --all", "nix path-info .#root"],
+    );
+    assert_eq!(
+        urls(&http.calls(), "POST"),
+        vec![
+            format!("{CACHE}/api/probe"),
+            format!("{CACHE}/roots/org-repo"),
+        ],
+    );
+    assert_eq!(http.calls().len(), 2);
+    assert_eq!(source.mints(), 1, "the renewal reuses the probe's token");
+    assert_eq!(waits.load(std::sync::atomic::Ordering::SeqCst), 0);
+    assert_eq!(outcome.roots_kept, 1);
+    assert!(outcome.lease_renewed);
+    let renewal = http
+        .calls()
+        .into_iter()
+        .find(|call| call.url.ends_with("/roots/org-repo"))
+        .expect("the renewal went out");
+    let body: cachet_api::RenewalBody =
+        serde_json::from_slice(&renewal.body).expect("the renewal body reads");
+    assert_eq!(body.installables, vec![".#root".to_string()]);
+    assert_eq!(body.store_paths, vec![held.store_path]);
 }

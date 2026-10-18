@@ -14,6 +14,7 @@ use cachet_core::error::ClientError;
 use cachet_core::generation::GenerationDocument;
 use cachet_core::lease::LeaseDocument;
 use cachet_core::narinfo::Narinfo;
+use cachet_core::probe::PROBE_HEADS_MAX;
 
 #[test]
 fn nix_cache_info_body_is_exact() {
@@ -23,9 +24,11 @@ fn nix_cache_info_body_is_exact() {
 #[test]
 fn bound_constants_are_the_contract() {
     let snap = format!(
-        "{NARINFO_BYTES_MAX} {UPLOAD_SINGLE_MAX_BYTES} {UPLOAD_PART_BYTES} {MULTIPART_PARTS_MAX} {PUSH_PATHS_MAX} {PROBE_BODY_BYTES_MAX}"
+        "{NARINFO_BYTES_MAX} {UPLOAD_SINGLE_MAX_BYTES} {UPLOAD_PART_BYTES} {MULTIPART_PARTS_MAX} {PUSH_PATHS_MAX} {PROBE_BODY_BYTES_MAX} {PROBE_HEADS_MAX}"
     );
-    insta::assert_snapshot!(snap, @"65536 94371800 67108864 1000 16384 1048576");
+    // why PROBE_HEADS_MAX: the OpenAPI document names its value as the
+    // probe's contract, so changing it changes what the document says.
+    insta::assert_snapshot!(snap, @"65536 94371800 67108864 1000 16384 1048576 128");
 }
 
 #[test]

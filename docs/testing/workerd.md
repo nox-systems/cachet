@@ -80,11 +80,14 @@ entry refusing the whole document as `auth_unavailable` because `cachet
 setup` would otherwise write it into the daemon's trusted keys (ADR
 0021), and whose `managedBy` a deployer-managed deployment carries and a
 self-hosted one omits; the bulk probe (`POST /api/probe`): the sorted,
-deduplicated held-subset answer derived from the bucket enumeration
-itself, with NAR and lease objects proven never to leak in, the answer
-answering equally for laptop and OIDC credentials, and its rejection
-rows (unauthorized, forbidden_org, malformed_probe from bad JSON, bad
-hashes, and over-cap entry lists, and the byte cap's body_too_large);
+deduplicated held-subset answer read from the bucket itself, by one head
+per hash for a small question and by one listing per first character for
+a large one, each counted in the probe's own event so the lane holds its
+cost without a clock (ADR 0024), with NAR and lease objects absent from
+the answer, the answer answering equally for laptop and OIDC credentials,
+and its rejection rows (unauthorized, forbidden_org, malformed_probe from
+bad JSON, bad hashes, and over-cap entry lists, and the byte cap's
+body_too_large);
 the browser login flow, from the login
 redirect's exact parameters through state consumption (a replayed state
 never reaches the exchange), the outsider's forbidden_org refusal, the

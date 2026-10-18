@@ -481,10 +481,16 @@ async function check(name, fn) {
 // assert what must NOT have happened. Reading the stream without that
 // wait samples it, because the worker answers the client before wrangler
 // flushes the line, and a sample is not an assertion.
+//
+// A marker is a string the stream must include, or a RegExp it must
+// match, for a check that reads a whole line back rather than its start.
 async function untilEvent(events, marker) {
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
-    if (events().includes(marker)) {
+    const stream = events();
+    if (
+      typeof marker === "string" ? stream.includes(marker) : marker.test(stream)
+    ) {
       return;
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -3782,12 +3788,15 @@ await scenario(
 );
 
 // The bulk probe: one authorized POST answers presence for a run's whole
-// candidate set, derived from a bucket enumeration (delimiter-collapsed,
-// suffix-filtered), so the answer is bucket truth the same way the
-// collector's inventory is. The wire facts below: the answer is the held
-// subset sorted and deduplicated, a NAR object never leaks into it, and
-// the rejection rows complete the malformed_probe coverage the error
-// table demands.
+// candidate set, read from the bucket itself, so the answer is bucket
+// truth the same way the collector's inventory is. A small question heads
+// each narinfo it names; a large one lists the narinfos under each first
+// character it asks about (ADR 0024). The probe's own event counts the
+// heads and the list pages, which is how the lane holds its cost without
+// a clock. The wire facts below: the answer is the held subset sorted and
+// deduplicated, a NAR object and a lease never leak into it, and the
+// rejection rows complete the malformed_probe coverage the error table
+// demands.
 await scenario(
   "the bulk probe answers presence from the bucket",
   async () => [
@@ -3796,17 +3805,27 @@ await scenario(
     [`nar/${"n".repeat(52)}.nar.zst`, "a NAR is not a narinfo\n"],
     ["roots/lane-org-lane-repo", "a lease is not a narinfo\n"],
   ],
-  async ({ base }) => {
+  async ({ base, events, clearEvents }) => {
     const post = (body, headers = READ_AUTH()) =>
       fetch(`${base}/api/probe`, {
         method: "POST",
         headers: { "content-type": "application/json", ...headers },
         body,
       });
+    // The event the probe logs before it answers, parsed: its fields say
+    // how many bucket heads and list pages the answer cost. The wait is
+    // for the whole line, because the stream can deliver a line's start
+    // before its end.
+    const probeLine = /\{[^\n]*"event":"probe\.bulk"[^\n]*\}/;
+    const probeCost = async () => {
+      await untilEvent(events, probeLine);
+      return JSON.parse(events().match(probeLine)[0]);
+    };
 
     await check(
       "the answer is the held subset, sorted and unique",
       async () => {
+        clearEvents();
         const res = await post(
           JSON.stringify({
             paths: [
@@ -3823,6 +3842,46 @@ await scenario(
         assert.deepEqual(answer, {
           present: ["q".repeat(32), "z".repeat(32)],
         });
+        // Three distinct hashes: one head apiece, and no listing at all.
+        const cost = await probeCost();
+        assert.equal(cost.paths, "3");
+        assert.equal(cost.heads, "3");
+        assert.equal(cost.pages, "0");
+      },
+    );
+
+    await check(
+      "a question over the head bound lists only its first characters",
+      async () => {
+        // 200 hashes is past cachet_core::probe::PROBE_HEADS_MAX (128).
+        // They start with q and z, which hold a narinfo each, and with n
+        // and r, under which the NAR and lease directories sort, so the
+        // listings run under all four characters and answer the two
+        // narinfos.
+        const alphabet = "0123456789abcdfghijklmnpqrsvwxyz";
+        const asked = new Set(["q".repeat(32), "z".repeat(32)]);
+        for (let index = 0; asked.size < 200; index++) {
+          let hash = "qznr"[index % 4];
+          let rest = index;
+          for (let digit = 1; digit < 32; digit++) {
+            hash += alphabet[rest % alphabet.length];
+            rest = Math.floor(rest / alphabet.length);
+          }
+          asked.add(hash);
+        }
+        clearEvents();
+        const res = await post(JSON.stringify({ paths: [...asked] }));
+        const answer = await res.json();
+        assert.equal(res.status, 200, JSON.stringify(answer));
+        assert.deepEqual(answer, {
+          present: ["q".repeat(32), "z".repeat(32)],
+        });
+        // One page under each of the four first characters: no head, and
+        // no listing of the 28 characters nobody asked about.
+        const cost = await probeCost();
+        assert.equal(cost.paths, "200");
+        assert.equal(cost.heads, "0");
+        assert.equal(cost.pages, "4");
       },
     );
 

@@ -279,10 +279,11 @@ pub fn login_revoke() {}
 
 /// `POST /api/probe`: which of the named store-path hashes the cache
 /// holds. One authorized request per run replaces the per-path narinfo
-/// HEADs a push would otherwise price one round trip at a time; the
-/// worker answers from a bucket enumeration, so the answer is bucket
-/// truth rather than a secondary index's claim. Requires a read
-/// credential.
+/// HEADs a push would otherwise price one round trip at a time. The
+/// worker reads the answer from the bucket itself and keeps no index of
+/// what it holds. It heads each named narinfo when the request names at
+/// most 128 hashes, and otherwise lists the narinfos under each first
+/// character the request uses. Requires a read credential.
 #[utoipa::path(
     post,
     path = "/api/probe",

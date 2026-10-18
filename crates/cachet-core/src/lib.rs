@@ -19,6 +19,7 @@ pub mod multipart;
 pub mod nar_facts;
 pub mod narinfo;
 pub mod oauth;
+pub mod probe;
 pub mod problem;
 pub mod read;
 pub mod read_token;
