@@ -481,10 +481,16 @@ async function check(name, fn) {
 // assert what must NOT have happened. Reading the stream without that
 // wait samples it, because the worker answers the client before wrangler
 // flushes the line, and a sample is not an assertion.
+//
+// A marker is a string the stream must include, or a RegExp it must
+// match, for a check that reads a whole line back rather than its start.
 async function untilEvent(events, marker) {
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
-    if (events().includes(marker)) {
+    const stream = events();
+    if (
+      typeof marker === "string" ? stream.includes(marker) : marker.test(stream)
+    ) {
       return;
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -3807,15 +3813,13 @@ await scenario(
         body,
       });
     // The event the probe logs before it answers, parsed: its fields say
-    // how many bucket heads and list pages the answer cost.
+    // how many bucket heads and list pages the answer cost. The wait is
+    // for the whole line, because the stream can deliver a line's start
+    // before its end.
+    const probeLine = /\{[^\n]*"event":"probe\.bulk"[^\n]*\}/;
     const probeCost = async () => {
-      await untilEvent(events, '"event":"probe.bulk"');
-      const line = events()
-        .split("\n")
-        .find((entry) => entry.includes('"event":"probe.bulk"'));
-      return JSON.parse(
-        line.slice(line.indexOf("{"), line.lastIndexOf("}") + 1),
-      );
+      await untilEvent(events, probeLine);
+      return JSON.parse(events().match(probeLine)[0]);
     };
 
     await check(
@@ -3850,10 +3854,10 @@ await scenario(
       "a question over the head bound lists only its first characters",
       async () => {
         // 200 hashes is past cachet_core::probe::PROBE_HEADS_MAX (128).
-        // They start with q and z, which hold a narinfo each, with n,
-        // under which the NAR directory sorts, and with r, under which the
-        // lease directory sorts, so the four listings must answer the two
-        // narinfos and nothing from either directory.
+        // They start with q and z, which hold a narinfo each, and with n
+        // and r, under which the NAR and lease directories sort, so the
+        // listings run under all four characters and answer the two
+        // narinfos.
         const alphabet = "0123456789abcdfghijklmnpqrsvwxyz";
         const asked = new Set(["q".repeat(32), "z".repeat(32)]);
         for (let index = 0; asked.size < 200; index++) {

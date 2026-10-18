@@ -1,15 +1,14 @@
 //! The bulk presence probe: `POST /api/probe`. A push run asks one
-//! authorized question about its whole candidate set instead of pricing
-//! narinfo HEADs one round trip apiece (the per-request cost of a HEAD is
-//! a verdict, a generation read, and a bucket head; multiplied by a
-//! closure that is the wrong protocol shape — cachix and flakehub answer
-//! the same question in one request, and so does this route).
+//! authorized question about its whole candidate set. Asking with one
+//! narinfo HEAD per path cost a credential check, a generation read, and a
+//! bucket head for every path of a closure, and cachix and flakehub answer
+//! the same question in one request, as this route does.
 //!
-//! The answer is read from the bucket, never from a secondary index: a KV
+//! The answer is read from the bucket, never from a secondary index. A KV
 //! copy of presence would need a second writer on every narinfo PUT and
-//! every GC sweep, and a crash between the pair drifts the index. Drift
-//! toward "present" would tell a pusher to skip an object clients then
-//! 404 on — the bad direction, for 100ms saved.
+//! every GC sweep, and a crash between the pair drifts the index. A copy
+//! that drifted toward "present" would tell a pusher to skip an object
+//! that clients then fail to fetch.
 //!
 //! How the bucket is asked follows the question's size (ADR 0024,
 //! `cachet_core::probe::plan`). A small question heads each narinfo key it
@@ -40,7 +39,7 @@ use crate::{error, log, verdict};
 
 /// How many bucket reads one probe keeps waiting at once.
 ///
-/// why: six. A Worker invocation can have six connections waiting for
+/// why: a Worker invocation can have six connections waiting for
 /// response headers, R2's `head` and `list` among them, and a seventh
 /// queues until one of them answers (the Workers limits page). A wider
 /// window would only queue.
@@ -82,13 +81,14 @@ pub async fn answer_probe(env: &Env, now: UnixMillis, mut req: Request) -> Resul
     }
 
     let bucket = env.bucket("CACHE_BUCKET")?;
-    let read = match held_narinfos(&bucket, &plan(&asked)).await {
+    let wanted: BTreeSet<&str> = asked.iter().map(StorePathHash::as_str).collect();
+    let read = match held_narinfos(&bucket, &plan(&asked), &wanted).await {
         Ok(read) => read,
         Err(code) => return error::problem_response(code),
     };
 
     // why: from the asked set, which is ascending and unique, so the answer
-    // is too, and a listing's other narinfos never reach it.
+    // is too.
     let present: Vec<String> = asked
         .iter()
         .map(StorePathHash::as_str)
@@ -129,8 +129,7 @@ pub async fn answer_probe(env: &Env, now: UnixMillis, mut req: Request) -> Resul
 
 /// What the bucket answered, and the reads it took.
 struct HeldNarinfos {
-    /// Hashes whose narinfo the bucket holds: each one asked about, for a
-    /// plan of heads; everything under the listed prefixes, for a listing.
+    /// The asked hashes whose narinfo the bucket holds.
     held: BTreeSet<String>,
     /// Bucket heads made.
     heads: u64,
@@ -144,10 +143,11 @@ struct HeldNarinfos {
 async fn held_narinfos(
     bucket: &Bucket,
     plan: &ProbePlan,
+    wanted: &BTreeSet<&str>,
 ) -> std::result::Result<HeldNarinfos, ClientError> {
     match plan {
         ProbePlan::Heads(keys) => held_by_head(bucket, keys).await,
-        ProbePlan::Listing(prefixes) => held_by_listing(bucket, prefixes).await,
+        ProbePlan::Listing(prefixes) => held_by_listing(bucket, prefixes, wanted).await,
     }
 }
 
@@ -189,9 +189,10 @@ async fn held_by_head(
 async fn held_by_listing(
     bucket: &Bucket,
     prefixes: &[String],
+    wanted: &BTreeSet<&str>,
 ) -> std::result::Result<HeldNarinfos, ClientError> {
     let mut listings = futures_util::stream::iter(prefixes)
-        .map(|prefix| list_prefix(bucket, prefix))
+        .map(|prefix| list_prefix(bucket, prefix, wanted))
         .buffer_unordered(BUCKET_READS_IN_FLIGHT);
     let mut held = BTreeSet::new();
     let mut pages = 0;
@@ -214,11 +215,16 @@ async fn held_by_listing(
     })
 }
 
-/// Every narinfo hash under one prefix, one page after another, and how
-/// many pages that took.
+/// The wanted hashes whose narinfo is under one prefix, read one page
+/// after another, and how many pages that took.
+///
+/// why the filter here: a prefix can hold thousands of narinfos nobody
+/// asked about, and keeping only the wanted ones holds the probe's memory
+/// to the size of its question.
 async fn list_prefix(
     bucket: &Bucket,
     prefix: &str,
+    wanted: &BTreeSet<&str>,
 ) -> std::result::Result<(Vec<String>, u64), String> {
     // why: the delimiter collapses `nar/` and the other directories into
     // common prefixes, so the listing prices root-level objects, which are
@@ -240,7 +246,8 @@ async fn list_prefix(
             .map_err(|failure| failure.to_string())?;
         pages += 1;
         for object in listed.objects() {
-            if let Some(hash) = narinfo_hash(&object.key()) {
+            let key = object.key();
+            if let Some(hash) = narinfo_hash(&key).filter(|hash| wanted.contains(hash)) {
                 hashes.push(hash.to_string());
             }
         }

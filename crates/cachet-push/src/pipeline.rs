@@ -178,8 +178,9 @@ pub async fn push<C: Commands, H: Http, T: TokenSource>(
     //
     // why only on the default branch: the lease is the one reader of the
     // resolved paths, and only the default branch renews it. Each
-    // installable is a nix evaluation that opens the flake, seconds apiece,
-    // which a pull request's post step would spend for nothing.
+    // installable is a nix evaluation that opens the flake, about a second
+    // apiece in nox-systems/actual's CI, which a pull request's post step
+    // would spend for nothing.
     let mut resolved_root_paths: Vec<String> = Vec::new();
     if inputs.is_default_branch {
         for installable in &inputs.installables {

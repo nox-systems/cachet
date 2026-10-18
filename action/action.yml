@@ -19,11 +19,12 @@ inputs:
     required: true
   roots:
     description: >-
-      Flake installables whose closures this project keeps. Their outputs
-      are pushed unconditionally and, on the default branch, become the
-      project's garbage-collection lease. The post step evaluates them
-      only on the default branch, because no other branch renews the
-      lease.
+      Flake installables whose closures this project keeps. The job
+      pushes their outputs like any other path it adds to the store, and
+      on the default branch they become the project's garbage-collection
+      lease. The post step evaluates them only on the default branch,
+      because no other branch renews the lease, so it reports a root
+      that does not resolve only there.
     required: false
     default: ""
   audience:

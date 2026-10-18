@@ -1,6 +1,8 @@
 # ADR 0023: A narinfo is answered only beside its NAR
 
-- **Status:** Accepted
+- **Status:** Accepted; point 3's listing amended by
+  [ADR 0024](0024-a-small-probe-heads-each-narinfo.md), under which a probe
+  of at most 128 hashes heads each narinfo
 - **Date:** 2026-10-15
 - **Context doc:** [0013-edge-keys-outlive-sweeps.md](0013-edge-keys-outlive-sweeps.md);
   [0005-gc-on-the-cron.md](0005-gc-on-the-cron.md);

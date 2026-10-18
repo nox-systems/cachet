@@ -18,10 +18,13 @@ use crate::types::StorePathHash;
 /// why: a head costs the same whatever the bucket holds, and a listing
 /// costs a page per thousand narinfos the listed prefixes hold. On 18
 /// October 2026 production held 17,398 narinfos, and a probe that listed
-/// all of them took 10 to 13 seconds for two hashes. The worker keeps six
-/// bucket reads waiting at once, the platform's ceiling, so this many
-/// heads is about twenty rounds of six, and the listing answers anything
-/// larger in a time that does not grow with the question.
+/// all of them took 10 to 13 seconds for two hashes, about two thirds of
+/// a second a page. A whole authorized narinfo HEAD from a laptop,
+/// credential check and round trip included, took 0.11 to 0.36 seconds,
+/// so a bucket head inside the worker costs well under that. The worker
+/// keeps six bucket reads waiting at once, the platform's ceiling, so this
+/// many heads is 22 rounds of six, a second or two. A larger question
+/// lists at most 32 prefixes, however many hashes it names.
 pub const PROBE_HEADS_MAX: usize = 128;
 
 /// The reads a probe makes.

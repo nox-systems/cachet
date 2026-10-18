@@ -24,13 +24,14 @@ and 13.2 seconds, while an authorized HEAD of a random absent narinfo took
 every narinfo in the bucket, one page of a thousand after another, for
 every question, whatever its size. Production held 17,398 narinfos at its
 last collector run, so each probe read 18 pages, at about two thirds of a
-second a page. The cost grew with the cache and had nothing to do with the
-push.
+second a page. That cost grew with the number of narinfos the cache held,
+and the number of paths a push asked about did not change it.
 
-A second cost showed only with roots. The push client evaluated each root
-with nix before the probe, one flake evaluation apiece, and only the lease
-renewal reads the result. A branch other than the default never renews
-the lease, so a pull request paid those evaluations for nothing.
+Jobs that name roots paid more. The push client evaluated each root with
+nix before the probe, about a second apiece in actual's clippy job, and
+only the lease renewal reads the result. A branch other than the default
+never renews the lease, so a pull request paid for those evaluations and
+used none of them.
 
 ## Decision
 
@@ -42,7 +43,8 @@ the lease, so a pull request paid those evaluations for nothing.
 2. A larger probe lists the narinfos under each first character its hashes
    use, at most 32 listings, six at a time, each paging on its own. Every
    narinfo key begins with its hash, so an asked hash is held exactly when
-   its key appears under its own first character.
+   its key appears under its own first character. A listing keeps only
+   the asked hashes it finds, so the probe's memory follows its question.
 3. The answer's meaning does not change. A hash is held when the bucket
    holds its narinfo key, as ADR 0023's third decision states for the
    listing, and the answer still comes from the bucket and from nothing
@@ -61,9 +63,11 @@ the lease, so a pull request paid those evaluations for nothing.
 A post step with nothing new to upload costs one nix process to read the
 store, one OIDC mint, one probe, and on the default branch the lease
 renewal and one evaluation per root. A probe of two hashes is two heads in
-one round, so its cost no longer grows with the bucket. The production
-numbers after the release that carries this are recorded in the pull
-request that ships it.
+one round, so its cost no longer grows with the bucket.
+
+A root that does not resolve is reported only on the default branch, so a
+mistyped root reaches the log once the change that names it merges, and no
+longer on the pull request that introduced it.
 
 A probe of more than 128 hashes still grows with the bucket, because its
 listings read every narinfo under the characters it uses. A cold runner
