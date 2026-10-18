@@ -156,10 +156,12 @@ paths:
       summary: |-
         `POST /api/probe`: which of the named store-path hashes the cache
         holds. One authorized request per run replaces the per-path narinfo
-        HEADs a push would otherwise price one round trip at a time; the
-        worker answers from a bucket enumeration, so the answer is bucket
-        truth rather than a secondary index's claim. Requires a read
-        credential.
+        HEADs a push would otherwise price one round trip at a time. The
+        worker reads the answer from the bucket, so it is bucket truth rather
+        than a secondary index's claim: it heads each named narinfo when the
+        request names at most `cachet_core::probe::PROBE_HEADS_MAX` hashes,
+        and otherwise lists the narinfos under each first character the
+        request uses. Requires a read credential.
       operationId: probe_post
       requestBody:
         description: The store-path hashes to ask about, capped at the push pipeline's closure cap

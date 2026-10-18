@@ -21,7 +21,9 @@ inputs:
     description: >-
       Flake installables whose closures this project keeps. Their outputs
       are pushed unconditionally and, on the default branch, become the
-      project's garbage-collection lease.
+      project's garbage-collection lease. The post step evaluates them
+      only on the default branch, because no other branch renews the
+      lease.
     required: false
     default: ""
   audience:

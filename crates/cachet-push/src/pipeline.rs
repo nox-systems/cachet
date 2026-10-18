@@ -65,7 +65,8 @@ pub struct PushInputs {
 pub struct PushOutcome {
     /// Candidates from the diff.
     pub added_paths: usize,
-    /// Paths kept because the roots named them.
+    /// Candidates the roots named. Roots resolve only on the default
+    /// branch, so this is zero everywhere else.
     pub roots_kept: usize,
     /// Paths cachet already held.
     pub cache_hits: usize,
@@ -174,13 +175,20 @@ pub async fn push<C: Commands, H: Http, T: TokenSource>(
 
     // Roots resolve best-effort: an unresolvable installable still rides
     // the lease by name; only its paths are missing.
+    //
+    // why only on the default branch: the lease is the one reader of the
+    // resolved paths, and only the default branch renews it. Each
+    // installable is a nix evaluation that opens the flake, seconds apiece,
+    // which a pull request's post step would spend for nothing.
     let mut resolved_root_paths: Vec<String> = Vec::new();
-    for installable in &inputs.installables {
-        match a.commands.path_info(installable).await {
-            Ok(text) => resolved_root_paths.extend(parse_snapshot(&text)),
-            Err(_) => events(PushEvent::InstallableUnresolved {
-                installable: installable.clone(),
-            }),
+    if inputs.is_default_branch {
+        for installable in &inputs.installables {
+            match a.commands.path_info(installable).await {
+                Ok(text) => resolved_root_paths.extend(parse_snapshot(&text)),
+                Err(_) => events(PushEvent::InstallableUnresolved {
+                    installable: installable.clone(),
+                }),
+            }
         }
     }
     let root_set: std::collections::BTreeSet<String> =

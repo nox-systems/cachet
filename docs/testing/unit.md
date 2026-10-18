@@ -13,6 +13,13 @@ asserts that every binding name the worker reads is in cachet-deploy's
 roster and every rostered name is read, because the worker is wasm32
 only and no lane runs its own tests on a host.
 
+The push pipeline's scripted tests (cachet-push's pipeflow module) count
+what a push asks of nix and of the wire. A push whose new paths the cache
+already holds is held to one store read, one mint, and one probe off the
+default branch, and to one evaluation per root and the lease renewal on
+it, with no wait and no retry. The counts hold the post step's cost the
+way a clock cannot on a loaded machine.
+
 A test in this lane is one concrete input with one asserted behavior.
 Arbitrary-input coverage belongs to the property lane; byte-exact output
 coverage belongs to the golden lane. A test that fails intermittently is a
