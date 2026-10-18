@@ -1,7 +1,7 @@
 {
   "manifestVersion": 1,
   "product": "cachet",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "worker": {
     "mainModule": "index.js",
     "modules": [
