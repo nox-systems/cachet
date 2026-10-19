@@ -15,7 +15,7 @@ serde.workspace = true
 serde_json.workspace = true
 # why: SHA-256 over uploaded NAR bytes and stored objects; pure Rust, wasm-clean.
 # The `oid` feature wires digest OIDs for rsa's Pkcs1v15Sign::new::<Sha256>.
-sha2 = { version = "0.10", features = ["oid"] }
+sha2 = { version = "0.11", features = ["oid"] }
 # why: narinfo signature verification and signing; pure Rust, deterministic
 # signatures, no rng on the sign path.
 ed25519-dalek = { version = "2", default-features = false, features = ["alloc", "digest"] }
